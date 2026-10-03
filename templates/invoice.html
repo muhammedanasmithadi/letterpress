@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Invoice {{invoice_no}}</title>
+<style>
+  /* Paper, margins and running header/footer are declared here, not by the
+     caller. Page numbers come from @page margin boxes because CDP header and
+     footer templates reserve space inside the page box and repaginate. */
+  @page {
+    size: {{paper}};
+    margin: 18mm 16mm 16mm;
+    @top-left  { content: "{{company}}"; font: 8pt sans-serif; color: #767676 }
+    @top-right { content: "INVOICE {{invoice_no}}"; font: 8pt sans-serif; color: #767676 }
+    @bottom-right { content: "page " counter(page) " of " counter(pages); font: 8pt sans-serif; color: #767676 }
+  }
+  :root {
+    --ink: #1a1a1a; --muted: #767676; --rule: #d8d8d8;
+    --accent: {{accent}};
+    --font: {{font}};
+  }
+  * { box-sizing: border-box }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact }
+  body { font: 10pt/1.45 var(--font), sans-serif; color: var(--ink); margin: 0 }
+  h1 { font-size: 20pt; margin: 0; letter-spacing: -0.2px }
+  header { display: flex; justify-content: space-between; align-items: flex-start;
+           border-bottom: 2px solid var(--accent); padding-bottom: 10px }
+  .strap { font-size: 9pt; color: var(--muted); margin-top: 2px }
+  .meta { text-align: right; font-size: 9pt; color: var(--muted); line-height: 1.6 }
+  .meta b { color: var(--ink) }
+  .parties { display: flex; gap: 24px; margin: 14px 0 18px; font-size: 9pt }
+  .parties section { flex: 1 }
+  .parties h2 { font-size: 8pt; text-transform: uppercase; letter-spacing: 0.8px;
+                color: var(--muted); margin: 0 0 4px; font-weight: 600 }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums }
+  /* repeat the header on every page a long invoice spills onto */
+  thead { display: table-header-group }
+  tfoot { display: table-row-group }
+  th { text-align: left; font-size: 8pt; text-transform: uppercase; letter-spacing: 0.6px;
+       color: var(--muted); border-bottom: 1px solid var(--rule); padding: 6px 8px }
+  td { padding: 6px 8px; border-bottom: 1px solid #eee }
+  /* never split a line item across a page boundary */
+  tr { break-inside: avoid }
+  .num { text-align: right }
+  .totals td { border: none; padding: 3px 8px }
+  .totals tr.grand td { border-top: 2px solid var(--ink); font-weight: 700; font-size: 11pt; padding-top: 7px }
+  .note { margin-top: 18px; font-size: 8.5pt; color: var(--muted);
+          border-left: 2px solid var(--rule); padding-left: 10px }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>{{company}}</h1>
+    {{#company_secondary}}<div class="strap">{{company_secondary}}</div>{{/company_secondary}}
+  </div>
+  <div class="meta">
+    Invoice <b>{{invoice_no}}</b><br>
+    Issued <b>{{issued}}</b><br>
+    Due <b>{{due}}</b>
+  </div>
+</header>
+
+<div class="parties">
+  <section>
+    <h2>Billed to</h2>
+    <b>{{bill_to_name}}</b><br>
+    {{bill_to_lines}}
+  </section>
+  <section>
+    <h2>From</h2>
+    <b>{{company}}</b><br>
+    {{company_lines}}
+  </section>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Description</th>
+      <th class="num">Qty</th>
+      <th class="num">Unit</th>
+      <th class="num">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{rows}}
+  </tbody>
+  <tfoot>
+    <tr><td colspan="3" class="num">Subtotal</td><td class="num">{{currency}} {{subtotal}}</td></tr>
+    <tr><td colspan="3" class="num">VAT {{vat_rate}}</td><td class="num">{{currency}} {{vat}}</td></tr>
+    <tr class="grand"><td colspan="3" class="num">Total due</td><td class="num">{{currency}} {{total}}</td></tr>
+  </tfoot>
+</table>
+
+<p class="note">{{note}}</p>
+</body>
+</html>

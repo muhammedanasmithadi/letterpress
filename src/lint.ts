@@ -65,8 +65,33 @@ const AUDIT = String.raw`
   // "2026-10-03" after Arabic renders as "03-10-2026": the hyphen is a neutral
   // separator, so the number groups are ordered right to left. Each group stays
   // internally correct, which is why it looks plausible and is still wrong.
-  const risky = /\d+(?:\s*[-‐‑‒–—―_−×÷]\s*\d+)+|\+\d{2,}|\d+\s+\d{2,}\s+\d{2,}/g;
-  const seenRisk = new Set();
+  //
+  // Deciding "is this run right-to-left" from a dir attribute alone gets both
+  // directions wrong: an Arabic document with lang="ar" and no dir reverses
+  // silently, while a leading strong LTR character, as in "ISO 8601:" or an
+  // invoice reference, protects the number and must not be reported. The rule
+  // below is the part of UAX#9 that decides this case: a number stays in
+  // left-to-right order when the last strong character before it is LTR.
+  const risky = /\d+(?:\s*[-‐‑‒–—―_−×÷]\s*\d+)+|\+\d{2,}|\d[\d\s]{5,}\d|\d+\s*[-−]\s*\d*\s*(?:ريال|درهم|د\.إ)?/g;
+  // The ranges below must be disjoint. An earlier version tested Latin ranges
+  // first, and they overlap Arabic-Indic digits, so the digit run in "2026" was
+  // classified as a strong LTR letter and every report was suppressed.
+  const LATIN_STRONG = /[A-Za-zÀ-ʯͰ-ϿЀ-ӿḀ-῿]/;
+  const RTL_STRONG = /[֐-׿؀-ۿ܀-ݏݐ-ݿࢠ-ࣿיִ-﷿ﹰ-﻿]/;
+  const STRONG = /[A-Za-zÀ-ʯͰ-ϿЀ-ӿḀ-῿֐-׿؀-ۿ܀-ݏݐ-ݿࢠ-ࣿיִ-﷿ﹰ-﻿]/g;
+  const counts = new Map();
+  const samples = new Map();
+
+  // Direction of the run, per UAX#9: the last strong character before the token
+  // decides whether the numbers keep left-to-right order.
+  const lastStrong = (text, upto) => {
+    let last = null;
+    for (const m of text.slice(0, upto).matchAll(new RegExp(STRONG.source, "g"))) {
+      last = RTL_STRONG.test(m[0]) ? "rtl" : "ltr";
+    }
+    return last;
+  };
+
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   let node;
   while ((node = walker.nextNode())) {
@@ -74,24 +99,59 @@ const AUDIT = String.raw`
     if (!/\d/.test(text)) continue;
     const el = node.parentElement;
     if (!el) continue;
-    const rtl = getComputedStyle(el).direction === "rtl" ||
-                (el.closest("[dir]") || {}).dir === "rtl";
+
+    // Paragraph direction is what matters, not the inline element. A date
+    // already wrapped in <bdi dir="ltr"> is safe, and that is the fix this
+    // finding recommends, so honouring it stops the advice re-triggering.
+    //
+    // Only an explicit dir attribute is trusted. The computed unicode-bidi is
+    // not: Chromium reports "isolate" for every block element by default, so
+    // testing it broke out of the walk on the first ancestor and concluded the
+    // paragraph was left-to-right whatever it said.
+    let rtl = false;
+    // The loop variable is declared without a type annotation. This whole string
+    // is evaluated as JavaScript in the page, and a TypeScript annotation on it
+    // is a syntax error at runtime that fails silently, taking every finding
+    // in this file with it.
+    for (let p = el; p; p = p.parentElement) {
+      const dirAttr = p.getAttribute && p.getAttribute("dir");
+      if (dirAttr === "rtl") { rtl = true; break; }
+      if (dirAttr === "ltr" || dirAttr === "auto") break;
+      const cs = getComputedStyle(p);
+      if (cs.direction === "rtl") { rtl = true; break; }
+      if (cs.direction === "ltr") break;
+    }
+    if (!rtl) {
+      // No explicit direction anywhere: fall back to the first strong
+      // character, which is how a browser infers direction for the paragraph.
+      const whole = (el.textContent || "").trim();
+      rtl = lastStrong(whole, whole.length) === "rtl";
+    }
     if (!rtl) continue;
-    if (el.closest("bdi,[dir='ltr'],.lat") || el.querySelector("bdi,[dir='ltr']")) continue;
+
     risky.lastIndex = 0;
     let m;
     while ((m = risky.exec(text)) !== null) {
-      const snippet = text.slice(Math.max(0, m.index - 12), m.index + m[0].length + 8).trim();
+      const before = lastStrong(text, m.index);
+      // A strong LTR character before the number keeps the run left-to-right.
+      if (before === "ltr") continue;
+      // A document with no strong character anywhere before it is ambiguous
+      // only if the token itself has no RTL context, which we already know.
       const key = m[0];
-      if (seenRisk.has(key)) continue;
-      seenRisk.add(key);
-      add("rtl-digit-run", "warn",
-        "\"" + key + "\" appears in right-to-left text and will print with its groups " +
-        "reversed (" + key.split(/\s*[-–—_−×÷]\s*/).reverse().join("-") + "). wrap it in " +
-        "<bdi dir=\"ltr\"> or a span with direction:ltr; unicode-bidi:isolate.", { sample: snippet });
-      if (seenRisk.size >= 10) break;
+      counts.set(key, (counts.get(key) || 0) + 1);
+      if (!samples.has(key)) {
+        samples.set(key, text.slice(Math.max(0, m.index - 12), m.index + key.length + 8).trim());
+      }
     }
-    if (seenRisk.size >= 10) break;
+  }
+
+  for (const [key, count] of counts) {
+    add("rtl-digit-run", "warn",
+      "\"" + key + "\" appears in right-to-left text" + (count > 1 ? " (" + count + " times)" : "") +
+      " and will print with its groups reversed (" +
+      key.split(/\s*[-–—_−×÷]\s*/).reverse().join("-") +
+      "). wrap it in <bdi dir=\"ltr\"> or a span with direction:ltr; unicode-bidi:isolate.",
+      { sample: samples.get(key), occurrences: count });
   }
 
   // ---- 5. characters the chosen font cannot draw -----------------------
@@ -133,13 +193,25 @@ const AUDIT = String.raw`
       }
     }
   }
-  for (const [ch, font] of missing) {
+  // A zero-width joiner or variation selector occupies no advance width, so it
+  // can never produce a visible box. Reporting it teaches people to ignore the
+  // findings array, and &nbsp; appears in nearly every HTML file.
+  const invisible = /^[\s\u00A0\u00AD\u1680\u2000-\u200F\u2028-\u202E\u202F\u205F\u2060-\u2064\u3000\uFEFF\uFE0E\uFE0F]$/;
+  // No cap. A truncated list that does not say so reads as "that was all of
+  // them", which is how a document ends up with 12 problems and one warning.
+  const shown = [...missing.entries()].filter(([ch]) => !invisible.test(ch));
+  for (const [ch, font] of shown) {
     add("missing-glyph", "warn",
       "U+" + ch.codePointAt(0).toString(16).toUpperCase().padStart(4, "0") +
-      " (" + ch + ") has no glyph in " + font.split(" ").slice(2).join(" ") +
-      " and will print as a blank box. choose a font that covers the script, " +
-      "or set a font-family fallback chain.");
-    if (missing.size >= 12) break;
+      " (" + ch + ") has no glyph anywhere in the font stack " +
+      font.split(" ").slice(2).join(" ") +
+      " and will print as a blank box.");
+  }
+  const skipped = missing.size - shown.length;
+  if (skipped > 0) {
+    add("glyphs-skipped", "info",
+      skipped + " further character(s) with no glyph are invisible formatting characters, " +
+      "which occupy no space and print nothing, so they are not listed.");
   }
 
   return out;
@@ -154,9 +226,21 @@ export async function audit(tab: Tab, timeoutMs: number): Promise<Finding[]> {
       awaitPromise: false,
     }, timeoutMs);
     const value = res?.result?.value;
-    return Array.isArray(value) ? value as Finding[] : [];
-  } catch {
-    // An audit failure must never fail the render; the PDF is the deliverable.
-    return [];
+    if (!Array.isArray(value)) {
+      // A syntax error in the audit expression evaluates to nothing, and
+      // swallowing that makes every diagnostic vanish at once. Report it.
+      return [{
+        code: "audit-failed",
+        severity: "warn",
+        message: "the document checks could not run, so no layout, text or font findings are available. this is a bug in html2pdf, not in the document.",
+      }];
+    }
+    return value as Finding[];
+  } catch (e) {
+    return [{
+      code: "audit-failed",
+      severity: "warn",
+      message: `the document checks could not run, so no layout, text or font findings are available: ${e instanceof Error ? e.message : String(e)}`,
+    }];
   }
 }

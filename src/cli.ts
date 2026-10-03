@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Browser } from "./browser.ts";
 import { FORMATS, render, type Format, type Finding } from "./render.ts";
-import { invoiceTotals, lines, render as fillTemplate, type TemplateData } from "./template.ts";
+import { TemplateError, escapeCss, invoiceTotals, lines, render as fillTemplate, type TemplateData } from "./template.ts";
 
 const USAGE = `html2pdf - render HTML to PDF through Chromium's own print engine
 
@@ -264,13 +264,39 @@ function buildTemplateData(data: Record<string, unknown>): TemplateData {
   const out: TemplateData = {};
   for (const [k, v] of Object.entries(data)) out[k] = v as TemplateData[string];
 
-  const items = (data.items ?? data.lines ?? []) as Array<Record<string, number | string>>;
-  if (Array.isArray(items) && items.length) {
+  // Computed totals always win over whatever the file claims. A supplied
+  // subtotal is checked against the rows rather than trusted, because printing
+  // a wrong figure on an invoice is the one failure this tool must not have.
+  const hasItems = Array.isArray(data.items) || Array.isArray(data.lines);
+  if (hasItems) {
+    const raw = (data.items ?? data.lines) as unknown;
+    if (!Array.isArray(raw)) throw new TemplateError(["items must be an array"]);
+    const items = raw as Array<Record<string, unknown>>;
+    const vatRate = Number(data.vat_rate ?? data.vatRate ?? 0.2);
     const totals = invoiceTotals(
-      items.map((i) => ({ description: String(i.description ?? i.item ?? ""), qty: Number(i.qty ?? i.quantity ?? 1), unit: Number(i.unit ?? i.price ?? 0) })),
-      { vatRate: Number(data.vat_rate ?? data.vatRate ?? 0.2), currency: String(data.currency ?? "EUR") },
+      items.map((i) => ({
+        description: String(i.description ?? i.item ?? ""),
+        qty: Number(i.qty ?? i.quantity ?? 1),
+        unit: Number(i.unit ?? i.price ?? 0),
+      })),
+      { vatRate, currency: String(data.currency ?? "EUR") },
     );
     Object.assign(out, totals);
+    for (const [key, computed] of [["subtotal", totals.subtotal], ["vat", totals.vat], ["total", totals.total]] as const) {
+      const claimed = data[key];
+      if (claimed === undefined || claimed === null || claimed === "") continue;
+      if (Math.abs(Number(claimed) - Number(computed)) > 0.005) {
+        throw new TemplateError([
+          `${key} in the data file is ${claimed}, but the line items add up to ${computed}. ` +
+          `the computed figure is used, because printing the supplied one would send a wrong total. ` +
+          `remove ${key} from the data file to let it always be computed.`,
+        ]);
+      }
+    }
+  }
+  // A value used in a CSS string needs CSS escaping, not HTML escaping.
+  for (const k of ["company", "invoice_no", "company_secondary", "note", "currency"]) {
+    if (typeof data[k] === "string") out[`${k}_text`] = escapeCss(data[k] as string);
   }
   if (Array.isArray(data.bill_to_lines)) out.bill_to_lines = lines(data.bill_to_lines.map(String));
   if (Array.isArray(data.company_lines)) out.company_lines = lines(data.company_lines.map(String));

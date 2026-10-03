@@ -10,8 +10,11 @@
   @page {
     size: {{paper}};
     margin: 18mm 16mm 16mm;
-    @top-left  { content: "{{company}}"; font: 8pt sans-serif; color: #767676 }
-    @top-right { content: "INVOICE {{invoice_no}}"; font: 8pt sans-serif; color: #767676 }
+    /* Running header and footer. A CSS string does not decode HTML entities, so
+       these take the _text variants, already escaped for CSS. They are raw
+       tokens: escaping them again for markup is what printed a literal "&amp;". */
+    @top-left  { content: "{{{company_text}}}"; font: 8pt sans-serif; color: #767676 }
+    @top-right { content: "INVOICE {{{invoice_no_text}}}"; font: 8pt sans-serif; color: #767676 }
     @bottom-right { content: "page " counter(page) " of " counter(pages); font: 8pt sans-serif; color: #767676 }
   }
   :root {

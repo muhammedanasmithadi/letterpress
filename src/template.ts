@@ -60,12 +60,46 @@ export function money(n: number, decimals = 2): string {
 
 export type LineItem = { description: string; qty: number; unit: number };
 
+/**
+ * Characters that must never survive into a row cell. A description is
+ * customer-supplied text, and rows are inserted as built markup because they
+ * carry table structure. Without this, a description of
+ * `<style>body{display:none}</style>` produces a blank invoice that still
+ * reports success, and one containing a script tag hangs the render on the
+ * modal dialog the script opens.
+ */
+const UNSAFE_ROW = /<\s*(script|style|iframe|object|embed|link|meta|base|form|svg|math)\b/i;
+
+export class UnsafeRowError extends Error {
+  constructor(what: string) {
+    super(`line item ${what} contains markup that cannot be rendered safely inside a table row. ` +
+      "item fields are inserted as built markup, so a description must be plain text. " +
+      "remove the tags, or render your own document instead of using a template.");
+    this.name = "UnsafeRowError";
+  }
+}
+
 /** Build the table rows and the totals from line items, so callers never hand-add numbers. */
 export function invoiceTotals(
   items: LineItem[],
   { vatRate = 0.2, currency = "EUR" }: { vatRate?: number; currency?: string } = {},
 ) {
-  const rows = items.map((item) => {
+  if (!Array.isArray(items)) {
+    throw new TemplateError(["items"]);
+  }
+  if (items.length === 0) {
+    // An empty invoice that still prints a total is worse than no invoice: the
+    // totals below would be carried over from data rather than computed, and the
+    // result looks legitimate.
+    throw new TemplateError(["items (the array is empty, so there is nothing to total)"]);
+  }
+  const rows = items.map((item, i) => {
+    if (item.description && UNSAFE_ROW.test(item.description)) {
+      throw new UnsafeRowError(`#${i + 1} ("${item.description.slice(0, 40)}")`);
+    }
+    if (!Number.isFinite(item.qty) || !Number.isFinite(item.unit)) {
+      throw new TemplateError([`items[${i}].qty and items[${i}].unit must be numbers`]);
+    }
     const amount = item.qty * item.unit;
     return {
       ...item,
@@ -78,6 +112,9 @@ export function invoiceTotals(
   });
   const subtotal = rows.reduce((sum, r) => sum + r.amount, 0);
   const vat = subtotal * vatRate;
+  if (!Number.isFinite(vatRate) || vatRate < 0) {
+    throw new TemplateError(["vat_rate must be a number, for example 0.21"]);
+  }
   return {
     rows: rows.map((r) => r.html).join("\n    "),
     subtotal: money(subtotal),
@@ -92,6 +129,15 @@ export function invoiceTotals(
 export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+}
+
+/**
+ * Escape for a CSS string, which does not decode HTML entities. Using the HTML
+ * escaper here printed a literal "&amp;" in the running header of every page,
+ * because the entity arrived inside a @page margin box where nothing decodes it.
+ */
+export function escapeCss(s: string): string {
+  return s.replace(/[\\"]/g, (c) => `\\${c}`).replace(/\n/g, " ");
 }
 
 /** Join address lines into HTML, escaping each one. */

@@ -121,7 +121,9 @@ test("a request format overrides the document and says so", async () => {
   const r = await render(browser, { html: DOC, format: "letter" });
   const finding = r.findings.find((f) => f.code === "page-size-override");
   expect(finding).toBeTruthy();
-  expect(finding!.severity).toBe("warn");
+  // Informational: the request is applied, so this records what happened rather
+  // than warning about a problem. Letter is the paper that was asked for.
+  expect(finding!.severity).toBe("info");
   const info = await pdfInfo(r.pdf);
   expect(info.pageSize).toMatch(/612/);
 }, 30_000);

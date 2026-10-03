@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Browser } from "../src/browser.ts";
 import { render } from "../src/render.ts";
-import { TemplateError, invoiceTotals, lines, money, render as fill } from "../src/template.ts";
+import { TemplateError, UnsafeRowError, escapeCss, invoiceTotals, lines, money, render as fill } from "../src/template.ts";
 import { pdfInfo, pdfImages, pdfText } from "./poppler.ts";
 
 let browser: Browser;
@@ -47,6 +47,9 @@ function document(items = ITEMS) {
     total: totals.total,
     currency: totals.currency,
     note: "Payment by bank transfer within 30 days.",
+    // The @page margin box takes CSS-escaped variants, supplied by the CLI.
+    company_text: escapeCss("Northwind Instruments"),
+    invoice_no_text: escapeCss("2026-014"),
   });
 }
 
@@ -96,9 +99,41 @@ test("totals are computed, not hand-written", () => {
 });
 
 test("item text is escaped, so a description cannot inject markup", () => {
-  const t = invoiceTotals([{ description: '<script>alert(1)</script>', qty: 1, unit: 1 }]);
-  expect(t.rows).not.toContain("<script>");
-  expect(t.rows).toContain("&lt;script&gt;");
+  const t = invoiceTotals([{ description: "<b>Widget</b>", qty: 1, unit: 1 }]);
+  expect(t.rows).toContain("&lt;b&gt;Widget&lt;/b&gt;");
+});
+
+test("markup that could break the document is refused outright", () => {
+  // A description of <style>body{display:none}</style> renders a blank invoice
+  // that still reports success, and a script tag hangs the render on the modal
+  // dialog it opens. Neither is something to escape and print.
+  for (const description of [
+    "<script>alert(1)</script>",
+    "<style>body{display:none}</style>",
+    "<iframe src=x>",
+    "<SCRIPT >alert(1)</SCRIPT >",
+  ]) {
+    expect(() => invoiceTotals([{ description, qty: 1, unit: 1 }])).toThrow(UnsafeRowError);
+  }
+});
+
+test("an empty item list is refused rather than printing a total", () => {
+  expect(() => invoiceTotals([])).toThrow(TemplateError);
+});
+
+test("non-numeric quantities are refused", () => {
+  expect(() => invoiceTotals([{ description: "x", qty: Number.NaN, unit: 1 }])).toThrow(TemplateError);
+  expect(() => invoiceTotals([{ description: "x", qty: 1, unit: Number.POSITIVE_INFINITY }])).toThrow(TemplateError);
+});
+
+test("a css string is escaped for css, not for markup", () => {
+  // HTML escaping inside a @page margin box prints a literal "&amp;" on every
+  // page, because a css string decodes no entities. An ampersand is fine in
+  // CSS; only a quote or a backslash would end the string.
+  expect(escapeCss("Ruiz & Lark's Systems")).toBe("Ruiz & Lark's Systems");
+  expect(escapeCss('say "hi"')).toBe('say \\"hi\\"');
+  expect(escapeCss("back\\slash")).toBe("back\\\\slash");
+  expect(escapeCss("two\nlines")).toBe("two lines");
 });
 
 test("a single-page invoice renders with correct page numbers", async () => {

@@ -20,6 +20,12 @@ afterAll(async () => {
 
 const codes = (findings: { code: string }[]) => findings.map((f) => f.code);
 
+/** Width and height in points, parsed from a MediaBox string. */
+const boxSize = (box: string) => {
+  const m = box.match(/\[\s*[\d.]+\s+[\d.]+\s+([\d.]+)\s+([\d.]+)/);
+  return { w: Number(m![1]), h: Number(m![2]) };
+};
+
 test("a page count above eight is reported correctly", async () => {
   for (const n of [9, 12, 40]) {
     const html = `<!doctype html><style>@page{size:A4;margin:8mm}</style>` +
@@ -118,6 +124,27 @@ test("a character no installed font covers is reported", async () => {
   expect(f.message).toContain("U+E000");
 }, 30_000);
 
+test("every missing glyph is listed, not capped", async () => {
+  // 20 distinct private-use codepoints. A cap reports a few and implies the
+  // document is otherwise clean, which is how problems go unnoticed.
+  const chars = Array.from({ length: 20 }, (_, i) => String.fromCodePoint(0xe000 + i)).join("");
+  const html = `<!doctype html><head><meta charset="utf-8"><style>
+@page{size:A4;margin:15mm} body{font-family:'Noto Naskh Arabic',serif}
+</style></head><body><p>${chars}</p></body></html>`;
+  const r = await render(browser, { html });
+  expect(r.findings.filter((x) => x.code === "missing-glyph").length).toBe(20);
+}, 30_000);
+
+test("a no-break space is not reported as a missing glyph", async () => {
+  // U+00A0 has no glyph in the font but is invisible, and it appears in nearly
+  // every HTML file. Warning on it trains people to ignore the findings array.
+  const html = `<!doctype html><head><meta charset="utf-8"><style>
+@page{size:A4;margin:15mm} body{font-family:'Noto Naskh Arabic',serif}
+</style></head><body><p>a b</p></body></html>`;
+  const r = await render(browser, { html });
+  expect(r.findings.map((x) => x.message).join(" ")).not.toContain("U+00A0");
+}, 30_000);
+
 test("a character covered by the font fallback chain is not reported", async () => {
   // 度量 is absent from Noto Naskh Arabic but present in the system CJK fonts,
   // so it prints correctly and must stay silent.
@@ -126,6 +153,74 @@ test("a character covered by the font fallback chain is not reported", async () 
 </style></head><body><p>القياس 度量</p></body></html>`;
   const r = await render(browser, { html });
   expect(codes(r.findings)).not.toContain("missing-glyph");
+}, 30_000);
+
+test("a date with a strong ltr character before it is not reported", async () => {
+  // "ISO 8601: 2026-10-03" and "INV-2026-014" both keep their digits in order,
+  // because the last strong character before the number is left-to-right.
+  const one = await render(browser, {
+    html: `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
+@page{size:A4;margin:15mm} body{direction:rtl;font-family:'Noto Naskh Arabic',serif}
+</style></head><body><p>ISO 8601: 2026-10-03</p></body></html>`,
+  });
+  expect(codes(one.findings)).not.toContain("rtl-digit-run");
+
+  const two = await render(browser, {
+    html: `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
+@page{size:A4;margin:15mm} body{direction:rtl;font-family:'Noto Naskh Arabic',serif}
+</style></head><body><p>رقم INV-2026-0147</p></body></html>`,
+  });
+  expect(codes(two.findings)).not.toContain("rtl-digit-run");
+}, 40_000);
+
+test("a date with no dir attribute at all is still reported", async () => {
+  // lang="ar" with no dir is how most people write an Arabic document, and the
+  // paragraph direction is inferred from the first strong character.
+  const r = await render(browser, {
+    html: `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
+@page{size:A4;margin:15mm} body{font-family:'Noto Naskh Arabic',serif}
+</style></head><body><p>التاريخ: 2026-10-03</p></body></html>`,
+  });
+  expect(codes(r.findings)).toContain("rtl-digit-run");
+}, 30_000);
+
+test("the prescribed fix does not re-trigger the warning", async () => {
+  const r = await render(browser, {
+    html: `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
+@page{size:A4;margin:15mm} body{direction:rtl;font-family:'Noto Naskh Arabic',serif}
+</style></head><body><p>التاريخ: <bdi dir="ltr">2026-10-03</bdi></p></body></html>`,
+  });
+  expect(codes(r.findings)).not.toContain("rtl-digit-run");
+}, 30_000);
+
+test("repeated occurrences are counted, not collapsed to one", async () => {
+  const r = await render(browser, {
+    html: `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
+@page{size:A4;margin:15mm} body{direction:rtl;font-family:'Noto Naskh Arabic',serif}
+</style></head><body><p>التاريخ: 2026-10-03</p><p>التاريخ: 2026-10-03</p></body></html>`,
+  });
+  const f = r.findings.find((x) => x.code === "rtl-digit-run")!;
+  expect(f).toBeTruthy();
+  expect(f.message).toContain("2 times");
+}, 30_000);
+
+test("--format with --landscape actually produces landscape", async () => {
+  const doc = `<!doctype html><style>@page{size:A4;margin:10mm}</style><h1>x</h1>`;
+  const r = await render(browser, { html: doc, format: "a4", landscape: true });
+  const { w, h } = boxSize(r.info.mediaBoxes[0]);
+  expect(w).toBeGreaterThan(h);
+  expect(codes(r.findings)).toContain("page-size-override");
+}, 30_000);
+
+test("a commented-out @page is not treated as a declaration", async () => {
+  // Reading the comment made the tool call a landscape PDF portrait.
+  const r = await render(browser, {
+    html: `<!doctype html><style>/* @page{size:A5} */ @page{margin:10mm}</style><h1>x</h1>`,
+    landscape: true,
+  });
+  expect(codes(r.findings)).not.toContain("orientation-ignored");
+  const { w, h } = boxSize(r.info.mediaBoxes[0]);
+  expect(w).toBeGreaterThan(h);
 }, 30_000);
 
 test("plain latin text raises no text findings", async () => {

@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
 import { Browser, type Tab } from "./browser.ts";
 import { audit } from "./lint.ts";
-import { declaredPageSize, inspect, type PdfInfo } from "./pdf.ts";
+import { declaredPageMargin, declaredPageSize, inspect, pageRules, type PdfInfo } from "./pdf.ts";
 
 /**
  * Paper sizes in inches, as CDP expects. Metric sizes are exact conversions of
@@ -82,8 +82,7 @@ const close = (a: number, b: number) => Math.abs(a - b) < 0.05;
 function precedenceFindings(html: string, req: RenderRequest): Finding[] {
   const findings: Finding[] = [];
   const declared = declaredPageSize(html);
-  const paperRule = html.match(/@page[^{]*\{[^}]*\}/i)?.[0] ?? "";
-  const declaredMargin = paperRule.match(/\bmargin\s*:\s*([^;}]+)/i)?.[1]?.trim() ?? null;
+  const declaredMargin = declaredPageMargin(html);
 
   if (declared && req.format) {
     const [w, h] = FORMATS[req.format];
@@ -98,22 +97,33 @@ function precedenceFindings(html: string, req: RenderRequest): Finding[] {
     if (!agrees) {
       findings.push({
         code: "page-size-override",
-        severity: "warn",
-        message: `request asked for ${req.format}${req.landscape ? " landscape" : ""}, but the document declares @page size: ${declared}. The request wins; the document's own size is ignored.`,
+        severity: "info",
+        message: `request asked for ${req.format}${req.landscape ? " landscape" : ""}, but the document declares @page size: ${declared}. The request wins: the declaration is stripped from the document and the paper is set from the flag.`,
       });
     }
   }
 
-  if (declared && req.landscape && !req.format) {
+  if (declared && req.landscape) {
     const landscapeDeclared = /\blandscape\b/.test(declared) ||
-      (declared.match(/([\d.]+)\s*(mm|cm|in)/gi)?.map(toInches) ?? []).length >= 2 &&
-      (() => { const d = declared.match(/([\d.]+)\s*(mm|cm|in)/gi)!.map(toInches); return d[0] > d[1]; })();
+      (() => {
+        const d = declared.match(/([\d.]+)\s*(mm|cm|in)/gi)?.map(toInches) ?? [];
+        return d.length >= 2 && d[0] > d[1];
+      })();
     if (!landscapeDeclared) {
-      findings.push({
-        code: "orientation-ignored",
-        severity: "error",
-        message: `--landscape was ignored: the document declares @page size: ${declared}, and a document's own @page wins. The PDF is portrait. Either write @page { size: ${(req.format ?? "a4")} landscape } in the document, or pass --format so the request takes precedence.`,
-      });
+      // Either --format is also present, in which case the request wins and
+      // landscape is applied as transposed paper, or it is not, in which case
+      // the document's own orientation stands and the caller needs to know.
+      findings.push(req.format
+        ? {
+            code: "orientation-overridden",
+            severity: "info",
+            message: `the document declares @page size: ${declared}, which is portrait. --format with --landscape takes precedence, so the paper has been transposed rather than the document's own page size used.`,
+          }
+        : {
+            code: "orientation-ignored",
+            severity: "error",
+            message: `--landscape had no effect: the document declares @page size: ${declared}, and a document's own @page wins, so the PDF is portrait. For landscape, either add --format a4 (which takes precedence and transposes the paper), or write "@page { size: a4 landscape }" in the stylesheet.`,
+          });
     }
   }
 
@@ -159,6 +169,22 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
     const src = await resolveSource(req, dir);
     if (src.html) findings.push(...precedenceFindings(src.html, req));
 
+    // Chromium ignores paperWidth, paperHeight and landscape together while
+    // preferCSSPageSize is on. Honouring --format against a document that
+    // declares @page size therefore means removing the declaration first, and
+    // keeping the @page margin so the document still controls its own gutters.
+    let srcUrl = src.url;
+    if (req.format && src.html && declaredPageSize(src.html)) {
+      const stripped = src.html.replace(
+        /(@page[^{]*\{)([^}]*)(\})/gi,
+        (_whole, open: string, body: string, close: string) =>
+          open + body.replace(/(^|;)\s*\bsize\s*:[^;}]*/gi, "$1").replace(/;;+/g, ";") + close,
+      );
+      const file = `${dir}/override.html`;
+      await Bun.write(file, stripped);
+      srcUrl = fileUrl(file);
+    }
+
     tab = await browser.newTab();
     let timedOut = false;
     const deadline = setTimeout(() => {
@@ -198,7 +224,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       });
 
       const loaded = tab.once("Page.loadEventFired");
-      const nav = await tab.send("Page.navigate", { url: src.url }).catch((e: Error) => {
+      await tab.send("Page.navigate", { url: srcUrl }).catch((e: Error) => {
         if (/ERR_/.test(e.message)) netError ??= e.message;
         return {};
       });
@@ -249,24 +275,34 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         declaresPaper = probe?.result?.value === true;
       }
 
-      const preferCss = !req.format && declaresPaper;
-      // Metric paper to four decimal places, so --format a4 agrees with
-      // @page { size: a4 } instead of being a third of a millimetre out.
+      // The document's own @page is authoritative, which is what makes
+      // "@page { size: A4 }" produce an exactly 594.96 x 841.92pt page.
+      //
+      // Chromium ignores paperWidth, paperHeight and landscape together whenever
+      // preferCSSPageSize is on, so a --format cannot override a declared @page
+      // by asking nicely. To make the request win, the declaration has to go:
+      // the size is stripped from the document and the paper comes from CDP.
+      const docOverridesPaper = declaresPaper;
+      const preferCss = docOverridesPaper && !req.format;
       const paper = req.format ? FORMATS[req.format] : preferCss ? undefined : FORMATS.a4;
       const margin = req.margin ? toInches(req.margin) : undefined;
+      const transposed = !!req.landscape && !!paper && !preferCss;
+      const paperWidth = transposed ? paper![1] : paper?.[0];
+      const paperHeight = transposed ? paper![0] : paper?.[1];
 
       let res: any;
       try {
         res = await tab.send("Page.printToPDF", {
         printBackground: req.printBackground ?? true,
-        // A document's own @page is authoritative, which is what makes
-        // "@page { size: A4 }" produce an exactly 594.96 x 841.92pt page.
         preferCSSPageSize: preferCss,
-        ...(paper ? { paperWidth: paper[0], paperHeight: paper[1] } : {}),
+        ...(paperWidth !== undefined ? { paperWidth, paperHeight } : {}),
         ...(paper && !preferCss
           ? { scale: 1, marginTop: margin ?? 0, marginBottom: margin ?? 0, marginLeft: margin ?? 0, marginRight: margin ?? 0 }
           : {}),
-        landscape: req.landscape ?? false,
+        // Only pass landscape when the paper is not ours to choose. With
+        // preferCSSPageSize on, CDP ignores it and the document keeps its own
+        // orientation, which is why --landscape silently did nothing before.
+        landscape: req.landscape && preferCss,
         // CDP header and footer templates reserve space inside the page box and
         // silently repaginate, so page numbers belong in CSS @page margin boxes.
         displayHeaderFooter: false,

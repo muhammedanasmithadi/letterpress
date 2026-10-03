@@ -124,6 +124,40 @@ instant the endpoint appears yields a socket that opens and silently drops
 `Page.enable`. `Browser.#awaitSession` polls until a trivial command actually
 round-trips.
 
+## Bugs found by testing the tool as a user
+
+Five subagents drove the CLI blind and reported what blocked them. Three
+independently hit the same defect, which is the signal worth recording.
+
+**The page count was capped at 8.** `inspect` took the first `/Count` in byte
+order, which is an interior node of the page tree. Every document of nine pages
+or more reported 8, including one whose own footer read "page 14 of 14" because
+Chromium resolved `counter(pages)` correctly while the tool did not. Now
+resolved through trailer to catalog to the tree root, verified against poppler
+for 1, 7, 8, 9, 12, 40 and 120 pages.
+
+**A TypeScript annotation inside an evaluated string silenced every finding.**
+The audit runs as JavaScript in the page. A `for (let p: Element | null = ...)`
+is a syntax error there, so the whole audit returned nothing and reported no
+problem with any document. `audit` now returns an `audit-failed` finding when its
+expression does not evaluate to an array, so this class of bug is visible.
+
+**Chromium ignores paper arguments while `preferCSSPageSize` is on.** Not just
+`paperWidth`: `landscape` is ignored too, and setting `landscape: false` does not
+help. So `--format a4 --landscape` produced portrait with exit 0 and a warning
+saying the request had won. The declaration is now stripped from the document so
+the request genuinely takes precedence.
+
+**A commented-out `@page` read as a declaration.** The precedence check matched
+CSS text without stripping comments, so `/* @page{size:A5} */` made the tool
+report a landscape PDF as portrait. Comments are stripped before matching now.
+
+**`&nbsp;` was reported as a missing glyph.** It has no glyph in the font and
+occupies no space, so it can never print a box, and it appears in nearly every
+HTML file. Warning on it trains people to ignore the findings array. Invisible
+format characters are now excluded, and listed separately as a count so the
+suppression is visible rather than silent.
+
 ## Non-obvious findings
 
 **PDFs are not byte-reproducible.** The SHA-256 differs between every render of

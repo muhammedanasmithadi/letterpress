@@ -82,10 +82,34 @@ export function inspect(pdf: Uint8Array): PdfInfo {
 
 /** True when the PDF declares a page size in CSS via an @page size rule. */
 export function declaredPageSize(html: string): string | null {
-  const rules = html.match(/@page[^{]*\{[^}]*\}/gi) ?? [];
-  for (const r of rules) {
-    const m = r.match(/\bsize\s*:\s*([^;}]+)/i);
+  for (const rule of pageRules(html)) {
+    const m = rule.match(/\bsize\s*:\s*([^;}]+)/i);
     if (m) return m[1].trim().replace(/\s+/g, " ").toLowerCase();
   }
   return null;
+}
+
+/** The declared @page margin, if any. */
+export function declaredPageMargin(html: string): string | null {
+  for (const rule of pageRules(html)) {
+    const m = rule.match(/\bmargin\s*:\s*([^;}]+)/i);
+    if (m) return m[1].trim().replace(/\s+/g, " ").toLowerCase();
+  }
+  return null;
+}
+
+/**
+ * Every @page rule in the document, with CSS comments stripped first.
+ *
+ * A commented-out `@page { size: A5 }` is not a declaration, but reading it as
+ * one made the tool report a landscape PDF as portrait. Stripping comments
+ * before matching is what keeps the reported conflict real.
+ */
+export function pageRules(html: string): string[] {
+  const withoutComments = html
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    // a <style> or <script> body is not markup, but @page inside one is still
+    // live css; only comment stripping applies here.
+    ;
+  return [...withoutComments.matchAll(/@page[^{]*\{[^}]*\}/gi)].map((m) => m[0]);
 }

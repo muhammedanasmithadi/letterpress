@@ -66,7 +66,8 @@ of the summary.
 |---|---|
 | `orientation-ignored` | `--landscape` was dropped: the document declares `@page size` |
 | `margin-ignored` | `--margin` was dropped: the document declares `@page margin` |
-| `page-size-override` | `--format` disagrees with the document's `@page`; the request won |
+| `page-size-override` | `--format` disagrees with the document's `@page`; the declaration is stripped and the request applied |
+| `orientation-ignored` | `--landscape` cannot apply: the document declares `@page size` and no `--format` was given |
 | `rtl-digit-run` | `2026-10-03` after Arabic prints as `03-10-2026`; wrap it in `<bdi dir="ltr">` |
 | `missing-glyph` | a character no installed font covers, so it prints as a blank box |
 | `unsupported-paged-media` | a CSS paged-media function Chromium silently discards |
@@ -86,7 +87,15 @@ it look plausible. Isolate it:
 <bdi dir="ltr">2026-10-03</bdi>
 ```
 
-The tool reports the risk; it cannot fix the text for you.
+The tool reports the risk, once per distinct token with a count of how many
+times it appears. It decides direction the way a browser does: an explicit `dir`
+or CSS `direction` on an ancestor, otherwise the first strong character in the
+paragraph, so an Arabic document with `lang="ar"` and no `dir` is still covered.
+A strong left-to-right character before the number protects it, so `ISO 8601:
+2026-10-03` and `INV-2026-0147` are correctly left alone, as is anything already
+wrapped in `<bdi dir="ltr">`.
+
+It cannot fix the text for you.
 
 ## Templates
 
@@ -99,9 +108,18 @@ The tool reports the risk; it cannot fix the text for you.
 
 `{{token}}` is escaped, so a value cannot inject markup. `{{{token}}}` passes
 HTML through untouched, for the few values that are built markup such as table
-rows. Totals are computed from `items` rather than taken from the file, so a
-hand-typed total cannot reach a customer. A missing value is an error, never an
-empty hole.
+rows.
+
+Totals are computed from `items`, never read from the file. If the file also
+carries a `subtotal`, `vat` or `total`, the computed figure wins and a mismatch
+is an error, because printing a supplied total would send a wrong figure to a
+customer. An empty `items` array, a non-numeric quantity, or a `vat_rate` that
+is not a number are all errors too.
+
+A line item description may not contain markup. `<script>` would hang the render
+on the dialog it opens, and `<style>body{display:none}</style>` produces a blank
+invoice that still reports success, so both are refused by name rather than
+escaped and printed.
 
 ## Development
 

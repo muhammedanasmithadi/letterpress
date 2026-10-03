@@ -1,5 +1,5 @@
 import { CHROMIUM, resolveChromium, type Subprocess } from "./chromium.ts";
-import type { CdpEvent } from "./types.ts";
+import type { CdpEvent } from "./chromium.ts";
 
 const CALL_TIMEOUT_MS = 30_000;
 
@@ -32,7 +32,7 @@ export class Tab {
     }
     if (msg.method) {
       for (const fn of this.#listeners.get(msg.method) ?? []) {
-        try { fn(msg.params ?? {}); } catch { /* one bad listener must not break the socket */ }
+        try { fn(msg.params as Record<string, unknown> ?? {}); } catch { /* one bad listener must not break the socket */ }
       }
     }
   }

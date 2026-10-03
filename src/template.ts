@@ -16,8 +16,8 @@ export class TemplateError extends Error {
   }
 }
 
-/** Matches an optional block first, so its inner tokens are never seen alone. */
-const PATTERN = /\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}|\{\{(\w+)\}\}/g;
+/** Matches an optional block first, then a raw token, then an escaped token. */
+const PATTERN = /\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}|\{\{\{(\w+)\}\}\}|\{\{(\w+)\}\}/g;
 
 export function render(template: string, data: TemplateData, { strict = true } = {}): string {
   const missing = new Set<string>();
@@ -30,14 +30,27 @@ export function render(template: string, data: TemplateData, { strict = true } =
  * A kept block's body is substituted recursively. String.replace does not
  * rescan the text it just inserted, so a single pass would leave tokens inside
  * a surviving block as literal braces.
+ *
+ * `{{name}}` escapes, because most values are text somebody typed. `{{{name}}}`
+ * passes through untouched, for the few values that are built HTML such as
+ * table rows. Escaping everything would print the markup as visible text;
+ * escaping nothing would let a customer name close the tag and inject script.
  */
 function substitute(template: string, data: TemplateData, missing: Set<string>): string {
-  return template.replace(PATTERN, (whole, blockKey?: string, body?: string, tokenKey?: string) => {
-    if (blockKey !== undefined) return data[blockKey] ? substitute(body!, data, missing) : "";
-    const value = data[tokenKey!];
-    if (value === undefined || value === null) { missing.add(tokenKey!); return whole; }
-    return String(value);
-  });
+  return template.replace(
+    PATTERN,
+    (whole, blockKey?: string, body?: string, rawKey?: string, textKey?: string) => {
+      if (blockKey !== undefined) return data[blockKey] ? substitute(body!, data, missing) : "";
+      if (rawKey !== undefined) {
+        const raw = data[rawKey];
+        if (raw === undefined || raw === null) { missing.add(rawKey); return whole; }
+        return String(raw);
+      }
+      const value = data[textKey!];
+      if (value === undefined || value === null) { missing.add(textKey!); return whole; }
+      return escapeHtml(String(value));
+    },
+  );
 }
 
 /** Money with thousands separators and fixed decimals, for tabular columns. */

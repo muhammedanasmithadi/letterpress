@@ -3,18 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "HTML to PDF through Chromium's own print engine, with a live exact preview",
   "scripts": {
     "test": "bun test",
     "bench": "bun tools/bench.mjs",
     "render": "bun src/cli.ts",
-    "serve": "bun src/server.ts"
+    "typecheck": "tsc --noEmit"
   },
   "engines": {
     "bun": ">=1.4.0"
   },
   "dependencies": {},
-  "devDependencies": {},
+  "devDependencies": {
+    "@types/bun": "^1.4.2"
+  },
   "peerDependenciesMeta": {},
-  "optionalDependencies": {}
+  "optionalDependencies": {},
+  "description": "HTML to PDF through Chromium own print engine"
 }

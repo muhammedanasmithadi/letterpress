@@ -90,18 +90,39 @@ the process exits and the next request pays the cold cost.
 page-count ceiling, not a wall-clock timeout, is the real guard against runaway
 documents.
 
+## Toolchain available here
+
+Poppler **is** installed: `poppler-utils-26.01.0`, providing `pdftotext`,
+`pdfinfo`, `pdffonts`, `pdfimages` and `pdftoppm` under `/usr/bin`. An earlier
+note in this file claimed poppler was absent; that was wrong. The check that
+produced it ran `pkill -f 'remote-debugging-port=9333'` in the same command, and
+the pattern matched the checking shell's own command line, so the shell was
+killed before `which` ran. Verification therefore uses poppler rather than
+hand-rolled PDF parsing, and `src/pdf.ts` exists only as a dependency-free
+fallback for environments without it.
+
+Also present: Chromium 154, Node 22.23.2, Bun 1.4.0, Deno 2.9.5, CUPS. Absent:
+puppeteer, playwright, any PDF or HTML-to-PDF library. The project declares no
+npm dependencies at all; PDF.js will be the only one, loaded in the viewer page
+at a pinned version.
+
 ## Two bugs this work uncovered
 
 **Chromium leaks processes if you signal only the parent.** Three bench runs left
 27 orphaned Chromium processes holding about a gigabyte. `detached: true` plus
-`process.kill(-pid)` to the process group measured a clean exit to 0 processes.
-Any long-running service must do the same or it becomes a memory leak.
+`process.kill(-pid)` to the process group measured a clean exit to 0 processes
+under Node's `child_process`. Under `Bun.spawn`, `detached: true` does **not**
+create a new process group: `process.kill(-pid)` either fails with `ESRCH` or
+signals the caller's own process tree. That was measured killing the shell
+running the probe. Teardown therefore uses the CDP `Browser.close` command and
+lets Chromium dismantle its own children, with a direct `proc.kill()` as the
+fallback. Never signal a process group from this codebase.
 
 **A CDP connection can open and then never be answered.** Chromium prints its
 DevTools endpoint before a page session will accept commands, so connecting the
 instant the endpoint appears yields a socket that opens and silently drops
-`Page.enable`. `waitForPageSession` in `tools/bench.mjs` polls until a trivial
-command actually round-trips. The print service needs the same guard.
+`Page.enable`. `Browser.#awaitSession` polls until a trivial command actually
+round-trips.
 
 ## Non-obvious findings
 

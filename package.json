@@ -1,0 +1,20 @@
+{
+  "name": "html2pdf",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "HTML to PDF through Chromium's own print engine, with a live exact preview",
+  "scripts": {
+    "test": "bun test",
+    "bench": "bun tools/bench.mjs",
+    "render": "bun src/cli.ts",
+    "serve": "bun src/server.ts"
+  },
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "peerDependenciesMeta": {},
+  "optionalDependencies": {}
+}

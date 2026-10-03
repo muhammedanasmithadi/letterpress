@@ -1,5 +1,6 @@
 node_modules/
 *.pdf
+*.png
 out/
 .orbit
 bench-out/

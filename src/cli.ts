@@ -28,6 +28,8 @@ options
                           ignored if the document declares @page margin
       --allow-network     permit remote http(s) requests instead of blocking
       --no-background     omit background graphics
+      --max-image-ppi <n>  downsample images above this resolution (default
+                          300, the print convention; 0 disables)
       --settle <ms>       extra wait after fonts resolve (default 0)
       --timeout <ms>      per-render deadline (default 30000)
       --json              machine-readable result on stdout
@@ -58,6 +60,7 @@ type Options = {
   background: boolean;
   settleMs: number;
   timeoutMs: number;
+  maxImagePpi: number;
   json: boolean;
   quiet: boolean;
   help?: boolean;
@@ -68,7 +71,7 @@ type ParseResult = { opts: Options; error?: string };
 export function parseArgs(argv: string[]): ParseResult {
   const opts: Options = {
     landscape: false, allowNetwork: false, background: true,
-    settleMs: 0, timeoutMs: 30_000, json: false, quiet: false,
+    settleMs: 0, timeoutMs: 30_000, maxImagePpi: 300, json: false, quiet: false,
   };
   const rest: string[] = [];
 
@@ -98,6 +101,12 @@ export function parseArgs(argv: string[]): ParseResult {
       case "--allow-network": opts.allowNetwork = true; break;
       case "--no-background": opts.background = false; break;
       case "--settle": opts.settleMs = Number(need(i, a)); i++; break;
+      case "--max-image-ppi": {
+        const v = need(i, a); i++;
+        if (!/^\d+$/.test(v)) return { opts, error: `--max-image-ppi needs a whole number, got "${v}"` };
+        opts.maxImagePpi = Number(v);
+        break;
+      }
       case "--timeout": opts.timeoutMs = Number(need(i, a)); i++; break;
       case "--json": opts.json = true; break;
       case "-q": case "--quiet": opts.quiet = true; break;
@@ -208,6 +217,7 @@ export async function main(argv: string[]): Promise<number> {
       printBackground: opts.background,
       settleMs: opts.settleMs,
       timeoutMs: opts.timeoutMs,
+      maxImagePpi: opts.maxImagePpi || undefined,
     });
 
     await Bun.write(outPath, result.pdf);

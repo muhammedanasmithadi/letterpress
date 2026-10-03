@@ -242,5 +242,68 @@ test("an http failure is reported instead of printing the error page", async () 
   } catch (e) {
     message = e instanceof Error ? e.message : String(e);
   }
-  expect(message).toMatch(/could not load|ERR_/);
+  // Either a name resolution failure or a proxy answering with a status.
+  expect(message).toMatch(/could not load|ERR_|HTTP \d\d\d/);
 }, 40_000);
+
+test("a document declaring no paper defaults to a4 through the work server", async () => {
+  // The document is served over loopback rather than opened as a file, so a
+  // regression here means the served copy is empty or missing.
+  const r = await render(browser, { html: "<!doctype html><p>served</p>" });
+  expect(r.info.pages).toBe(1);
+  expect(r.info.mediaBoxes[0]).toMatch(/59[45]\.\d+ 84[12]\.\d+/);
+}, 30_000);
+
+test("SOURCE_DATE_EPOCH makes output byte-reproducible", async () => {
+  const previous = process.env.SOURCE_DATE_EPOCH;
+  process.env.SOURCE_DATE_EPOCH = "1700000000";
+  try {
+    const html = `<!doctype html><style>@page{size:A4;margin:10mm}</style><p>reproducible</p>`;
+    const a = await render(browser, { html });
+    const b = await render(browser, { html });
+    // Chromium varies both /CreationDate and the document title, which it takes
+    // from the page URL. Fixing only the date still leaves the bytes different.
+    expect(new TextDecoder("latin1").decode(a.pdf)).toBe(new TextDecoder("latin1").decode(b.pdf));
+    const text = new TextDecoder("latin1").decode(a.pdf);
+    expect(text).toMatch(/D:20231114\d{6}Z/);
+    expect(text).toContain("document.html");
+  } finally {
+    if (previous === undefined) delete process.env.SOURCE_DATE_EPOCH;
+    else process.env.SOURCE_DATE_EPOCH = previous;
+  }
+}, 60_000);
+
+test("without SOURCE_DATE_EPOCH the timestamp is left alone", async () => {
+  const previous = process.env.SOURCE_DATE_EPOCH;
+  delete process.env.SOURCE_DATE_EPOCH;
+  try {
+    const r = await render(browser, { html: "<!doctype html><p>unstamped</p>" });
+    const text = new TextDecoder("latin1").decode(r.pdf);
+    expect(text).not.toContain("document.html");
+    expect(text).toMatch(/D:\d{14}/);
+  } finally {
+    if (previous !== undefined) process.env.SOURCE_DATE_EPOCH = previous;
+  }
+}, 30_000);
+
+test("images are downsampled to the cap, and reported", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "html2pdf-img-"));
+  try {
+    // 1200px wide at 180mm is 169ppi, so 120ppi must reduce it.
+    const photo = join(dir, "photo.jpg");
+    await Bun.write(photo, Bun.file("/tmp/small.jpg"));
+    const doc = `<!doctype html><style>@page{size:A4;margin:10mm} img{width:180mm}</style><img src="photo.jpg">`;
+    await Bun.write(join(dir, "doc.html"), doc);
+
+    const capped = await render(browser, { path: join(dir, "doc.html"), maxImagePpi: 120 });
+    expect(capped.findings.map((f) => f.code)).toContain("image-downsampled");
+    expect(capped.info.imageObjects).toBe(1);
+
+    const off = await render(browser, { path: join(dir, "doc.html"), maxImagePpi: 0 });
+    expect(off.findings.map((f) => f.code)).not.toContain("image-downsampled");
+    // Downsampling must actually shrink the file, not merely claim to.
+    expect(capped.pdf.byteLength).toBeLessThan(off.pdf.byteLength);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}, 90_000);

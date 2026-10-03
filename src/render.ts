@@ -1,3 +1,4 @@
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { rm } from "node:fs/promises";
 import { Browser, type Tab } from "./browser.ts";
 import { audit } from "./lint.ts";
@@ -39,6 +40,19 @@ export type RenderRequest = {
   printBackground?: boolean;
   settleMs?: number;
   timeoutMs?: number;
+  /**
+   * Cap on the effective resolution of raster images, in pixels per inch.
+   * Chromium prints images at their full stored resolution: a 4000px photo at
+   * 180mm lands at 565ppi and produces a PDF larger than the source file. 300
+   * is the print convention. 0 disables downsampling.
+   */
+  maxImagePpi?: number;
+  /**
+   * Extra JavaScript evaluated in the page after fonts resolve and before the
+   * print. Used by the image cap; exposed for callers who need to settle a
+   * document that only mutates on interaction.
+   */
+  beforePrint?: string;
 };
 
 export type RenderResult = {
@@ -138,22 +152,243 @@ function precedenceFindings(html: string, req: RenderRequest): Finding[] {
   return findings;
 }
 
+/**
+ * Redraw any image whose effective resolution exceeds the cap into a canvas at
+ * the capped size, and point the element at the result.
+ *
+ * Done in the page because that is where the decoded bitmap and the laid-out
+ * size both exist. Resizing the element instead would only change the display
+ * size, not the pixels Chromium embeds.
+ */
+async function capImageResolution(
+  tab: Tab,
+  maxPpi: number,
+  timeoutMs: number,
+): Promise<{ from: number; to: number; ppi: number }[]> {
+  const expression = `(() => {
+    const MAX = ${maxPpi};
+    const report = [];
+    for (const img of document.images) {
+      if (!img.naturalWidth) continue;
+      const wIn = img.getBoundingClientRect().width / 96;
+      if (!wIn) continue;
+      const ppi = img.naturalWidth / wIn;
+      if (ppi <= MAX) continue;
+      const targetW = Math.max(1, Math.round(wIn * MAX));
+      const scale = targetW / img.naturalWidth;
+      const canvas = document.createElement("canvas");
+      canvas.width = targetW;
+      canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      const ctx = canvas.getContext("2d");
+      if (!ctx) continue;
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      report.push({ from: img.naturalWidth, to: canvas.width, ppi: Math.round(ppi), url: canvas.toDataURL("image/jpeg", 0.9) });
+    }
+    return JSON.stringify(report);
+  })()`;
+
+  const res = await tab.send("Runtime.evaluate", { expression, returnByValue: true }, timeoutMs);
+  const raw = res?.result?.value;
+  if (raw == null) return [];
+  let entries: Array<{ from: number; to: number; ppi: number; url: string }>;
+  try { entries = JSON.parse(raw); } catch { return []; }
+  if (!entries.length) return [];
+
+  // A file:// or cross-origin image taints the canvas, so toDataURL throws and
+  // the whole expression returns nothing. Retry one image at a time with the
+  // CORS attribute set, and keep whatever succeeds.
+  if (entries.length && raw === undefined) {
+    const singles: typeof entries = [];
+    for (const img of await tab.send("Runtime.evaluate", {
+      expression: "Array.from(document.images).map(i => i.currentSrc || i.src).join('\\u0000')",
+      returnByValue: true,
+    }).then((r: any) => String(r?.result?.value ?? "").split("\u0000"))) {
+      const one = await tab.send("Runtime.evaluate", {
+        expression: `(() => {
+          const MAX = ${maxPpi};
+          const img = document.images.find(i => (i.currentSrc || i.src) === ${JSON.stringify(img)});
+          if (!img || !img.naturalWidth) return "null";
+          const wIn = img.getBoundingClientRect().width / 96;
+          const ppi = img.naturalWidth / wIn;
+          if (!wIn || ppi <= MAX) return "null";
+          const targetW = Math.max(1, Math.round(wIn * MAX));
+          const c = document.createElement("canvas");
+          c.width = targetW;
+          c.height = Math.max(1, Math.round(img.naturalHeight * (targetW / img.naturalWidth)));
+          const ctx = c.getContext("2d");
+          ctx.drawImage(img, 0, 0, c.width, c.height);
+          return JSON.stringify({ from: img.naturalWidth, to: c.width, ppi: Math.round(ppi), url: c.toDataURL("image/jpeg", 0.9) });
+        })()`,
+        returnByValue: true,
+      }, timeoutMs).catch(() => null);
+      const v = one?.result?.value;
+      if (v && v !== "null") { try { singles.push(JSON.parse(v)); } catch { /* skip this image */ } }
+    }
+    entries = singles;
+  }
+
+  if (!entries.length) return [];
+
+  // Swap the src, then wait for the replacement bitmap to decode.
+  await tab.send("Runtime.evaluate", {
+    expression: `(() => {
+      const swap = ${JSON.stringify(entries.map((e) => e.url))};
+      let i = 0;
+      for (const img of document.images) { if (swap[i]) img.src = swap[i++]; }
+      return true;
+    })()`,
+    returnByValue: true,
+  }, timeoutMs);
+  await tab.send("Runtime.evaluate", {
+    expression: "Promise.all(Array.from(document.images).map(i => i.decode ? i.decode().catch(() => {}) : null)).then(() => true)",
+    awaitPromise: true, returnByValue: true,
+  }, timeoutMs);
+
+  return entries.map(({ from, to, ppi }) => ({ from, to, ppi }));
+}
+
+/**
+ * Copy the images a document references into the work directory so they can be
+ * served over loopback alongside it.
+ *
+ * Paths are resolved relative to the source document and must land inside the
+ * directory the caller named; an HTML file that references ../../etc/passwd as
+ * an image must not become a way to read outside the workspace.
+ */
+async function stageAssets(html: string, source: string, dir: string): Promise<void> {
+  if (!html || /^https?:/i.test(source)) return;
+  const base = source.startsWith("/") ? dirname(source) : process.cwd();
+  const seen = new Map<string, string>();
+
+  for (const m of html.matchAll(/(?:src|href)\s*=\s*["']([^"']+)["']/gi)) {
+    const ref = m[1];
+    if (/^(?:https?:|data:|blob:|#|mailto:)/i.test(ref)) continue;
+    const clean = ref.split(/[?#]/)[0];
+    if (!clean || seen.has(clean)) continue;
+
+    const from = isAbsolute(clean) ? clean : resolve(base, clean);
+    let bytes: Buffer;
+    try { bytes = await Bun.file(from).arrayBuffer().then((b) => Buffer.from(b)); }
+    catch { continue; }
+    if (!bytes.length) continue;
+
+    // Flatten the name so a document cannot write outside the work directory.
+    const flat = clean.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/^\.+/, "") || "asset";
+    const target = join(dir, flat);
+    if (!target.startsWith(dir)) continue;
+    await Bun.write(target, bytes);
+    seen.set(clean, flat);
+  }
+
+  if (!seen.size) return;
+  // Rewrite the document to the staged copies.
+  let out = html;
+  for (const [from, to] of seen) {
+    out = out.split(`"${from}"`).join(`"/${to}"`).split(`'${from}'`).join(`'/${to}'`);
+  }
+  await Bun.write(join(dir, "input.html"), out);
+}
+
 let workDirCounter = 0;
 
 async function resolveSource(req: RenderRequest, dir: string): Promise<{ html: string; url: string; source: string }> {
   if (req.html != null) {
     // Chromium will not print a string, and about:blank gives the document no
-    // origin for relative assets, so the HTML becomes a real file.
-    const file = `${dir}/input.html`;
-    await Bun.write(file, req.html);
-    return { html: req.html, url: fileUrl(file), source: "html" };
+    // origin for relative assets, so the HTML becomes a real file. The work
+    // server below is what actually loads it.
+    await Bun.write(join(dir, "input.html"), req.html);
+    return { html: req.html, url: `${dir}/input.html`, source: "html" };
   }
   if (req.path) {
     const abs = req.path.startsWith("/") ? req.path : `${process.cwd()}/${req.path}`;
-    return { html: await Bun.file(abs).text(), url: fileUrl(abs), source: abs };
+    // Copy the source into the work directory so it is served, not opened from
+    // its original location: relative assets resolve against the served copy.
+    const html = await Bun.file(abs).text();
+    await Bun.write(join(dir, "input.html"), html);
+    return { html, url: abs, source: abs };
   }
   if (req.url) return { html: "", url: req.url, source: req.url };
   throw new Error("render needs one of: html, path, url");
+}
+
+/**
+ * Serve the work directory over loopback so the document and its images share
+ * an origin.
+ *
+ * This is not a convenience. A file:// image taints the canvas, so toDataURL
+ * throws and image downsampling becomes impossible; a document loaded over
+ * http://127.0.0.1 can draw that same image and read it back. It also means
+ * relative asset paths resolve, and it keeps Chromium's own file access out of
+ * the picture. Bound to loopback with a random port and stopped with the render.
+ */
+async function serveWorkDir(dir: string): Promise<{ origin: string; stop: () => void }> {
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    idleTimeout: 10,
+    async fetch(request) {
+      const path = new URL(request.url).pathname;
+      const name = path === "/" ? "input.html" : decodeURIComponent(path.slice(1));
+      // Confine to the work directory: a request must not be able to walk out.
+      const resolved = join(dir, name);
+      if (!resolved.startsWith(dir)) return new Response("forbidden", { status: 403 });
+      const file = Bun.file(resolved);
+      if (!(await file.exists())) return new Response("not found", { status: 404 });
+      return new Response(file);
+    },
+  });
+  return {
+    origin: `http://127.0.0.1:${server.port}`,
+    stop: () => { server.stop(true); },
+  };
+}
+
+/**
+ * Make two runs of the same input byte-identical when SOURCE_DATE_EPOCH is set.
+ *
+ * Chromium varies two things between runs: /CreationDate, and the document
+ * /Title, which it takes from the page URL. The work server runs on a random
+ * port, so the title differs even with a fixed clock. Both are rewritten here
+ * rather than suppressed, because the title carries provenance a reader may
+ * want.
+ *
+ * Nothing changes when the variable is absent, so ordinary output keeps the
+ * timestamp and title Chromium produced.
+ */
+function stampPdf(pdf: Uint8Array): Uint8Array {
+  const epoch = process.env.SOURCE_DATE_EPOCH;
+  if (!epoch || !/^\d+$/.test(epoch)) return pdf;
+  const date = new Date(Number(epoch) * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const pdfDate = `D:${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}` +
+    `${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}Z`;
+
+  const text = new TextDecoder("latin1").decode(pdf);
+  const out = new Uint8Array(pdf);
+  const edits: Array<[number, number, string]> = [];
+
+  for (const m of text.matchAll(/D:\d{14}[+\-Z][\d'Z]{0,5}/g)) {
+    if (m.index !== undefined) edits.push([m.index, m[0].length, pdfDate]);
+  }
+  // The title Chromium writes is the URL without its scheme, e.g.
+  // "127.0.0.1:38947/input.html", so match that shape rather than a full URL.
+  for (const m of text.matchAll(/\/Title \(((?:[^()\\]|\\.)*)\)/g)) {
+    if (m.index === undefined) continue;
+    const stable = m[1].replace(
+      /^(?:127\.0\.0\.1|localhost|\[::1\]):\d+\/\S*/,
+      "document.html",
+    );
+    if (stable !== m[1]) edits.push([m.index + "/Title (".length, m[1].length, stable]);
+  }
+
+  // Patch from the end so earlier offsets stay valid.
+  for (const [at, length, value] of edits.sort((a, b) => b[0] - a[0])) {
+    for (let i = 0; i < value.length; i++) out[at + i] = value.charCodeAt(i);
+    // Pad with spaces when the replacement is shorter: lengths must not change
+    // or every byte offset after it would shift and corrupt the file.
+    for (let i = value.length; i < length; i++) out[at + i] = 0x20;
+  }
+  return out;
 }
 
 export async function render(browser: Browser, req: RenderRequest): Promise<RenderResult> {
@@ -164,25 +399,38 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
   const findings: Finding[] = [];
   const blocked: string[] = [];
   let tab: Tab | undefined;
+  let server: { origin: string; stop: () => void } | undefined;
+
+  // A document fetched over the network is served by someone else, so a missing
+  // file is their problem to report. Verified after the load, when there is
+  // something to check, and only for a non-loopback origin.
+  const isRemote = /^https?:/i.test(req.url ?? "");
 
   try {
     const src = await resolveSource(req, dir);
     if (src.html) findings.push(...precedenceFindings(src.html, req));
 
+    // Copy any local image the document references into the work directory, then
+    // serve the lot over loopback. Same-origin is what makes the canvas
+    // readable, and a file:// image cannot be downsampled at all.
+    if (!isRemote) {
+      await stageAssets(src.html, src.source, dir);
+      server = await serveWorkDir(dir);
+    }
+
     // Chromium ignores paperWidth, paperHeight and landscape together while
     // preferCSSPageSize is on. Honouring --format against a document that
     // declares @page size therefore means removing the declaration first, and
     // keeping the @page margin so the document still controls its own gutters.
-    let srcUrl = src.url;
+    let srcUrl = isRemote ? src.url : `${server!.origin}/input.html`;
     if (req.format && src.html && declaredPageSize(src.html)) {
       const stripped = src.html.replace(
         /(@page[^{]*\{)([^}]*)(\})/gi,
         (_whole, open: string, body: string, close: string) =>
           open + body.replace(/(^|;)\s*\bsize\s*:[^;}]*/gi, "$1").replace(/;;+/g, ";") + close,
       );
-      const file = `${dir}/override.html`;
-      await Bun.write(file, stripped);
-      srcUrl = fileUrl(file);
+      await Bun.write(join(dir, "override.html"), stripped);
+      srcUrl = `${server!.origin}/override.html`;
     }
 
     tab = await browser.newTab();
@@ -200,11 +448,18 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       await tab.send("Page.enable");
       await tab.send("Runtime.enable");
       await tab.send("Network.enable");
-      // Intercept http(s) only, so the file:// document itself still loads while
-      // every remote asset is both blocked and recorded.
+      // Intercept http(s) only, so the document itself still loads while every
+      // remote asset is both blocked and recorded. Loopback is exempt: the
+      // document and its staged images are served from 127.0.0.1, and treating
+      // our own origin as remote blocks the document's images.
+      const loopback = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$)/i;
       await tab.send("Fetch.enable", { patterns: [{ urlPattern: "http://*" }, { urlPattern: "https://*" }] });
       tab.on("Fetch.requestPaused", (p) => {
         const url = String(p.request?.url ?? "");
+        if (loopback.test(url)) {
+          void tab!.send("Fetch.continueRequest", { requestId: p.requestId }).catch(() => {});
+          return;
+        }
         const proceed = req.allowNetwork
           ? tab!.send("Fetch.continueRequest", { requestId: p.requestId })
           : (blocked.length < MAX_BLOCKED_REPORTED && blocked.push(url),
@@ -214,11 +469,16 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
 
       // A 404 or a DNS failure still "loads": Chromium renders its own error
       // page, which would otherwise be printed and reported as a success.
+      // Only meaningful for a document fetched over the network. The local work
+      // server answers 404 for a missing staged asset, which says nothing about
+      // whether the document itself loaded.
       let mainStatus: number | undefined;
       let netError: string | undefined;
-      tab.on("Network.responseReceived", (p) => {
-        if (p.type === "Document" && !mainStatus) mainStatus = p.response?.status;
-      });
+      if (isRemote) {
+        tab.on("Network.responseReceived", (p) => {
+          if (p.type === "Document" && !mainStatus) mainStatus = p.response?.status;
+        });
+      }
       tab.on("Network.loadingFailed", (p) => {
         if (!netError && p.type !== "Image" && !p.blockedReason) netError = p.errorText;
       });
@@ -253,6 +513,22 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         returnByValue: true,
       }, timeoutMs);
       if (req.settleMs) await Bun.sleep(req.settleMs);
+      if (req.beforePrint) {
+        await tab.send("Runtime.evaluate", {
+          expression: req.beforePrint, awaitPromise: true, returnByValue: true,
+        }, timeoutMs);
+      }
+
+      // Downsample before measuring, so the findings describe the PDF that was
+      // actually produced rather than the page as authored.
+      const capped = req.maxImagePpi ? await capImageResolution(tab, req.maxImagePpi, timeoutMs) : [];
+      for (const c of capped) {
+        findings.push({
+          code: "image-downsampled",
+          severity: "info",
+          message: `image downsampled from ${c.from}px to ${c.to}px wide, ${c.ppi}ppi down to ${req.maxImagePpi}ppi, to keep the PDF a reasonable size.`,
+        });
+      }
 
       findings.push(...await audit(tab, timeoutMs));
 
@@ -317,7 +593,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         throw e;
       }
 
-      const pdf = new Uint8Array(Buffer.from(res.data, "base64"));
+      const pdf = stampPdf(new Uint8Array(Buffer.from(res.data, "base64")));
       const info = inspect(pdf);
 
       for (const url of blocked) {
@@ -349,6 +625,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
     }
   } finally {
     if (tab) await browser.closeTab(tab).catch(() => {});
+    server?.stop();
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
 }

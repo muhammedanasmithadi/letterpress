@@ -29,6 +29,7 @@ bun src/cli.ts --template invoice --data order.json -o invoice.pdf
 | structure | tagged PDF, bookmarks from `<h1>`–`<h6>` |
 | fonts | embedded and subset, including a full Arabic set |
 | eight concurrent renders | ~1.1 s wall; one browser is enough |
+| image downsampling | capped at 300 ppi by default; a 4000px photo at 180mm would otherwise print at 565 ppi and produce a PDF larger than the source |
 
 ## Writing a document that paginates well
 
@@ -55,6 +56,30 @@ Three things Chromium does **not** implement, all of which fail silently:
 
 The tool reports each of these as an `unsupported-paged-media` finding rather
 than letting you find out from the finished document.
+
+## Reproducible output
+
+Chromium varies two things between runs of identical input: `/CreationDate`, and
+the document title, which it takes from the page URL. Set `SOURCE_DATE_EPOCH` and
+both are rewritten, so two runs of the same document are byte-identical:
+
+```bash
+SOURCE_DATE_EPOCH=1700000000 bun src/cli.ts page.html -o page.pdf
+```
+
+Without it, output keeps the timestamp and title Chromium produced. Animated CSS
+is already deterministic in the print path, so no animation flag is needed.
+
+## Images
+
+Raster images print at their full stored resolution, which for a modern camera
+means a PDF larger than the file you started from. `--max-image-ppi` caps the
+effective resolution at 300 by default, the print convention; `0` disables it.
+Every reduction is reported as an `image-downsampled` finding.
+
+To make this work the document and its images are served together over loopback
+rather than opened as files. A `file://` image taints the canvas, so it cannot
+be read back for resizing at all.
 
 ## Findings
 

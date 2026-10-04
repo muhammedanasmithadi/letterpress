@@ -1,0 +1,244 @@
+/*
+  Two colours and a shadow.
+
+  The platform already styles form controls well, and hand-writing a palette on
+  top of them mostly produces a toolbar that looks like a 2019 clone. So: let
+  the OS pick the surface and the text, take the accent from the system, and
+  derive every border from currentColor at low alpha. That reads as native in
+  light and dark without a token table.
+
+  The only literal hex values here are the two halves of accent-color, which
+  has no keyword equivalent.
+*/
+
+:root {
+  color-scheme: light dark;
+
+  /* Follows the OS. Both halves are the standard platform accent blues. */
+  accent-color: light-dark(#0060df, #7cb7ff);
+
+  /* Derived, not declared. One knob controls every divider and every surface
+     tint, so light and dark cannot drift apart the way a token table lets
+     them. */
+  --line: color-mix(in oklab, currentColor 16%, transparent);
+  --tint: color-mix(in oklab, currentColor 4%, transparent);
+  --shadow: 0 1px 2px color-mix(in oklab, black 12%, transparent);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: grid;
+  /* Rows: toolbar, panes, status. The middle row takes the slack so the panes
+     scroll rather than the window. */
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+
+  background: Canvas;
+  color: CanvasText;
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* ---------- toolbar ---------- */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 4px 14px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--tint);
+}
+
+.toolbar h1 {
+  margin: 0 8px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  /* Sits with the control row rather than floating above it. */
+  align-self: center;
+  white-space: nowrap;
+}
+
+.group {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+}
+
+.spacer { flex: 1 1 auto; }
+
+.field {
+  display: grid;
+  /* Labels above controls. Reads as a row of settings rather than a row of
+     captions, and survives a long option name. */
+  grid-template-areas: "label" "control";
+  gap: 2px;
+  font-size: 11px;
+  color: color-mix(in oklab, CanvasText 70%, transparent);
+}
+
+.field > span { grid-area: label; }
+
+.field.checkbox {
+  grid-template-areas: "control label";
+  align-items: center;
+  gap: 5px;
+  /* Same baseline as a labelled control, so a row of checkboxes lines up with
+     the inputs above and below them. */
+  align-self: end;
+  padding-bottom: 3px;
+}
+
+.field.checkbox > input { grid-area: control; margin: 0; }
+.field.checkbox > span { grid-area: label; }
+
+select, input[type="text"], input[type="number"], input[type="file"] {
+  grid-area: control;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 4px;
+  min-width: 0;
+  color: inherit;
+  /* No border override and no background override. The platform's own styling
+     is the point, and replacing either of these is how a control stops looking
+     native. */
+}
+
+/* Widths, because the default is wrong in a toolbar: a number input and a file
+   input both stretch to fill whatever the flex row gives them, which turns a
+   five digit ppi cap into a 200px box. Sized to their content, not to the row. */
+/* The number box needs room for the spinner's own gutter: at 6ch a value of
+   300 displayed as "30", which reads as a different setting. */
+input[type="number"] { width: 9ch; }
+input[type="text"] { width: 8ch; }
+input[type="file"] { width: 20ch; }
+select { max-width: 22ch; }
+
+input:disabled {
+  opacity: 0.55;
+}
+
+button {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+button.primary {
+  font-weight: 600;
+}
+
+button:disabled { cursor: default; opacity: 0.55; }
+
+/* ---------- split panes ---------- */
+
+.split {
+  display: grid;
+  /* Resizable in Chromium and Firefox by default; the handle is the gutter. */
+  grid-template-columns: 1fr 1fr;
+  min-height: 0;
+}
+
+.pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pane + .pane { border-left: 1px solid var(--line); }
+
+.pane h2 {
+  margin: 0;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, CanvasText 60%, transparent);
+  border-bottom: 1px solid var(--line);
+}
+
+.hint {
+  margin: 0;
+  padding: 4px 12px;
+  font-size: 11px;
+  color: color-mix(in oklab, CanvasText 55%, transparent);
+  border-top: 1px solid var(--line);
+}
+
+#source {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  resize: none;
+  border: 0;
+  padding: 10px 12px;
+  font: 12px/1.55 ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+  /* Without this the textarea's own background wins over the page's, and the
+     pane goes light-on-light in dark mode. */
+  background: transparent;
+  color: inherit;
+  tab-size: 2;
+}
+
+.preview {
+  overflow: auto;
+  padding: 16px;
+  /* The page shadow needs a slightly darker backdrop than the page itself, or a
+     white sheet on a white pane has no edge. */
+  background: var(--tint);
+}
+
+.placeholder {
+  margin: 0;
+  color: color-mix(in oklab, CanvasText 55%, transparent);
+  text-align: center;
+  padding-top: 40px;
+}
+
+.placeholder .sub {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+/* ---------- status ---------- */
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 12px;
+  font-size: 11px;
+  border-top: 1px solid var(--line);
+  background: var(--tint);
+}
+
+.metrics {
+  margin-left: auto;
+  color: color-mix(in oklab, CanvasText 60%, transparent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.status[data-level="error"] { color: light-dark(#b3261e, #ffb4ab); }
+.status[data-level="warn"]  { color: light-dark(#8a5300, #f9d67c); }
+
+@media (prefers-reduced-motion: no-preference) {
+  button, select, input { transition: background-color 120ms ease; }
+}
+
+@media (width < 700px) {
+  /* Below this the two panes are unreadable side by side, so stack them. */
+  .split { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+  .pane + .pane { border-left: 0; border-top: 1px solid var(--line); }
+}

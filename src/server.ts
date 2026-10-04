@@ -53,6 +53,11 @@ export type RenderBody = {
   path?: unknown;
   format?: string;
   landscape?: boolean;
+  /** CSS length, e.g. "15mm". Consulted only alongside format. */
+  margin?: string;
+  /** The viewer's "Background" checkbox, which is printBackground inverted. */
+  printBackground?: boolean;
+  allowNetwork?: boolean;
   pageRanges?: string;
   maxImagePpi?: number;
   settleMs?: number;
@@ -310,6 +315,40 @@ export async function startServer(opts: ServerOptions = {}) {
         if (body.pageRanges !== undefined && typeof body.pageRanges !== "string") {
           return badRequest("pageRanges must be a string like \"1-3\"");
         }
+        // A margin that is not a CSS length is a typo, and the CLI names the
+        // mistake rather than letting it reach the renderer, which reports
+        // "unsupported margin" and a 500.
+        if (body.margin !== undefined) {
+          if (typeof body.margin !== "string") {
+            return badRequest("margin must be a string like \"15mm\"");
+          }
+          const m = body.margin.trim();
+          // Checked here as well as in the renderer, so a bad value is a 400
+          // with a usable message instead of a 500 from deep inside the print
+          // call. The unit set matches toInches exactly: every absolute unit,
+          // no relative ones, because those cannot be resolved before layout.
+          // A bare 0 needs no unit.
+          const isLength = /^0(?:\.0+)?$/.test(m) ||
+            /^-?\d*\.?\d+(mm|cm|in|pt|px|pc|q)$/.test(m);
+          if (m && !isLength) {
+            return badRequest(
+              `margin "${body.margin}" is not an absolute css length. use mm, cm, in, pt, pc, ` +
+              `px or a bare 0, such as 15mm or 1in. relative units like em and vw depend on layout ` +
+              `and cannot be resolved before the page is printed.`,
+            );
+          }
+          if (!Object.hasOwn(FORMATS, String(format ?? "").toLowerCase())) {
+            return badRequest(
+              "margin only applies alongside format, because a document's own @page margin wins otherwise. " +
+              "send format too, or drop the margin.",
+            );
+          }
+        }
+        for (const key of ["printBackground", "allowNetwork", "landscape"] as const) {
+          if (body[key] !== undefined && typeof body[key] !== "boolean") {
+            return badRequest(`${key} must be true or false`);
+          }
+        }
         for (const key of ["maxImagePpi", "settleMs", "timeoutMs"] as const) {
           if (body[key] === undefined || body[key] === null) continue;
           if (typeof body[key] !== "number" || !Number.isFinite(body[key])) {
@@ -332,13 +371,17 @@ export async function startServer(opts: ServerOptions = {}) {
               html: body.html!,
               format: format as Format | undefined,
               landscape: body.landscape === true,
+              margin: typeof body.margin === "string" ? body.margin.trim() || undefined : undefined,
+              // The viewer's checkbox is "Background", checked by default, which
+              // is the inverse of the CLI's --no-background flag.
+              printBackground: body.printBackground !== false,
+              // Off unless the caller asks. A preview has no business fetching
+              // remote assets silently, and the CLI's default is the same.
+              allowNetwork: body.allowNetwork === true,
               pageRanges: body.pageRanges,
               maxImagePpi: clamp(body.maxImagePpi, 1200, undefined as unknown as number),
               settleMs: clamp(body.settleMs, MAX_SETTLE_MS, undefined as unknown as number),
               timeoutMs: clamp(body.timeoutMs, MAX_TIMEOUT_MS, undefined as unknown as number),
-              // A preview has no business fetching remote assets, and the CLI's
-              // default is the same. Callers that want it must ask.
-              allowNetwork: false,
             });
             return Response.json({
               ok: true,

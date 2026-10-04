@@ -445,11 +445,17 @@ describe("type confusion is a 400", () => {
   }, 120_000);
 
   test("landscape is only true when it is true", async () => {
-    const r = await post({ html: DOC, landscape: "yes" });
-    expect(r.status).toBe(200);
-    const body = await r.json() as { mediaBoxes: string[] };
-    // "yes" is truthy in javascript, and an earlier version applied it. A
-    // typo in a boolean should not silently rotate the paper.
-    expect(body.mediaBoxes[0]).toContain("594");
-  }, 90_000);
+    // "yes" is truthy in javascript, and an earlier version applied it, so a
+    // typo rotated the paper. The viewer now needs a real boolean and the
+    // server refuses the rest, which is stronger than quietly ignoring it.
+    for (const bad of ["yes", 1, 0, null, {}]) {
+      const r = await post({ html: DOC, landscape: bad });
+      expect(r.status, JSON.stringify(bad)).toBe(400);
+      expect((await r.json() as { error: string }).error).toContain("landscape must be");
+    }
+    // And the real thing still works.
+    const ok = await post({ html: DOC, format: "a4", landscape: true });
+    expect(ok.status).toBe(200);
+    expect((await ok.json() as { mediaBoxes: string[] }).mediaBoxes[0]).toContain("841");
+  }, 120_000);
 });

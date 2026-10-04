@@ -107,14 +107,53 @@ export type RenderResult = {
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_BLOCKED_REPORTED = 20;
 
-/** Parse a CSS length into inches. CSS uses 96 pixels per inch. */
+/**
+ * Parse a CSS length into inches. CSS uses 96 pixels per inch.
+ *
+ * Every absolute unit is here, and a leading minus: a negative margin is valid
+ * CSS, and the regex without one rejected it as unparseable. The two units it
+ * was missing are q (a quarter millimetre) and pc (picas).
+ *
+ * Relative units are refused with the reason rather than a bare rejection. em,
+ * rem, ex and ch resolve against a font size, and vw and vh against a viewport,
+ * so neither is knowable before the page has been laid out. printToPDF wants
+ * inches. Guessing would be worse than saying so.
+ */
+const ABSOLUTE_UNITS: Record<string, number> = {
+  px: 96, in: 1, cm: 2.54, mm: 25.4, q: 101.6, pt: 72, pc: 6,
+};
+
+const RELATIVE_UNITS = ["em", "rem", "ex", "ch", "vw", "vh", "vmin", "vmax", "%", "lh", "rlh", "cap", "ic"];
+
 export function toInches(len: string): number {
-  const m = len.trim().match(/^([\d.]+)\s*(mm|cm|in|px|pt)?$/i);
-  if (!m) throw new Error(`unsupported margin: ${len}`);
-  const perInch: Record<string, number> = { px: 96, in: 1, cm: 2.54, mm: 25.4, pt: 72 };
-  const unit = (m[2] ?? "px").toLowerCase();
-  if (!(unit in perInch)) throw new Error(`unsupported margin unit: ${unit}`);
-  return Number(m[1]) / perInch[unit];
+  const raw = len.trim();
+  const m = raw.match(/^(-?[\d.]+)\s*([a-z%]*)$/i);
+  if (!m) throw new Error(`margin "${len}" is not a css length: use a number with a unit, such as 15mm, 1in, 2cm, 40pt, or a bare 0.`);
+  const unit = (m[2] || "px").toLowerCase();
+  if (RELATIVE_UNITS.includes(unit)) {
+    throw new Error(
+      `margin unit "${unit}" is relative, so its size is only known after layout: ` +
+      `"${unit}" resolves against a font size or a viewport, and printToPDF takes inches. ` +
+      `use an absolute unit: mm, cm, in, pt, pc, px, or a bare 0.`,
+    );
+  }
+  if (!Object.hasOwn(ABSOLUTE_UNITS, unit)) {
+    throw new Error(`unsupported margin unit "${unit}". use mm, cm, in, pt, pc, px, or a bare 0.`);
+  }
+  const value = Number(m[1]);
+  if (!Number.isFinite(value)) {
+    throw new Error(`margin "${len}" is not a number.`);
+  }
+  // CSS allows a bare zero and nothing else. "20" was being read as 20px, which
+  // is a margin nobody asked for, and it disagreed with the server, which
+  // refuses a bare number.
+  if (!m[2] && value !== 0) {
+    throw new Error(
+      `margin "${len}" needs a unit: a bare number is not a css length, only a bare 0 is. ` +
+      `use px, pt, mm, cm or in.`,
+    );
+  }
+  return value / ABSOLUTE_UNITS[unit];
 }
 
 export function fileUrl(path: string): string {
@@ -784,6 +823,15 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       const preferCss = docOverridesPaper && !req.format;
       const paper = req.format ? FORMATS[req.format] : preferCss ? undefined : FORMATS.a4;
       const margin = req.margin ? toInches(req.margin) : undefined;
+      if (margin !== undefined && margin < 0) {
+        // Checked here because printToPDF's own refusal comes back as "left
+        // margin is negative", which names neither the flag nor the value.
+        throw new Error(
+          `margin ${req.margin} is negative, and printToPDF refuses a negative page margin on all ` +
+          `four sides. a negative margin bleeds content off the sheet, which is what @page margin does ` +
+          `in a stylesheet if you need it.`,
+        );
+      }
       const transposed = !!req.landscape && !!paper && !preferCss;
       const paperWidth = transposed ? paper![1] : paper?.[0];
       const paperHeight = transposed ? paper![0] : paper?.[1];

@@ -18,6 +18,8 @@ export type PopplerInfo = {
   pages: number;
   pageSize: string;
   encrypted: boolean;
+  /** Document title from the metadata. Chromium takes this from the page URL. */
+  title: string;
 };
 
 export async function pdfInfo(bytes: Uint8Array): Promise<PopplerInfo> {
@@ -27,6 +29,7 @@ export async function pdfInfo(bytes: Uint8Array): Promise<PopplerInfo> {
       pages: Number(out.match(/^Pages:\s+(\d+)/m)?.[1] ?? 0),
       pageSize: out.match(/^Page size:\s+(.+)$/m)?.[1]?.trim() ?? "",
       encrypted: /^Encrypted:\s+yes/m.test(out),
+      title: out.match(/^Title:\s+(.*)$/m)?.[1] ?? "",
     };
   });
 }

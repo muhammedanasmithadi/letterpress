@@ -270,7 +270,7 @@ test("SOURCE_DATE_EPOCH makes output byte-reproducible", async () => {
     expect(new TextDecoder("latin1").decode(a.pdf)).toBe(new TextDecoder("latin1").decode(b.pdf));
     const text = new TextDecoder("latin1").decode(a.pdf);
     expect(text).toMatch(/D:20231114\d{6}Z/);
-    expect(text).toContain("document.html");
+    expect(text).toContain("document");
   } finally {
     if (previous === undefined) delete process.env.SOURCE_DATE_EPOCH;
     else process.env.SOURCE_DATE_EPOCH = previous;
@@ -283,8 +283,14 @@ test("without SOURCE_DATE_EPOCH the timestamp is left alone", async () => {
   try {
     const r = await render(browser, { html: "<!doctype html><p>unstamped</p>" });
     const text = new TextDecoder("latin1").decode(r.pdf);
-    expect(text).not.toContain("document.html");
+    // The timestamp is Chromium's own, and the title is normalised either way.
+    // What must not reappear is the loopback address the document was served
+    // from: a random port in the metadata made two runs of one input differ.
     expect(text).toMatch(/D:\d{14}/);
+    expect(text).not.toMatch(/127\.0\.0\.1:\d+/);
+    // Trailing spaces are the fixed-width padding. A pdf reader trims them, and
+    // pdfinfo reports the title as exactly "document".
+    expect(text).toMatch(/\/Title \(document *\)/);
   } finally {
     if (previous !== undefined) process.env.SOURCE_DATE_EPOCH = previous;
   }

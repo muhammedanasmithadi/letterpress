@@ -6,7 +6,7 @@ import { Browser } from "../src/browser.ts";
 import { render } from "../src/render.ts";
 import { main } from "../src/cli.ts";
 import { render as fillTemplate } from "../src/template.ts";
-import { pdfText } from "./poppler.ts";
+import { pdfInfo, pdfText } from "./poppler.ts";
 
 let browser: Browser;
 let profile: string;
@@ -396,6 +396,10 @@ describe("ctrl-c cancels", () => {
       }`,
     );
 
+    const { readdirSync: readSync } = await import("node:fs");
+    const profileDirsBefore = new Set(
+      readSync(tmpdir()).filter((n) => n.startsWith("html2pdf-cli-") || n.startsWith("html2pdf-server-")),
+    );
     const before = (await readdir(tmpdir())).length;
     const child = Bun.spawn(["bun", join(import.meta.dir, "..", "src", "cli.ts"), big,
       "--timeout", "300000", "-o", join(dir, "cancelled.pdf")], {
@@ -409,10 +413,10 @@ describe("ctrl-c cancels", () => {
     // Scoped to this run's profile directory. Counting every chromium on the
     // machine measures this test file's own beforeAll browser, which is about
     // eleven processes and has nothing to do with the child.
-    const strays = async () =>
+    const chromiumForRun = async () =>
       (await Bun.$`ps -eo args`.text())
         .split("\n").filter((l) => l.includes("chromium-browser") && l.includes("html2pdf-cli-")).length;
-    const alive = await strays();
+    const alive = await chromiumForRun();
     expect(alive, "chromium should be running before the signal").toBeGreaterThan(2);
     // If the render already finished, this test measures nothing at all. A warm
     // chromium turned a 6000-line document round in under nine seconds once.
@@ -431,6 +435,17 @@ describe("ctrl-c cancels", () => {
     // No partial output: a half-written pdf is worse than none.
     expect(await Bun.file(join(dir, "cancelled.pdf")).exists()).toBe(false);
 
+    // And no leftover directories. process.exit skips the finally block that
+    // normally removes them, so an interrupted run left a seventeen-file
+    // chromium profile and a work directory behind every time.
+    const dirsNow = readSync(tmpdir()).filter(
+      (n) => n.startsWith("html2pdf-cli-") || n.startsWith("html2pdf-server-"),
+    );
+    expect(
+      dirsNow.filter((n: string) => !profileDirsBefore.has(n)),
+      "left behind by this run",
+    ).toEqual([]);
+
     // And no orphaned chromium. It was 3 to 7 processes lingering about twenty
     // seconds, which is enough to trip a CI check for stray processes.
     //
@@ -440,12 +455,139 @@ describe("ctrl-c cancels", () => {
     // count reaches zero immediately, and under a loaded machine a crashpad
     // handler can still be a second late. What matters is that nothing is
     // orphaned, not that the kernel reaped it within 2000ms.
-    let remaining = await strays();
+    let remaining = await chromiumForRun();
     for (let waited = 0; waited < 15_000 && remaining > 0; waited += 500) {
       await Bun.sleep(500);
-      remaining = await strays();
+      remaining = await chromiumForRun();
     }
     expect(remaining, "chromium processes for this run after the signal").toBe(0);
     void before;
   }, 120_000);
+});
+
+describe("stdin is bounded by the deadline", () => {
+  test("a pipe that never closes is given up on", async () => {
+    // Measured: `{ printf "<html>"; sleep 600; } | html2pdf - --timeout 5000`
+    // hung past 25 seconds with no output, no file and no diagnostic. --timeout
+    // covered the render and not the read, and no flag would end it.
+    const fifo = join(dir, "fifo");
+    await Bun.$`mkfifo ${fifo}`.quiet();
+    // The write end is held open on a separate descriptor. `printf ... > fifo`
+    // closes it as soon as printf exits, so the reader sees EOF and the test
+    // measures a normal short read instead of a stalled pipe.
+    const held = Bun.spawn([
+      "sh", "-c",
+      `exec 3> ${fifo}; printf '<!doctype html><p>partial' >&3; sleep 60`,
+    ]);
+
+    let child: { kill: (n?: number | NodeJS.Signals) => void } | undefined;
+    let elapsed = 0;
+    let err = "";
+    try {
+      await Bun.sleep(400);
+      const { openSync } = await import("node:fs");
+      const started = Date.now();
+      const spawned = Bun.spawn(
+        ["bun", join(import.meta.dir, "..", "src", "cli.ts"), "-", "--timeout", "5000", "-o", join(dir, "s.pdf")],
+        // Opened, not passed as a path: opening for read blocks until a writer
+        // arrives, which is the state this test is trying to hold open.
+        { stdin: openSync(fifo, "r"), stdout: "pipe", stderr: "pipe" },
+      );
+      child = spawned;
+      err = await new Response(spawned.stderr).text();
+      await spawned.exited;
+      elapsed = Date.now() - started;
+    } finally {
+      // In a finally, because an assertion that throws before the kill leaves a
+      // shell holding the write end open for the next sixty seconds. One did,
+      // and it was still alive an hour later.
+      child?.kill("SIGKILL");
+      held.kill("SIGKILL");
+    }
+
+    expect(err).toContain("stdin was still open after 5s");
+    // The clock is raced against the read. Checking the deadline inside the
+    // loop did nothing, because a pipe that sends nothing never yields another
+    // chunk for the check to run on: the first version still had to be killed.
+    expect(elapsed, `took ${elapsed}ms`).toBeLessThan(20_000);
+    expect(await Bun.file(join(dir, "s.pdf")).exists()).toBe(false);
+  }, 90_000);
+
+  test("a pipe that closes normally is unaffected", async () => {
+    const child = Bun.spawn(
+      ["bun", join(import.meta.dir, "..", "src", "cli.ts"), "-", "--timeout", "30000", "-o", join(dir, "ok.pdf")],
+      { stdin: Buffer.from(DOC), stdout: "pipe", stderr: "pipe" },
+    );
+    await child.exited;
+    expect(await Bun.file(join(dir, "ok.pdf")).exists()).toBe(true);
+    const bytes = new Uint8Array(await Bun.file(join(dir, "ok.pdf")).arrayBuffer());
+    expect(await pdfText(bytes)).toContain("Real");
+  }, 60_000);
+
+  test("a slow trickle that finishes is still accepted", async () => {
+    const child = Bun.spawn(
+      ["sh", "-c", `printf '<!doctype html><p>Slow</p>'; sleep 3`],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const pump = Bun.spawn(
+      ["bun", join(import.meta.dir, "..", "src", "cli.ts"), "-", "--timeout", "30000", "-o", join(dir, "slow.pdf")],
+      { stdin: child.stdout, stdout: "pipe", stderr: "pipe" },
+    );
+    await pump.exited;
+    const bytes = new Uint8Array(await Bun.file(join(dir, "slow.pdf")).arrayBuffer());
+    expect(await pdfText(bytes)).toContain("Slow");
+  }, 60_000);
+});
+
+describe("the pdf title is not a loopback port", () => {
+  test("a document with no title is titled after its file", async () => {
+    // Chromium titles a document from the page URL, so a document with no
+    // <title> came out titled "127.0.0.1:40263/input.html" with a different
+    // random port every run. That only got rewritten under SOURCE_DATE_EPOCH,
+    // so it was the normal output of the tool.
+    const p = join(dir, "notitle.html");
+    await writeFile(p, `<!doctype html><style>@page{size:A4;margin:9mm}</style><h1>No title</h1>`);
+    for (const out of ["a.pdf", "b.pdf"]) {
+      await cli([p, "-o", join(dir, out)]);
+      const info = await pdfInfo(new Uint8Array(await Bun.file(join(dir, out)).arrayBuffer()));
+      // pdfinfo trims the fixed-width padding the title patcher leaves behind.
+      expect(info.title.trim(), out).toBe("notitle.html");
+    }
+  }, 150_000);
+
+  test("a document that declares a title keeps it", async () => {
+    const p = join(dir, "titled.html");
+    await writeFile(p, `<!doctype html><title>My Real Title</title><p>x</p>`);
+    await cli([p, "-o", join(dir, "t.pdf")]);
+    const info = await pdfInfo(new Uint8Array(await Bun.file(join(dir, "t.pdf")).arrayBuffer()));
+    expect(info.title.trim()).toBe("My Real Title");
+  }, 60_000);
+
+  test("the title is stable across runs without SOURCE_DATE_EPOCH", async () => {
+    const p = join(dir, "stable.html");
+    await writeFile(p, `<!doctype html><p>x</p>`);
+    const titles = new Set<string>();
+    for (const out of ["1.pdf", "2.pdf", "3.pdf"]) {
+      await cli([p, "-o", join(dir, out)]);
+      const info = await pdfInfo(new Uint8Array(await Bun.file(join(dir, out)).arrayBuffer()));
+      titles.add(info.title.trim());
+    }
+    expect(titles.size).toBe(1);
+  }, 120_000);
+
+  test("a long filename does not corrupt the pdf", async () => {
+    // The patcher wrote value.length bytes into a slot of title.length. A
+    // replacement longer than the original overran into the rest of the file,
+    // which is the corruption the fixed-width design exists to prevent. The old
+    // constant was short enough never to reach it.
+    const name = `${"n".repeat(120)}.html`;
+    const p = join(dir, name);
+    await writeFile(p, `<!doctype html><p>long</p>`);
+    const out = join(dir, "long.pdf");
+    expect((await cli([p, "-o", out])).code).toBe(0);
+    const bytes = new Uint8Array(await Bun.file(out).arrayBuffer());
+    // Still a readable pdf, not a file with bytes shifted.
+    expect((await pdfInfo(bytes)).pages).toBe(1);
+    expect(await pdfText(bytes)).toContain("long");
+  }, 60_000);
 });

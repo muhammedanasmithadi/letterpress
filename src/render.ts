@@ -1,4 +1,4 @@
-import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import { rm } from "node:fs/promises";
 import { Browser, type Tab } from "./browser.ts";
 import { audit } from "./lint.ts";
@@ -485,41 +485,49 @@ async function serveWorkDir(dir: string): Promise<{ origin: string; stop: () => 
  * Nothing changes when the variable is absent, so ordinary output keeps the
  * timestamp and title Chromium produced.
  */
-function stampPdf(pdf: Uint8Array): Uint8Array {
-  const epoch = process.env.SOURCE_DATE_EPOCH;
-  if (!epoch || !/^\d+$/.test(epoch)) return pdf;
-  const date = new Date(Number(epoch) * 1000);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const pdfDate = `D:${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}` +
-    `${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}Z`;
-
+function stampPdf(pdf: Uint8Array, fallbackTitle: string): Uint8Array {
   const text = new TextDecoder("latin1").decode(pdf);
   const out = new Uint8Array(pdf);
   const edits: Array<[number, number, string]> = [];
 
-  for (const m of text.matchAll(/D:\d{14}[+\-Z][\d'Z]{0,5}/g)) {
-    if (m.index !== undefined) edits.push([m.index, m[0].length, pdfDate]);
+  const epoch = process.env.SOURCE_DATE_EPOCH;
+  if (epoch && /^\d+$/.test(epoch)) {
+    const date = new Date(Number(epoch) * 1000);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const pdfDate = `D:${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}` +
+      `${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}Z`;
+    for (const m of text.matchAll(/D:\d{14}[+\-Z][\d'Z]{0,5}/g)) {
+      if (m.index !== undefined) edits.push([m.index, m[0].length, pdfDate]);
+    }
   }
-  // The title Chromium writes is the URL without its scheme, e.g.
-  // "127.0.0.1:38947/input.html", so match that shape rather than a full URL.
-  // Chromium titles the document from the page URL. Which URL depends on how the
-  // document was loaded: the work server's loopback address, "about:blank" when
-  // setDocumentContent installed it, or the remote address. All three vary
-  // between runs, so all three are replaced with one stable value.
+
+  // Chromium titles the document from the page URL, and which URL depends on how
+  // it was loaded: the work server's loopback address with a random port,
+  // "about:blank" when setDocumentContent installed it, or the remote address.
+  // A document with no <title> therefore came out titled
+  // "127.0.0.1:40263/input.html", with a different random port every run. That
+  // only got rewritten when SOURCE_DATE_EPOCH was set, so it was normal output.
+  // It is fixed unconditionally now; a document that declares its own title is
+  // left alone because it does not match.
   const volatileTitle = /^(?:127\.0\.0\.1|localhost|\[::1\]):\d+\/\S*|^about:blank$/i;
   for (const m of text.matchAll(/\/Title \(((?:[^()\\]|\\.)*)\)/g)) {
     if (m.index === undefined) continue;
     const title = m[1];
     if (!volatileTitle.test(title)) continue;
-    edits.push([m.index + "/Title (".length, title.length, "document.html"]);
+    edits.push([m.index + "/Title (".length, title.length, fallbackTitle]);
   }
 
   // Patch from the end so earlier offsets stay valid.
   for (const [at, length, value] of edits.sort((a, b) => b[0] - a[0])) {
-    for (let i = 0; i < value.length; i++) out[at + i] = value.charCodeAt(i);
+    // Truncated to the slot. A longer replacement used to be written past the
+    // end of the title and into the rest of the file, which is exactly the
+    // corruption the fixed-width design exists to prevent. The old constant was
+    // short enough never to reach it, so nothing caught it.
+    const fit = value.slice(0, length);
+    for (let i = 0; i < fit.length; i++) out[at + i] = fit.charCodeAt(i);
     // Pad with spaces when the replacement is shorter: lengths must not change
     // or every byte offset after it would shift and corrupt the file.
-    for (let i = value.length; i < length; i++) out[at + i] = 0x20;
+    for (let i = fit.length; i < length; i++) out[at + i] = 0x20;
   }
   return out;
 }
@@ -814,7 +822,18 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       const raw = useStream && res.stream
         ? await drainStream(tab, res.stream, { timeoutMs })
         : new Uint8Array(Buffer.from(res.data, "base64"));
-      const pdf = stampPdf(raw);
+      // A document that declares no <title> should be titled after the file it
+      // came from, not after the loopback port that served it.
+      //
+      // "document" and not "document.html" for the same reason: the slot can be
+      // as short as the eleven characters of "about:blank", the title chromium
+      // writes on the fast path, and a longer name is truncated mid-word.
+      const pdfTitle = req.path
+        ? basename(req.path)
+        : req.url
+          ? new URL(req.url).hostname
+          : "document";
+      const pdf = stampPdf(raw, pdfTitle);
       const info = inspect(pdf);
 
       for (const url of blocked) {

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { readdirSync, rmSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -181,9 +182,47 @@ function defaultOut(input: string): string {
   }
 }
 
-async function readStdin(): Promise<string> {
+/**
+ * Read stdin, with a deadline and a size cap.
+ *
+ * Measured: `{ printf "<html>"; sleep 600; } | html2pdf - --timeout 5000` hung
+ * past 25 seconds, because --timeout covers the render and not the read. A stuck
+ * pipe produced no output, no file and no diagnostic, and there was no flag that
+ * would end it.
+ */
+async function readStdin({ timeoutMs, maxBytes }: { timeoutMs: number; maxBytes: number }): Promise<string> {
   const chunks: Uint8Array[] = [];
-  for await (const chunk of Bun.stdin.stream()) chunks.push(chunk as Uint8Array);
+  let total = 0;
+
+  // Raced against the clock rather than checked inside the loop. A pipe that
+  // sends nothing and then holds open never yields another chunk, so a check
+  // inside the loop never runs: measured, the first version of this still hung
+  // past its own deadline and had to be killed at 40 seconds.
+  const pump = (async () => {
+    for await (const chunk of Bun.stdin.stream()) {
+      total += (chunk as Uint8Array).byteLength;
+      if (total > maxBytes) {
+        throw new Error(
+          `stdin is over the ${(maxBytes / 1048576).toFixed(0)}MB limit at ${(total / 1048576).toFixed(1)}MB. ` +
+          `write the document to a file and pass the path.`,
+        );
+      }
+      chunks.push(chunk as Uint8Array);
+    }
+    return chunks;
+  })();
+
+  const guard = new Promise<never>((_, reject) => {
+    const t = setTimeout(() => reject(new Error(
+      `stdin was still open after ${(timeoutMs / 1000).toFixed(0)}s, so there is nothing to render. ` +
+      `the pipe is either trickling or not closing. raise --timeout if the document really is that slow.`,
+    )), timeoutMs);
+    // Do not hold the event loop open for a timer nobody is waiting on.
+    t.unref?.();
+    pump.then(() => clearTimeout(t), () => clearTimeout(t));
+  });
+
+  await Promise.race([pump, guard]);
   let out = "";
   for (const c of chunks) out += new TextDecoder().decode(c, { stream: true });
   return out;
@@ -259,6 +298,22 @@ export async function main(argv: string[]): Promise<number> {
     interrupted = signal;
     if (browser) void browser.close().catch(() => {});
     killBrowserByProfile(profile);
+    // Removing the profile here rather than leaving it to the finally block,
+    // which process.exit below never reaches. Measured: one leaked
+    // /tmp/html2pdf-cli-XXXXXX profile of seventeen files per interrupted run.
+    // rm is a bounded unlink of one known directory, so it does not reintroduce
+    // the hang the immediate exit exists to avoid.
+    // render() owns its work directory and removes it in a finally, which this
+    // exit also skips. The name is html2pdf-<pid>-<n>, so sweeping by our own pid
+    // is exact: another process's directories carry its pid, and the browser
+    // profile has a different prefix entirely.
+    try {
+      const own = `html2pdf-${process.pid}-`;
+      for (const entry of readdirSync(tmpdir())) {
+        if (entry.startsWith(own)) rmSync(join(tmpdir(), entry), { recursive: true, force: true });
+      }
+      rmSync(profile, { recursive: true, force: true });
+    } catch { /* a leftover directory is better than a stuck process */ }
     // 130 for SIGINT and 128+n otherwise, which is what a shell expects.
     process.exit(128 + (signal === "SIGINT" ? 2 : signal === "SIGTERM" ? 15 : 1));
   };
@@ -283,7 +338,7 @@ export async function main(argv: string[]): Promise<number> {
       }
       request = { html: fillTemplate(await Bun.file(tplPath).text(), buildTemplateData(data)) };
     } else if (opts.input === "-") {
-      request = { html: await readStdin() };
+      request = { html: await readStdin({ timeoutMs: opts.timeoutMs ?? 30_000, maxBytes: 64 * 1024 * 1024 }) };
     } else if (/^https?:\/\//i.test(opts.input!)) {
       request = { url: opts.input! };
     } else {
@@ -350,6 +405,13 @@ export async function main(argv: string[]): Promise<number> {
     else process.stderr.write(`render failed: ${message}\n`);
     return 1;
   } finally {
+    // Unregistered because main() is also called in-process, by tests and by
+    // anything embedding this. Leaving three handlers behind per call fills the
+    // listener list, and each stale one still closes a profile from a run that
+    // finished long ago.
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+    process.off("SIGHUP", onSignal);
     await browser?.close();
     await rm(profile, { recursive: true, force: true }).catch(() => {});
   }

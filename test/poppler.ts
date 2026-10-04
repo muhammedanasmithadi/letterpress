@@ -22,7 +22,7 @@ export type PopplerInfo = {
 
 export async function pdfInfo(bytes: Uint8Array): Promise<PopplerInfo> {
   return withPdf(bytes, async (path) => {
-    const out = await Bun.$`pdfinfo ${path}`.text();
+    const out = await Bun.$`pdfinfo ${path}`.quiet().text();
     return {
       pages: Number(out.match(/^Pages:\s+(\d+)/m)?.[1] ?? 0),
       pageSize: out.match(/^Page size:\s+(.+)$/m)?.[1]?.trim() ?? "",
@@ -34,19 +34,24 @@ export async function pdfInfo(bytes: Uint8Array): Promise<PopplerInfo> {
 export async function pdfText(bytes: Uint8Array): Promise<string> {
   return withPdf(bytes, async (path) => {
     const proc = Bun.spawn(["pdftotext", "-layout", path, "-"], { stdout: "pipe", stderr: "ignore" });
-    return new Response(proc.stdout).text();
+    // Drain the pipe and wait for exit. Reading the stream to end without
+    // awaiting the process races: under load pdftotext has not finished writing
+    // when the reader closes, which returns truncated text and fails a test for
+    // no reason.
+    const [out] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    return out;
   });
 }
 
 export async function pdfFonts(bytes: Uint8Array): Promise<string> {
-  return withPdf(bytes, async (path) => (await Bun.$`pdffonts ${path}`.text()));
+  return withPdf(bytes, async (path) => (await Bun.$`pdffonts ${path}`.quiet().text()));
 }
 
 export type PdfImage = { page: number; width: number; height: number };
 
 export async function pdfImages(bytes: Uint8Array): Promise<PdfImage[]> {
   return withPdf(bytes, async (path) => {
-    const out = await Bun.$`pdfimages -list ${path}`.text();
+    const out = await Bun.$`pdfimages -list ${path}`.quiet().text();
     const rows = out.split("\n").slice(2);
     const images: PdfImage[] = [];
     for (const row of rows) {

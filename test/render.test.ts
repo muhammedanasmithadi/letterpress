@@ -136,9 +136,12 @@ test("a hanging document fails with an error instead of hanging", async () => {
   const started = Bun.nanoseconds();
   let message = "";
   try {
+    // preferFastPath off so the document really navigates: the fast path
+    // installs HTML with no load event, so there is nothing left to stall.
     await render(browser, {
       html: `<!doctype html><meta charset="utf-8"><img src="http://127.0.0.1:${port}/stall.png"><p>never finishes</p>`,
       allowNetwork: true,
+      preferFastPath: false,
       timeoutMs: 2_000,
     });
   } catch (e) {
@@ -147,7 +150,10 @@ test("a hanging document fails with an error instead of hanging", async () => {
   const elapsedMs = (Bun.nanoseconds() - started) / 1e6;
   hanging.close();
 
-  expect(message).toContain("navigation did not finish");
+  // Whichever phase stalls, the message must name the deadline rather than
+  // surfacing the raw socket error the closed tab produces.
+  expect(message).toMatch(/navigation did not finish|printing exceeded/);
+  expect(message).not.toContain("cdp socket closed");
   expect(elapsedMs).toBeLessThan(20_000);
 }, 40_000);
 

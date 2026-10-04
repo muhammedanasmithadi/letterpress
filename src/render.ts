@@ -53,6 +53,30 @@ export type RenderRequest = {
    * document that only mutates on interaction.
    */
   beforePrint?: string;
+  /**
+   * Render only these 1-based pages, e.g. "3-5". Verified to select exactly
+   * those pages while leaving `counter(pages)` correct: pages "1-2" of a
+   * 3-page document still prints "page 2 of 3".
+   *
+   * Note that `info.pages` then reports how many pages were emitted, not the
+   * document's length, so a viewer must not present it as a total.
+   */
+  pageRanges?: string;
+  /**
+   * Drain the PDF from the CDP stream instead of a single base64 JSON string.
+   * Worth it for large documents: a 400-page render encodes to about 22MB of
+   * base64, which is one enormous allocation and one enormous JSON parse.
+   */
+  transfer?: "base64" | "stream";
+  /**
+   * Inject the document with Page.setDocumentContent and skip the work server.
+   * Only safe when the document references no relative assets, because
+   * setDocumentContent gives the page no origin to resolve them against: an
+   * `<img src="logo.png">` resolves to naturalWidth 0. The request is honoured
+   * automatically when a relative-reference scan comes back clean, and ignored
+   * otherwise, so this is a hint rather than a contract.
+   */
+  preferFastPath?: boolean;
 };
 
 export type RenderResult = {
@@ -289,6 +313,40 @@ async function stageAssets(html: string, source: string, dir: string): Promise<v
   await Bun.write(join(dir, "input.html"), out);
 }
 
+/**
+ * True when the document references a file the browser would have to resolve
+ * against a base URL: a relative src or href, and not a scheme or a fragment.
+ *
+ * Such a document cannot be printed through Page.setDocumentContent, which
+ * serves the HTML with no origin, so this gates the fast path.
+ */
+export function hasRelativeAssets(html: string): boolean {
+  return /(?:src|href)\s*=\s*["'](?!https?:|data:|blob:|file:|#|mailto:|\/\/)[^"']/i.test(html);
+}
+
+/**
+ * Read a CDP stream handle to completion.
+ *
+ * IO.read does not set eof on a read that exhausts the buffer, so a document
+ * smaller than the chunk size comes back with eof false and a short payload.
+ * The only safe test is to keep reading until eof or until a read yields nothing.
+ */
+export async function drainStream(
+  tab: Tab,
+  handle: string,
+  { chunkSize = 262_144, timeoutMs }: { chunkSize?: number; timeoutMs: number },
+): Promise<Uint8Array> {
+  const parts: Buffer[] = [];
+  for (let guard = 0; guard < 100_000; guard++) {
+    const chunk = await tab.send("IO.read", { handle, size: chunkSize }, timeoutMs);
+    if (!chunk.data) break;
+    parts.push(Buffer.from(chunk.data, "base64"));
+    if (chunk.eof) break;
+  }
+  await tab.send("IO.close", { handle }).catch(() => {});
+  return new Uint8Array(Buffer.concat(parts));
+}
+
 let workDirCounter = 0;
 
 async function resolveSource(req: RenderRequest, dir: string): Promise<{ html: string; url: string; source: string }> {
@@ -372,13 +430,16 @@ function stampPdf(pdf: Uint8Array): Uint8Array {
   }
   // The title Chromium writes is the URL without its scheme, e.g.
   // "127.0.0.1:38947/input.html", so match that shape rather than a full URL.
+  // Chromium titles the document from the page URL. Which URL depends on how the
+  // document was loaded: the work server's loopback address, "about:blank" when
+  // setDocumentContent installed it, or the remote address. All three vary
+  // between runs, so all three are replaced with one stable value.
+  const volatileTitle = /^(?:127\.0\.0\.1|localhost|\[::1\]):\d+\/\S*|^about:blank$/i;
   for (const m of text.matchAll(/\/Title \(((?:[^()\\]|\\.)*)\)/g)) {
     if (m.index === undefined) continue;
-    const stable = m[1].replace(
-      /^(?:127\.0\.0\.1|localhost|\[::1\]):\d+\/\S*/,
-      "document.html",
-    );
-    if (stable !== m[1]) edits.push([m.index + "/Title (".length, m[1].length, stable]);
+    const title = m[1];
+    if (!volatileTitle.test(title)) continue;
+    edits.push([m.index + "/Title (".length, title.length, "document.html"]);
   }
 
   // Patch from the end so earlier offsets stay valid.
@@ -413,7 +474,15 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
     // Copy any local image the document references into the work directory, then
     // serve the lot over loopback. Same-origin is what makes the canvas
     // readable, and a file:// image cannot be downsampled at all.
-    if (!isRemote) {
+    //
+    // Skipped when the document references nothing relative: there is then no
+    // origin to solve, and Page.setDocumentContent prints without writing a
+    // file or opening a socket.
+    const relative = hasRelativeAssets(src.html ?? "");
+    const fastPath = !isRemote && src.html != null && req.preferFastPath !== false &&
+      !relative && !req.maxImagePpi;
+
+    if (!isRemote && !fastPath) {
       await stageAssets(src.html, src.source, dir);
       server = await serveWorkDir(dir);
     }
@@ -422,14 +491,19 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
     // preferCSSPageSize is on. Honouring --format against a document that
     // declares @page size therefore means removing the declaration first, and
     // keeping the @page margin so the document still controls its own gutters.
-    let srcUrl = isRemote ? src.url : `${server!.origin}/input.html`;
-    if (req.format && src.html && declaredPageSize(src.html)) {
-      const stripped = src.html.replace(
-        /(@page[^{]*\{)([^}]*)(\})/gi,
-        (_whole, open: string, body: string, close: string) =>
-          open + body.replace(/(^|;)\s*\bsize\s*:[^;}]*/gi, "$1").replace(/;;+/g, ";") + close,
-      );
-      await Bun.write(join(dir, "override.html"), stripped);
+    const override = req.format && src.html && declaredPageSize(src.html)
+      ? src.html.replace(
+          /(@page[^{]*\{)([^}]*)(\})/gi,
+          (_whole, open: string, body: string, close: string) =>
+            open + body.replace(/(^|;)\s*\bsize\s*:[^;}]*/gi, "$1").replace(/;;+/g, ";") + close,
+        )
+      : null;
+
+    let srcUrl: string;
+    if (fastPath) srcUrl = "about:blank";
+    else srcUrl = isRemote ? src.url : `${server!.origin}/input.html`;
+    if (override && !fastPath) {
+      await Bun.write(join(dir, "override.html"), override);
       srcUrl = `${server!.origin}/override.html`;
     }
 
@@ -484,19 +558,25 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       });
 
       const loaded = tab.once("Page.loadEventFired");
-      await tab.send("Page.navigate", { url: srcUrl }).catch((e: Error) => {
-        if (/ERR_/.test(e.message)) netError ??= e.message;
-        return {};
-      });
-      await Promise.race([
-        loaded.promise,
-        Bun.sleep(timeoutMs).then(() => { throw new Error(`__deadline__`); }),
-      ]).catch((e: Error) => {
-        throw new Error(e.message === "__deadline__" && timedOut
-          ? `navigation did not finish within ${timeoutMs}ms`
-          : e.message);
-      });
-      loaded.cancel();
+      if (fastPath) {
+        // No navigation at all: the document is installed straight into the tab.
+        // Page.enable has already run above, which setDocumentContent requires.
+        const frameId = (await tab.send("Page.getFrameTree")).frameTree.frame.id;
+        await tab.send("Page.setDocumentContent", { frameId, html: override ?? src.html! });
+      } else {
+        await tab.send("Page.navigate", { url: srcUrl }).catch((e: Error) => {
+          if (/ERR_/.test(e.message)) netError ??= e.message;
+        });
+        await Promise.race([
+          loaded.promise,
+          Bun.sleep(timeoutMs).then(() => { throw new Error(`__deadline__`); }),
+        ]).catch((e: Error) => {
+          throw new Error(e.message === "__deadline__" && timedOut
+            ? `navigation did not finish within ${timeoutMs}ms`
+            : e.message);
+        });
+        loaded.cancel();
+      }
 
       if (netError) {
         throw new Error(`could not load ${src.source}: ${netError}`);
@@ -567,6 +647,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       const paperHeight = transposed ? paper![0] : paper?.[1];
 
       let res: any;
+      const useStream = req.transfer === "stream";
       try {
         res = await tab.send("Page.printToPDF", {
         printBackground: req.printBackground ?? true,
@@ -584,7 +665,8 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         displayHeaderFooter: false,
         generateDocumentOutline: true,
         generateTaggedPDF: true,
-        transferMode: "ReturnAsBase64",
+        ...(req.pageRanges ? { pageRanges: req.pageRanges } : {}),
+        transferMode: useStream ? "ReturnAsStream" : "ReturnAsBase64",
       }, timeoutMs);
       } catch (e) {
         if (timedOut) {
@@ -593,7 +675,12 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         throw e;
       }
 
-      const pdf = stampPdf(new Uint8Array(Buffer.from(res.data, "base64")));
+      // The stream handle arrives alongside an empty data field, so the payload
+      // has to be read back through IO before anything can inspect it.
+      const raw = useStream && res.stream
+        ? await drainStream(tab, res.stream, { timeoutMs })
+        : new Uint8Array(Buffer.from(res.data, "base64"));
+      const pdf = stampPdf(raw);
       const info = inspect(pdf);
 
       for (const url of blocked) {

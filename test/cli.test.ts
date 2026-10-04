@@ -77,7 +77,9 @@ test("derives the output name from the input", async () => {
 test("reads HTML from stdin", async () => {
   const out = join(dir, "piped.pdf");
   const r = await run(["-", "-o", out, "--json"], "<!doctype html><style>@page{size:A4;margin:10mm}</style><h1>From stdin</h1>");
-  expect(r.code).toBe(0);
+  // The exit code alone is not enough to debug this. It failed once in nine runs
+  // with a bare assertion failure, which says nothing about why.
+  expect(r.code, `exit ${r.code}\nstdout: ${r.stdout.slice(0, 400)}\nstderr: ${r.stderr.slice(0, 600)}`).toBe(0);
   const parsed = JSON.parse(r.stdout);
   expect(parsed.ok).toBe(true);
   expect(parsed.source).toBe("html");

@@ -139,6 +139,27 @@ export class Browser {
 
   get port() { return this.#port; }
 
+  /**
+   * Whether the browser is still there.
+   *
+   * A crashed Chromium keeps answering nothing while every caller sees a
+   * connection error, so a health check that reports "chromium: true" as a
+   * literal turns a dead browser into a service that looks healthy and fails
+   * every render forever. This asks the DevTools endpoint, with a short deadline
+   * so a wedged process cannot hang the check.
+   */
+  async alive(timeoutMs = 2_000): Promise<boolean> {
+    if (!this.#proc || this.#closing) return false;
+    try {
+      const res = await fetch(`http://127.0.0.1:${this.#port}/json/version`, {
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   async newTab(url = "about:blank"): Promise<Tab> {
     const res = await fetch(`http://127.0.0.1:${this.#port}/json/new?${encodeURIComponent(url)}`, { method: "PUT" });
     if (!res.ok) throw new Error(`could not open tab: ${res.status} ${await res.text()}`);

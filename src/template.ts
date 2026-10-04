@@ -117,6 +117,12 @@ export function invoiceTotals(
   }
   return {
     rows: rows.map((r) => r.html).join("\n    "),
+    // Raw numbers alongside the formatted strings. A caller comparing a
+    // supplied total against a formatted "3,383,428.75" gets NaN, and every
+    // NaN comparison is false, so the check silently never fires.
+    subtotalValue: subtotal,
+    vatValue: vat,
+    totalValue: subtotal + vat,
     subtotal: money(subtotal),
     vat: money(vat),
     total: money(subtotal + vat),

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Browser } from "./browser.ts";
 import { FORMATS, render, type Format, type Finding } from "./render.ts";
-import { TemplateError, escapeCss, invoiceTotals, lines, render as fillTemplate, type TemplateData } from "./template.ts";
+import { TemplateError, escapeCss, invoiceTotals, lines, money, render as fillTemplate, type TemplateData } from "./template.ts";
 
 const USAGE = `html2pdf - render HTML to PDF through Chromium's own print engine
 
@@ -292,13 +292,27 @@ function buildTemplateData(data: Record<string, unknown>): TemplateData {
       { vatRate, currency: String(data.currency ?? "EUR") },
     );
     Object.assign(out, totals);
-    for (const [key, computed] of [["subtotal", totals.subtotal], ["vat", totals.vat], ["total", totals.total]] as const) {
+    for (const [key, computed] of [
+      ["subtotal", totals.subtotalValue],
+      ["vat", totals.vatValue],
+      ["total", totals.totalValue],
+    ] as const) {
       const claimed = data[key];
       if (claimed === undefined || claimed === null || claimed === "") continue;
-      if (Math.abs(Number(claimed) - Number(computed)) > 0.005) {
+      // Compare numbers. A supplied figure may carry separators, so parse
+      // leniently, and treat an unparseable one as a mismatch rather than
+      // letting it through.
+      const parsed = typeof claimed === "number" ? claimed : Number(String(claimed).replace(/[^\d.\-]/g, ""));
+      if (!Number.isFinite(parsed)) {
         throw new TemplateError([
-          `${key} in the data file is ${claimed}, but the line items add up to ${computed}. ` +
-          `the computed figure is used, because printing the supplied one would send a wrong total. ` +
+          `${key} in the data file is "${claimed}", which is not a number. remove it to let ` +
+          `it be computed from the line items.`,
+        ]);
+      }
+      if (Math.abs(parsed - computed) > 0.005) {
+        throw new TemplateError([
+          `${key} in the data file is ${claimed}, but the line items add up to ${money(computed)}. ` +
+          `the computed figure is printed, because printing the supplied one would send a wrong total. ` +
           `remove ${key} from the data file to let it always be computed.`,
         ]);
       }

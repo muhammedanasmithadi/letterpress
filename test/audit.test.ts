@@ -135,14 +135,18 @@ test("every missing glyph is listed, not capped", async () => {
   expect(r.findings.filter((x) => x.code === "missing-glyph").length).toBe(20);
 }, 30_000);
 
-test("a no-break space is not reported as a missing glyph", async () => {
-  // U+00A0 has no glyph in the font but is invisible, and it appears in nearly
-  // every HTML file. Warning on it trains people to ignore the findings array.
+test("a no-break space is reported as a real space, not as an invisible format character", async () => {
+  // U+00A0 has no glyph of its own in most fonts, but it occupies exactly a
+  // space's width and prints as one. Grouping it with the formatting characters
+  // made ordinary documents emit a phantom finding, and described it as
+  // invisible, which it is not: pdftotext -bbox puts it at the same x as "a b".
   const html = `<!doctype html><head><meta charset="utf-8"><style>
 @page{size:A4;margin:15mm} body{font-family:'Noto Naskh Arabic',serif}
-</style></head><body><p>a b</p></body></html>`;
+</style></head><body><p>a&nbsp;b</p></body></html>`;
   const r = await render(browser, { html });
-  expect(r.findings.map((x) => x.message).join(" ")).not.toContain("U+00A0");
+  const joined = r.findings.map((x) => x.message).join(" ");
+  expect(joined).not.toContain("invisible formatting characters");
+  expect(joined).toContain("U+00A0");
 }, 30_000);
 
 test("a character covered by the font fallback chain is not reported", async () => {

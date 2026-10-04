@@ -47,7 +47,7 @@ export async function pdfFonts(bytes: Uint8Array): Promise<string> {
   return withPdf(bytes, async (path) => (await Bun.$`pdffonts ${path}`.quiet().text()));
 }
 
-export type PdfImage = { page: number; width: number; height: number };
+export type PdfImage = { page: number; type: string; width: number; height: number };
 
 export async function pdfImages(bytes: Uint8Array): Promise<PdfImage[]> {
   return withPdf(bytes, async (path) => {
@@ -55,8 +55,18 @@ export async function pdfImages(bytes: Uint8Array): Promise<PdfImage[]> {
     const rows = out.split("\n").slice(2);
     const images: PdfImage[] = [];
     for (const row of rows) {
-      const m = row.trim().match(/^(\d+)\s+(\d+)\s+.*?(\d+)\s+(\d+)\s/);
-      if (m) images.push({ page: Number(m[1]), width: Number(m[3]), height: Number(m[4]) });
+      const m = row.trim().match(/^(\d+)\s+(\d+)\s+(\w+)\s+(\d+)\s+(\d+)\s/);
+      if (m) {
+        images.push({
+          page: Number(m[1]),
+          // pdfimages lists a soft mask beside every picture with an alpha
+          // channel, at the same dimensions. Without the type a caller counting
+          // "how many images are in this pdf" gets two for one picture.
+          type: m[3],
+          width: Number(m[4]),
+          height: Number(m[5]),
+        });
+      }
     }
     return images;
   });

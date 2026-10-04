@@ -91,10 +91,10 @@ ${Array.from({ length: 6 }, (_, i) => `<div class="s">PAGE_${i + 1}</div>`).join
     expect(text).not.toContain("PAGE_1");
   }, 90_000);
 
-  test("rejects a body with neither html nor path", async () => {
+  test("rejects a body with no html", async () => {
     const r = await post({ format: "a4" });
     expect(r.status).toBe(400);
-    expect((await r.json() as { error: string }).error).toContain("send html or path");
+    expect((await r.json() as { error: string }).error).toContain("html");
   });
 
   test("rejects an unknown format rather than guessing", async () => {
@@ -119,13 +119,14 @@ ${Array.from({ length: 6 }, (_, i) => `<div class="s">PAGE_${i + 1}</div>`).join
     expect(error).toMatch(/over the 8MB limit/);
   }, 60_000);
 
-  test("a render failure is a 500 with a readable message, not a crash", async () => {
+  test("a path is refused by name rather than read from disk", async () => {
+    // This used to be a 500 with the filename in it, and before that it was an
+    // unauthenticated read of any file the user can open.
     const r = await post({ path: "/tmp/definitely-not-here.html" });
-    expect(r.status).toBe(500);
+    expect(r.status).toBe(400);
     const { error } = await r.json() as { error: string };
-    // A missing file is reported by name rather than swallowed.
-    expect(error).toContain("definitely-not-here.html");
-  }, 60_000);
+    expect(error).toContain("path is not accepted");
+  });
 
   test("the server is still healthy after a failure", async () => {
     const r = await fetch(`${origin}/health`);
@@ -144,12 +145,27 @@ describe("loopback boundary", () => {
     expect((await r.json() as { error: string }).error).toContain("loopback");
   });
 
-  test("accepts every loopback spelling", async () => {
-    for (const host of ["127.0.0.1", "127.0.0.1:8787", "localhost", "[::1]"]) {
+  test("refuses a Host whose port is out of range", async () => {
+    // The loopback regex allows any digits, including 99999. new URL then
+    // throws on it, and uncaught that returned Bun's dev error page with the
+    // server's source in it.
+    for (const host of ["localhost:99999", "127.0.0.1:70000", "localhost:abc"]) {
+      const r = await post({ html: DOC }, { host });
+      expect([400, 403], `Host: ${host}`).toContain(r.status);
+      expect((await r.text())).not.toContain("source_lines");
+    }
+  });
+
+  test("accepts every loopback spelling of Host", async () => {
+    // The Host check is for DNS rebinding and nothing more. It does not stop a
+    // page on another origin: Host names the destination, so such a page sends
+    // an acceptable Host and passes. That is handled by requiring a JSON
+    // content type and an exact Origin, which the security tests cover.
+    for (const host of ["127.0.0.1", `127.0.0.1:${s.port}`, "localhost", "[::1]", "LOCALHOST"]) {
       const r = await post({ html: DOC }, { host });
       expect(r.status, `Host: ${host}`).toBe(200);
     }
-  }, 90_000);
+  }, 120_000);
 
   test("sends no CORS headers, so another origin cannot read responses", async () => {
     const r = await post({ html: DOC }, { origin: "https://evil.example" });

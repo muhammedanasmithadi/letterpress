@@ -1,4 +1,4 @@
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import { rm } from "node:fs/promises";
 import { Browser, type Tab } from "./browser.ts";
 import { audit } from "./lint.ts";
@@ -19,6 +19,22 @@ export const FORMATS = {
 } as const;
 
 export type Format = keyof typeof FORMATS;
+
+/** Resolve a caller-supplied format name, rejecting anything not in the table. */
+export function parseFormat(value: unknown): Format | undefined {
+  if (value == null || value === "") return undefined;
+  if (typeof value !== "string") throw new Error(`format must be a string, got ${typeof value}`);
+  const name = value.trim().toLowerCase();
+  // Object.hasOwn, not `in`: `in` walks the prototype chain, so "toString" and
+  // "__proto__" both passed the check and then reached FORMATS[name] as a
+  // function, which crashed the render instead of naming the bad input.
+  if (!Object.hasOwn(FORMATS, name)) {
+    throw new Error(
+      `unknown format "${value}". try: ${Object.keys(FORMATS).join(", ")}`,
+    );
+  }
+  return name as Format;
+}
 
 export type Finding = {
   code: string;
@@ -279,38 +295,49 @@ async function capImageResolution(
  * directory the caller named; an HTML file that references ../../etc/passwd as
  * an image must not become a way to read outside the workspace.
  */
-async function stageAssets(html: string, source: string, dir: string): Promise<void> {
+/**
+ * Copy the assets a document references into the work directory, mirroring their
+ * relative paths so the served document resolves them with no rewriting at all.
+ *
+ * An earlier version flattened every filename and then rewrote the document text
+ * to match. Both halves were wrong: flattening made `sub/hide.css` and
+ * `sub_hide.css` collide into one file, and rewriting the whole document changed
+ * occurrences of a filename inside prose and inside scripts. Mirroring removes
+ * both problems rather than working around them.
+ */
+export async function stageAssets(html: string, source: string, dir: string): Promise<void> {
   if (!html || /^https?:/i.test(source)) return;
   const base = source.startsWith("/") ? dirname(source) : process.cwd();
-  const seen = new Map<string, string>();
+  const written = new Set<string>();
 
-  for (const m of html.matchAll(/(?:src|href)\s*=\s*["']([^"']+)["']/gi)) {
-    const ref = m[1];
-    if (/^(?:https?:|data:|blob:|#|mailto:)/i.test(ref)) continue;
-    const clean = ref.split(/[?#]/)[0];
-    if (!clean || seen.has(clean)) continue;
-
+  const consider = async (ref: string) => {
+    const clean = ref.trim().split(/[?#]/)[0];
+    if (!clean) return;
+    if (/^(?:https?:|data:|blob:|file:|#|mailto:|\/\/)/i.test(clean)) return;
     const from = isAbsolute(clean) ? clean : resolve(base, clean);
+    // An HTML file that references ../../etc/passwd as an image must not become
+    // a way to read outside the document's own directory.
+    if (!from.startsWith(base + "/") && from !== base) return;
+
+    const rel = normalize(clean).replace(/^(\.\.(\/|$))+/, "");
+    if (!rel || rel.startsWith("..")) return;
+    const target = join(dir, rel);
+    if (!target.startsWith(dir + "/") || written.has(target)) return;
+
     let bytes: Buffer;
-    try { bytes = await Bun.file(from).arrayBuffer().then((b) => Buffer.from(b)); }
-    catch { continue; }
-    if (!bytes.length) continue;
-
-    // Flatten the name so a document cannot write outside the work directory.
-    const flat = clean.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/^\.+/, "") || "asset";
-    const target = join(dir, flat);
-    if (!target.startsWith(dir)) continue;
+    try { bytes = Buffer.from(await Bun.file(from).arrayBuffer()); } catch { return; }
+    if (!bytes.length) return;
     await Bun.write(target, bytes);
-    seen.set(clean, flat);
-  }
+    written.add(target);
+  };
 
-  if (!seen.size) return;
-  // Rewrite the document to the staged copies.
-  let out = html;
-  for (const [from, to] of seen) {
-    out = out.split(`"${from}"`).join(`"/${to}"`).split(`'${from}'`).join(`'/${to}'`);
+  for (const m of html.matchAll(/(?:src|href)\s*=\s*["']([^"']+)["']/gi)) await consider(m[1]);
+  for (const m of html.matchAll(/(?:src|href)\s*=\s*([^\s>]+)/gi)) await consider(m[1].replace(/["']/g, ""));
+  for (const m of html.matchAll(/\bsrcset\s*=\s*["']([^"']+)["']/gi)) {
+    for (const candidate of m[1].split(",")) await consider(candidate.trim().split(/\s+/)[0]);
   }
-  await Bun.write(join(dir, "input.html"), out);
+  for (const m of html.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)) await consider(m[1]);
+  for (const m of html.matchAll(/@import\s+["']([^"']+)["']/gi)) await consider(m[1]);
 }
 
 /**
@@ -321,7 +348,15 @@ async function stageAssets(html: string, source: string, dir: string): Promise<v
  * serves the HTML with no origin, so this gates the fast path.
  */
 export function hasRelativeAssets(html: string): boolean {
-  return /(?:src|href)\s*=\s*["'](?!https?:|data:|blob:|file:|#|mailto:|\/\/)[^"']/i.test(html);
+  // Quoted attributes, unquoted attributes, srcset, and CSS url() which covers
+  // background-image, @import and @font-face src. Missing any of these meant a
+  // document silently lost its image: the scan said "nothing relative here", the
+  // fast path was taken, and Page.setDocumentContent resolved the reference
+  // against about:blank where nothing exists.
+  if (/(?:src|href)\s*=\s*["'](?!https?:|data:|blob:|file:|#|mailto:|\/\/)[^"']/i.test(html)) return true;
+  if (/(?:src|href)\s*=\s*(?!["'])(?!https?:|data:|blob:|file:|#|mailto:|\/\/)[^\s>]+/i.test(html)) return true;
+  if (/\bsrcset\s*=/i.test(html)) return true;
+  return /url\(\s*(?!["']?(?:https?:|data:|blob:|file:|#|\/\/))\s*["']?[^)'"\s]/i.test(html);
 }
 
 /**
@@ -350,6 +385,10 @@ export async function drainStream(
 let workDirCounter = 0;
 
 async function resolveSource(req: RenderRequest, dir: string): Promise<{ html: string; url: string; source: string }> {
+  // Validate before anything else. An unrecognised format used to reach
+  // FORMATS[x] and throw a TypeError from deep inside the precedence check,
+  // which is a crash, not a diagnosis.
+  req.format = parseFormat(req.format);
   if (req.html != null) {
     // Chromium will not print a string, and about:blank gives the document no
     // origin for relative assets, so the HTML becomes a real file. The work
@@ -459,6 +498,10 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
   const dir = `${tmp}/html2pdf-${process.pid}-${workDirCounter++}`;
   const findings: Finding[] = [];
   const blocked: string[] = [];
+  // Subresources that failed to load. A missing stylesheet does not stop the
+  // render, but it does mean the document is not what its author intended, so
+  // it is reported rather than swallowed.
+  const failedSubresources: { kind: string; url: string }[] = [];
   let tab: Tab | undefined;
   let server: { origin: string; stop: () => void } | undefined;
 
@@ -526,7 +569,15 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       // remote asset is both blocked and recorded. Loopback is exempt: the
       // document and its staged images are served from 127.0.0.1, and treating
       // our own origin as remote blocks the document's images.
-      const loopback = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$)/i;
+      // Exempt our own work server, and nothing else on loopback. Exempting all
+      // of loopback would let a document probe any local service: verified, a
+      // listener on 127.0.0.1 received the document's GET, query, method and
+      // body, with only the response unreadable. That is a blind SSRF handed to
+      // whoever can supply the HTML, and it is the document's own assets that
+      // need the exemption.
+      const loopback = server
+        ? new RegExp(`^${server.origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/`, "i")
+        : /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$)/i;
       await tab.send("Fetch.enable", { patterns: [{ urlPattern: "http://*" }, { urlPattern: "https://*" }] });
       tab.on("Fetch.requestPaused", (p) => {
         const url = String(p.request?.url ?? "");
@@ -553,8 +604,33 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           if (p.type === "Document" && !mainStatus) mainStatus = p.response?.status;
         });
       }
+      // Only a failed *document* load means we have nothing to print. A 404
+      // stylesheet or an unreachable font produces the same event for a
+      // subresource, and treating that as a load failure refused to render
+      // perfectly good documents over one missing asset.
+      // A 404 is not a loading failure. The work server answers 404 for an asset
+      // that is not on disk, chromium treats that as a normal response, and the
+      // document renders with a hole in it. Status has to be watched as well as
+      // the failure event, or a missing image is silent.
+      tab.on("Network.responseReceived", (p) => {
+        const status = p.response?.status ?? 0;
+        // Chromium asks for /favicon.ico on every document whether or not one
+        // is declared, and the work server has none. It cannot affect print
+        // output, so reporting it would bury the real failures in noise.
+        const isFavicon = /\/favicon\.ico(\?|$)/.test(p.response?.url ?? "");
+        if (status >= 400 && p.type && p.type !== "Document" && !isFavicon) {
+          failedSubresources.push({ kind: p.type, url: `${status} ${p.response?.url ?? ""}` });
+        }
+      });
       tab.on("Network.loadingFailed", (p) => {
-        if (!netError && p.type !== "Image" && !p.blockedReason) netError = p.errorText;
+        if (p.type === "Document" && !netError && !p.blockedReason) netError = p.errorText;
+        else if (!p.blockedReason) {
+          // Images are included. A missing image still "renders": Chromium draws
+          // its own broken-image placeholder and the pdf carries that glyph
+          // instead of the picture, which is worse than an obvious failure
+          // because nothing in the output says anything went wrong.
+          failedSubresources.push({ kind: p.type ?? "unknown", url: p.errorText ?? "" });
+        }
       });
 
       const loaded = tab.once("Page.loadEventFired");
@@ -689,6 +765,26 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           severity: "warn",
           url,
           message: `blocked a remote request to ${url}. Pass --allow-network to permit it, or inline the asset.`,
+        });
+      }
+      if (failedSubresources.length) {
+        const kinds = [...new Set(failedSubresources.map((f) => f.kind))];
+        const images = failedSubresources.filter((f) => f.kind === "Image").length;
+        // Name the assets. A count without a path sends the reader to the
+        // document to hunt for it, which is the work this finding should have
+        // saved them.
+        const listed = [...new Set(failedSubresources.map((f) => f.url))]
+          .slice(0, 5)
+          .map((u) => `  ${u}`)
+          .join("\n");
+        findings.push({
+          code: "subresource-failed",
+          severity: "warn",
+          url: failedSubresources[0].url,
+          message:
+            `${failedSubresources.length} ${failedSubresources.length === 1 ? "subresource" : "subresources"} (${kinds.join(", ")}) failed to load, so the document is missing ${failedSubresources.length === 1 ? "it" : "them"}.\n${listed}` +
+            (images ? `\n${images} ${images === 1 ? "is an image" : "are images"}: where a picture should be, the pdf carries chromium's broken-image placeholder.` : "") +
+            `\nthe pdf was still produced, but it will not look like the source. url(), @import and @font-face src are staged from disk only when the document is a file.`,
         });
       }
       if (req.url && !req.allowNetwork) {

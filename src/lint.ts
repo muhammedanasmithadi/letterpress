@@ -72,7 +72,11 @@ const AUDIT = String.raw`
   // invoice reference, protects the number and must not be reported. The rule
   // below is the part of UAX#9 that decides this case: a number stays in
   // left-to-right order when the last strong character before it is LTR.
-  const risky = /\d+(?:\s*[-‐‑‒–—―_−×÷]\s*\d+)+|\+\d{2,}|\d[\d\s]{5,}\d|\d+\s*[-−]\s*\d*\s*(?:ريال|درهم|د\.إ)?/g;
+  // An em dash or en dash between digit groups is not the hazard a hyphen is:
+  // "2019 — 2022" is a range, not a date, and it prints in the right order. Only
+  // separators that Unicode treats as part of a number belong here, plus the
+  // spaced-digit and signed cases that genuinely reorder in RTL.
+  const risky = /\d+(?:\s*[-‐‑‒_−]\s*\d+)+|\+\d{2,}|\d[\d\s]{5,}\d|\d+\s*[-−]\s*\d*\s*(?:ريال|درهم|د\.إ)?/g;
   // The ranges below must be disjoint. An earlier version tested Latin ranges
   // first, and they overlap Arabic-Indic digits, so the digit run in "2026" was
   // classified as a strong LTR letter and every report was suppressed.
@@ -196,7 +200,11 @@ const AUDIT = String.raw`
   // A zero-width joiner or variation selector occupies no advance width, so it
   // can never produce a visible box. Reporting it teaches people to ignore the
   // findings array, and &nbsp; appears in nearly every HTML file.
-  const invisible = /^[\s\u00A0\u00AD\u1680\u2000-\u200F\u2028-\u202E\u202F\u205F\u2060-\u2064\u3000\uFEFF\uFE0E\uFE0F]$/;
+  // U+00A0 was here and should not be. A no-break space has no glyph in most
+  // fonts but occupies exactly a space's width and prints as one, so grouping it
+  // with the formatting characters made ordinary documents report a phantom
+  // problem and described it as invisible, which it is not.
+  const invisible = /^[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF\uFE0E\uFE0F]$/;
   // No cap. A truncated list that does not say so reads as "that was all of
   // them", which is how a document ends up with 12 problems and one warning.
   const shown = [...missing.entries()].filter(([ch]) => !invisible.test(ch));

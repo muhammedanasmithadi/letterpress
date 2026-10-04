@@ -5,14 +5,32 @@
  * A missing price on an invoice should fail loudly, not print a blank.
  */
 
-export type TemplateData = Record<string, string | number | null | undefined>;
+export type TemplateData = Record<string, string | number | string[] | null | undefined>;
 
 export class TemplateError extends Error {
   readonly missing: string[];
-  constructor(missing: string[]) {
-    super(`template is missing values for: ${missing.join(", ")}`);
+  /**
+   * `problems` are complaints about values that are present but wrong, so they
+   * are not all "missing". Prefixing every one of them with "missing values for"
+   * produced messages that contradicted themselves, such as
+   * "template is missing values for: vat_rate must be a number between 0 and 1".
+   */
+  constructor(problems: string[], { missing = false } = {}) {
+    super(
+      problems.length === 1 && !missing
+        ? problems[0]
+        : `${missing ? "template is missing values for" : "template rejected the data"}: ${problems.join(", ")}`,
+    );
     this.name = "TemplateError";
-    this.missing = missing;
+    this.missing = problems;
+  }
+}
+
+/** A value the template asked for and the data file does not have. */
+export class TemplateMissingError extends TemplateError {
+  constructor(missing: string[]) {
+    super(missing, { missing: true });
+    this.name = "TemplateMissingError";
   }
 }
 
@@ -22,7 +40,7 @@ const PATTERN = /\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}|\{\{\{(\w+)\}\}\}|\{\{(\w+
 export function render(template: string, data: TemplateData, { strict = true } = {}): string {
   const missing = new Set<string>();
   const out = substitute(template, data, missing);
-  if (strict && missing.size) throw new TemplateError([...missing]);
+  if (strict && missing.size) throw new TemplateMissingError([...missing]);
   return out;
 }
 
@@ -44,6 +62,11 @@ function substitute(template: string, data: TemplateData, missing: Set<string>):
       if (rawKey !== undefined) {
         const raw = data[rawKey];
         if (raw === undefined || raw === null) { missing.add(rawKey); return whole; }
+        // A JSON array is the natural way to write "these are my rows", and
+        // String() on one joins the elements with commas. That reached the page
+        // as a visible "," printed above the table header, on a customer-facing
+        // invoice, for every multi-row document.
+        if (Array.isArray(raw)) return raw.map((v) => String(v)).join("\n    ");
         return String(raw);
       }
       const value = data[textKey!];

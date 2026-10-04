@@ -384,6 +384,39 @@ export async function drainStream(
 
 let workDirCounter = 0;
 
+/**
+ * Reject input that is not HTML, before it reaches Chromium.
+ *
+ * Chromium will happily print a JPEG: it decodes the bytes as a broken document
+ * and lays the binary out as text, producing a full page of mojibake that pdftotext
+ * recovers verbatim. Measured: a 200x150 JPEG rendered to one A4 page of
+ * "PNG IHDR..." text, exit 0, with a summary line that reads like success. A typo'd
+ * extension produced a confidently reported broken document.
+ *
+ * The sniff is deliberately narrow. It looks for a byte signature, not for the
+ * absence of "<", because plenty of valid documents open with a comment, a doctype
+ * with leading whitespace, or nothing at all.
+ */
+function looksBinary(html: string): string | undefined {
+  const head = html.slice(0, 1024);
+  // A NUL byte is the classic marker, and no text encoding of HTML contains one.
+  if (head.includes("\u0000")) return "it contains a null byte";
+  // Signatures that mean the bytes are a different format entirely.
+  const signatures: [RegExp, string][] = [
+    [/^\s*%PDF-/, "it is a PDF"],
+    [/^\s*[\u0080-\u00ff]{0,4}\xff[\u00d8\u00e0]/, "it is a JPEG"],
+    [/^\s*\x89PNG\r?\n/, "it is a PNG"],
+    [/^\s*GIF8[79]a/, "it is a GIF"],
+    [/^\s*\x1f\x8b/, "it is gzip"],
+    [/^\s*PK\x03\x04/, "it is a zip"],
+    [/^\s*RIFF.{4}WEBP/, "it is a WebP"],
+    [/^\s*BM/, "it is a BMP"],
+    [/^\s*\x00\x00\x01\x00/, "it is an icon"],
+  ];
+  for (const [re, what] of signatures) if (re.test(head)) return what;
+  return undefined;
+}
+
 async function resolveSource(req: RenderRequest, dir: string): Promise<{ html: string; url: string; source: string }> {
   // Validate before anything else. An unrecognised format used to reach
   // FORMATS[x] and throw a TypeError from deep inside the precedence check,
@@ -512,7 +545,32 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
 
   try {
     const src = await resolveSource(req, dir);
-    if (src.html) findings.push(...precedenceFindings(src.html, req));
+    // Not `if (src.html)`: an empty string is falsy, so the empty-input check
+    // below sat inside a branch that an empty document never entered. That is
+    // exactly the case it existed to catch.
+    if (src.html != null) {
+      const binary = looksBinary(src.html);
+      if (binary) {
+        throw new Error(
+          `this input is not HTML: ${binary}. html2pdf prints html, so a document with the wrong ` +
+          `file extension produces a page of binary noise rather than an error. check the path.`,
+        );
+      }
+      // An empty document renders as a real blank page, which is indistinguishable
+      // from success by exit code, page count or the summary line. A truncated
+      // pipe or a curl that returned nothing looked like a working document.
+      //
+      // Local input only. A URL that fails to load also resolves to empty html,
+      // but it has its own diagnosis further down, and this message blames a
+      // 0-byte file, which is not what went wrong.
+      if (!req.url && !src.html.trim()) {
+        throw new Error(
+          "the input is empty. a 0-byte file renders as one blank page and reports success; " +
+          "check that the file has content, or that the command producing it wrote to stdout.",
+        );
+      }
+      findings.push(...precedenceFindings(src.html, req));
+    }
 
     // Copy any local image the document references into the work directory, then
     // serve the lot over loopback. Same-origin is what makes the canvas

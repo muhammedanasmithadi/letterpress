@@ -1,4 +1,4 @@
-# html2pdf viewer — implementation plan
+# letterpress viewer — implementation plan
 
 Status: approved to build. Written 2026-10-04, after eight adversarial user-test
 rounds and a CDP protocol investigation. Everything asserted below was measured

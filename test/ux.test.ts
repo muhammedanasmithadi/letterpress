@@ -30,8 +30,8 @@ async function cli(argv: string[]): Promise<{ code: number; out: string; err: st
 }
 
 beforeAll(async () => {
-  profile = await mkdtemp(join(tmpdir(), "html2pdf-ux-"));
-  dir = await mkdtemp(join(tmpdir(), "html2pdf-ux-doc-"));
+  profile = await mkdtemp(join(tmpdir(), "letterpress-ux-"));
+  dir = await mkdtemp(join(tmpdir(), "letterpress-ux-doc-"));
   browser = await Browser.launch({ profile });
 }, 60_000);
 
@@ -398,7 +398,7 @@ describe("ctrl-c cancels", () => {
 
     const { readdirSync: readSync } = await import("node:fs");
     const profileDirsBefore = new Set(
-      readSync(tmpdir()).filter((n) => n.startsWith("html2pdf-cli-") || n.startsWith("html2pdf-server-")),
+      readSync(tmpdir()).filter((n) => n.startsWith("letterpress-cli-") || n.startsWith("letterpress-server-")),
     );
     const before = (await readdir(tmpdir())).length;
     const child = Bun.spawn(["bun", join(import.meta.dir, "..", "src", "cli.ts"), big,
@@ -415,7 +415,7 @@ describe("ctrl-c cancels", () => {
     // eleven processes and has nothing to do with the child.
     const chromiumForRun = async () =>
       (await Bun.$`ps -eo args`.text())
-        .split("\n").filter((l) => l.includes("chromium-browser") && l.includes("html2pdf-cli-")).length;
+        .split("\n").filter((l) => l.includes("chromium-browser") && l.includes("letterpress-cli-")).length;
     const alive = await chromiumForRun();
     expect(alive, "chromium should be running before the signal").toBeGreaterThan(2);
     // If the render already finished, this test measures nothing at all. A warm
@@ -439,7 +439,7 @@ describe("ctrl-c cancels", () => {
     // normally removes them, so an interrupted run left a seventeen-file
     // chromium profile and a work directory behind every time.
     const dirsNow = readSync(tmpdir()).filter(
-      (n) => n.startsWith("html2pdf-cli-") || n.startsWith("html2pdf-server-"),
+      (n) => n.startsWith("letterpress-cli-") || n.startsWith("letterpress-server-"),
     );
     expect(
       dirsNow.filter((n: string) => !profileDirsBefore.has(n)),
@@ -467,7 +467,7 @@ describe("ctrl-c cancels", () => {
 
 describe("stdin is bounded by the deadline", () => {
   test("a pipe that never closes is given up on", async () => {
-    // Measured: `{ printf "<html>"; sleep 600; } | html2pdf - --timeout 5000`
+    // Measured: `{ printf "<html>"; sleep 600; } | letterpress - --timeout 5000`
     // hung past 25 seconds with no output, no file and no diagnostic. --timeout
     // covered the render and not the read, and no flag would end it.
     const fifo = join(dir, "fifo");

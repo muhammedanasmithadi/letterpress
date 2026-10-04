@@ -575,7 +575,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
   const started = Bun.nanoseconds();
   const timeoutMs = req.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const tmp = process.env.TMPDIR ?? "/tmp";
-  const dir = `${tmp}/html2pdf-${process.pid}-${workDirCounter++}`;
+  const dir = `${tmp}/letterpress-${process.pid}-${workDirCounter++}`;
   const findings: Finding[] = [];
   const blocked: string[] = [];
   // Subresources that failed to load. A missing stylesheet does not stop the
@@ -599,7 +599,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       const binary = looksBinary(src.html);
       if (binary) {
         throw new Error(
-          `this input is not HTML: ${binary}. html2pdf prints html, so a document with the wrong ` +
+          `this input is not HTML: ${binary}. letterpress prints html, so a document with the wrong ` +
           `file extension produces a page of binary noise rather than an error. check the path.`,
         );
       }

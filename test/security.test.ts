@@ -402,8 +402,8 @@ describe("shutdown does not strand work directories", () => {
     await server.kill();
     await Bun.sleep(1_500);
     const after = await readdir(tmpdir());
-    // render() names its directories html2pdf-<pid>-<n>, so this is exact.
-    const stranded = after.filter((n: string) => n.startsWith(`html2pdf-${server.pid}-`) && !before.includes(n));
+    // render() names its directories letterpress-<pid>-<n>, so this is exact.
+    const stranded = after.filter((n: string) => n.startsWith(`letterpress-${server.pid}-`) && !before.includes(n));
     expect(stranded).toEqual([]);
   }, 150_000);
 });

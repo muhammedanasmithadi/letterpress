@@ -11,7 +11,7 @@ let browser: Browser;
 let profile: string;
 
 beforeAll(async () => {
-  profile = await mkdtemp(join(tmpdir(), "html2pdf-test-"));
+  profile = await mkdtemp(join(tmpdir(), "letterpress-test-"));
   browser = await Browser.launch({ profile });
 }, 60_000);
 

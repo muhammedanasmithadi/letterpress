@@ -240,7 +240,7 @@ export async function audit(tab: Tab, timeoutMs: number): Promise<Finding[]> {
       return [{
         code: "audit-failed",
         severity: "warn",
-        message: "the document checks could not run, so no layout, text or font findings are available. this is a bug in html2pdf, not in the document.",
+        message: "the document checks could not run, so no layout, text or font findings are available. this is a bug in letterpress, not in the document.",
       }];
     }
     return value as Finding[];

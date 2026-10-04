@@ -7,13 +7,13 @@ import { Browser } from "./browser.ts";
 import { FORMATS, render, type Format, type Finding } from "./render.ts";
 import { TemplateError, escapeCss, invoiceTotals, lines, money, render as fillTemplate, type TemplateData } from "./template.ts";
 
-const USAGE = `html2pdf - render HTML to PDF through Chromium's own print engine
+const USAGE = `letterpress - render HTML to PDF through Chromium's own print engine
 
 usage
-  html2pdf [options] <file.html>
-  cat page.html | html2pdf [options] -
-  html2pdf [options] --template invoice --data order.json
-  html2pdf [options] https://example.com   (implies --allow-network)
+  letterpress [options] <file.html>
+  cat page.html | letterpress [options] -
+  letterpress [options] --template invoice --data order.json
+  letterpress [options] https://example.com   (implies --allow-network)
 
 options
   -o, --out <path>        output PDF (default: input name with .pdf)
@@ -185,7 +185,7 @@ function defaultOut(input: string): string {
 /**
  * Read stdin, with a deadline and a size cap.
  *
- * Measured: `{ printf "<html>"; sleep 600; } | html2pdf - --timeout 5000` hung
+ * Measured: `{ printf "<html>"; sleep 600; } | letterpress - --timeout 5000` hung
  * past 25 seconds, because --timeout covers the render and not the read. A stuck
  * pipe produced no output, no file and no diagnostic, and there was no flag that
  * would end it.
@@ -279,7 +279,7 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   const outPath = opts.out ?? (opts.template ? `${opts.template}.pdf` : defaultOut(opts.input!));
-  const profile = await mkdtemp(join(tmpdir(), "html2pdf-cli-"));
+  const profile = await mkdtemp(join(tmpdir(), "letterpress-cli-"));
   let browser: Browser | undefined;
 
   // Ctrl-C must actually cancel. Measured before this existed: SIGINT was
@@ -300,15 +300,15 @@ export async function main(argv: string[]): Promise<number> {
     killBrowserByProfile(profile);
     // Removing the profile here rather than leaving it to the finally block,
     // which process.exit below never reaches. Measured: one leaked
-    // /tmp/html2pdf-cli-XXXXXX profile of seventeen files per interrupted run.
+    // /tmp/letterpress-cli-XXXXXX profile of seventeen files per interrupted run.
     // rm is a bounded unlink of one known directory, so it does not reintroduce
     // the hang the immediate exit exists to avoid.
     // render() owns its work directory and removes it in a finally, which this
-    // exit also skips. The name is html2pdf-<pid>-<n>, so sweeping by our own pid
+    // exit also skips. The name is letterpress-<pid>-<n>, so sweeping by our own pid
     // is exact: another process's directories carry its pid, and the browser
     // profile has a different prefix entirely.
     try {
-      const own = `html2pdf-${process.pid}-`;
+      const own = `letterpress-${process.pid}-`;
       for (const entry of readdirSync(tmpdir())) {
         if (entry.startsWith(own)) rmSync(join(tmpdir(), entry), { recursive: true, force: true });
       }

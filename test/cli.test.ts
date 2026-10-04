@@ -29,7 +29,7 @@ async function run(args: string[], stdin?: string) {
 }
 
 beforeAll(async () => {
-  dir = await mkdtemp(join(tmpdir(), "html2pdf-cli-test-"));
+  dir = await mkdtemp(join(tmpdir(), "letterpress-cli-test-"));
   doc = join(dir, "fixture.html");
   await writeFile(doc, DOC, "utf8");
 });

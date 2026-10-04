@@ -1,5 +1,5 @@
 {
-  "name": "html2pdf",
+  "name": "letterpress",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -19,5 +19,5 @@
   },
   "peerDependenciesMeta": {},
   "optionalDependencies": {},
-  "description": "HTML to PDF through Chromium own print engine"
+  "description": "Render HTML to PDF through Chromium's own print engine"
 }

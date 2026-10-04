@@ -9,7 +9,7 @@ let browser: Browser;
 let profile: string;
 
 beforeAll(async () => {
-  profile = await mkdtemp(join(tmpdir(), "html2pdf-audit-"));
+  profile = await mkdtemp(join(tmpdir(), "letterpress-audit-"));
   browser = await Browser.launch({ profile });
 }, 60_000);
 
@@ -297,7 +297,7 @@ test("without SOURCE_DATE_EPOCH the timestamp is left alone", async () => {
 }, 30_000);
 
 test("images are downsampled to the cap, and reported", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "html2pdf-img-"));
+  const dir = await mkdtemp(join(tmpdir(), "letterpress-img-"));
   try {
     // 1200px wide at 180mm is 169ppi, so 120ppi must reduce it.
     const photo = join(dir, "photo.jpg");

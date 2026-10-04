@@ -9,7 +9,7 @@ const TMP = process.env.TMPDIR ?? "/tmp";
 let counter = 0;
 
 async function withPdf<T>(bytes: Uint8Array, fn: (path: string) => Promise<T>): Promise<T> {
-  const path = `${TMP}/html2pdf-verify-${process.pid}-${counter++}.pdf`;
+  const path = `${TMP}/letterpress-verify-${process.pid}-${counter++}.pdf`;
   await Bun.write(path, bytes);
   try { return await fn(path); } finally { await rm(path, { force: true }).catch(() => {}); }
 }
@@ -77,7 +77,7 @@ export async function pdfImages(bytes: Uint8Array): Promise<PdfImage[]> {
 
 /** Rasterise pages to PNG for visual checks. */
 export async function pdfToPng(bytes: Uint8Array, { dpi = 110, prefix }: { dpi?: number; prefix?: string } = {}) {
-  const base = prefix ?? `${TMP}/html2pdf-png-${process.pid}-${counter++}`;
+  const base = prefix ?? `${TMP}/letterpress-png-${process.pid}-${counter++}`;
   return withPdf(bytes, async (path) => {
     await Bun.$`pdftoppm -png -r ${dpi} ${path} ${base}`.quiet();
     const files: string[] = [];

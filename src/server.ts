@@ -147,7 +147,7 @@ async function readCapped(
 }
 
 export async function startServer(opts: ServerOptions = {}) {
-  const profile = await mkdtemp(join(tmpdir(), "html2pdf-server-"));
+  const profile = await mkdtemp(join(tmpdir(), "letterpress-server-"));
   const browser = await Browser.launch({ profile, extraArgs: opts.browserArgs });
   opts.onReady?.(browser);
 
@@ -408,7 +408,7 @@ export async function startServer(opts: ServerOptions = {}) {
 
         // Tracked so shutdown can wait for it. An untracked render in flight when
         // the server stops leaves its work directory behind, which is how two
-        // /tmp/html2pdf-* directories outlived the process that made them.
+        // /tmp/letterpress-* directories outlived the process that made them.
         inFlight.add(work);
         try {
           return await work;
@@ -468,7 +468,7 @@ export async function startServer(opts: ServerOptions = {}) {
     // Let renders finish before the browser goes. Tearing the browser down
     // mid-render is what strands work directories: render() removes its own in a
     // finally, but a render killed by a dying socket never reaches it, and two
-    // /tmp/html2pdf-* directories were measured surviving the process that made
+    // /tmp/letterpress-* directories were measured surviving the process that made
     // them. A bounded wait, because a render on an infinite loop will not end.
     if (inFlight.size) {
       await Promise.race([
@@ -481,11 +481,11 @@ export async function startServer(opts: ServerOptions = {}) {
     await reapChromium();
     await rm(profile, { recursive: true, force: true }).catch(() => {});
     // Anything a render still owns, now that nothing is writing to it. render()
-    // names its work directories html2pdf-<pid>-<n>, so the pid makes this exact
-    // rather than a guess: the profile is html2pdf-server-* and another
+    // names its work directories letterpress-<pid>-<n>, so the pid makes this exact
+    // rather than a guess: the profile is letterpress-server-* and another
     // process's directories carry its own pid.
     const { readdir } = await import("node:fs/promises");
-    const ours = `html2pdf-${process.pid}-`;
+    const ours = `letterpress-${process.pid}-`;
     for (const entry of await readdir(tmpdir()).catch(() => [] as string[])) {
       if (!entry.startsWith(ours)) continue;
       await rm(join(tmpdir(), entry), { recursive: true, force: true }).catch(() => {});
@@ -503,7 +503,7 @@ if (import.meta.main) {
     port,
     browserArgs: process.env.HTML2PDF_WEBMCP ? ["--enable-blink-features=WebMCP"] : [],
   });
-  process.stdout.write(`html2pdf viewer on http://127.0.0.1:${running.port}\n`);
+  process.stdout.write(`letterpress viewer on http://127.0.0.1:${running.port}\n`);
 
   // process.exit on a signal leaves ten Chromium processes orphaned, holding
   // about a gigabyte, because the zygote and crashpad children get reparented

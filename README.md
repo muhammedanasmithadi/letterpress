@@ -1,6 +1,6 @@
-# html2pdf
+# letterpress
 
-HTML to PDF through Chromium's own print engine. The output is the same file
+Render HTML to PDF through Chromium's own print engine. The output is the same file
 Chrome's Save-as-PDF produces: real vector text, an exact page box, a tagged
 structure and heading bookmarks. Nothing is rasterised unless the document
 contains a real image.

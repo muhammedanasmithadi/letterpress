@@ -10,7 +10,7 @@ let browser: Browser;
 let profile: string;
 
 beforeAll(async () => {
-  profile = await mkdtemp(join(tmpdir(), "html2pdf-api-"));
+  profile = await mkdtemp(join(tmpdir(), "letterpress-api-"));
   browser = await Browser.launch({ profile });
 }, 60_000);
 
@@ -109,7 +109,7 @@ test("the fast path prints a document with no relative assets", async () => {
 }, 60_000);
 
 test("the fast path is skipped when a relative asset is present, and it still prints", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "html2pdf-asset-"));
+  const dir = await mkdtemp(join(tmpdir(), "letterpress-asset-"));
   try {
     // A 1x1 PNG, so the image genuinely resolves when served.
     const png = Buffer.from(

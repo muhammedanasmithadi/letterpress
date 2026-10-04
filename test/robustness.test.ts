@@ -24,8 +24,8 @@ const pictures = async (bytes: Uint8Array) =>
   (await pdfImages(bytes)).filter((i) => i.type === "image" && i.width === 16 && i.height === 16);
 
 beforeAll(async () => {
-  profile = await mkdtemp(join(tmpdir(), "html2pdf-adv-"));
-  dir = await mkdtemp(join(tmpdir(), "html2pdf-adv-doc-"));
+  profile = await mkdtemp(join(tmpdir(), "letterpress-adv-"));
+  dir = await mkdtemp(join(tmpdir(), "letterpress-adv-doc-"));
   browser = await Browser.launch({ profile });
 }, 60_000);
 
@@ -144,7 +144,7 @@ describe("assets reach the document without rewriting it", () => {
     await writeFile(doc,
       `<!doctype html><link rel="stylesheet" href="sub/hide.css"><link rel="stylesheet" href="sub_hide.css">`);
 
-    const work = await mkdtemp(join(tmpdir(), "html2pdf-stage-"));
+    const work = await mkdtemp(join(tmpdir(), "letterpress-stage-"));
     await stageAssets(
       await readFile(doc, "utf8"), doc, work,
     );

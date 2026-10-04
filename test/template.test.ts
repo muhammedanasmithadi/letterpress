@@ -54,7 +54,7 @@ function document(items = ITEMS) {
 }
 
 beforeAll(async () => {
-  profile = await mkdtemp(join(tmpdir(), "html2pdf-tpl-"));
+  profile = await mkdtemp(join(tmpdir(), "letterpress-tpl-"));
   browser = await Browser.launch({ profile });
   template = await Bun.file(join(import.meta.dir, "..", "templates", "invoice.html")).text();
 }, 60_000);

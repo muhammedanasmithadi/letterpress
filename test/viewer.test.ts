@@ -326,6 +326,29 @@ div{height:250px;background:#c03030}</style><div>BOX</div>`;
     expect(sheet).not.toMatch(/select\s*\{[^}]*max-width/s);
   });
 
+  test("the inert margin field is still reachable and explains itself", async () => {
+    const page = await shell();
+    // aria-disabled, not disabled. A disabled control cannot be focused at all:
+    // measured, margin.focus() left document.activeElement on BODY, so nobody
+    // using a keyboard ever reached the field or learned why it was inert.
+    expect(page).toMatch(/id="margin"[^>]*aria-disabled="true"/s);
+    expect(page).not.toMatch(/id="margin"[^>]*\sdisabled>/s);
+
+    const js = await script();
+    // readOnly keeps it focusable, so the value has to be ignored here rather
+    // than by the attribute: the server refuses a margin without a format, and
+    // an inert field still holds whatever was typed into it.
+    expect(js).toMatch(/el\.format\.value \? el\.margin\.value\.trim\(\) : ""/);
+  });
+
+  test("a long render reports elapsed time instead of a frozen label", async () => {
+    const js = await script();
+    // The status line read the same string thirty times over 31 seconds, so a
+    // document working hard looked exactly like one that was wedged.
+    expect(js).toMatch(/setInterval/);
+    expect(js).toMatch(/Rendering….*Math\.round/);
+  });
+
   test("the editor has an accessible name", async () => {
     const page = await shell();
     // Accessibility.getFullAXTree reported textbox name="" for the one control

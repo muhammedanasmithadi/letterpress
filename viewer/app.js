@@ -32,15 +32,20 @@ const el = {
 const DEBOUNCE_MS = 400;
 
 /**
- * How long to wait for the server before giving up on it.
+ * A backstop against a connection that never answers.
  *
- * The server's own deadline is 30s and it will answer, but the browser's fetch
- * has no timeout of its own, so a hung connection left the status line reading
- * "Rendering…" with no way out and no elapsed counter to show it was alive.
- * A shade over the server's own ceiling, so the server's message is what the
- * user normally sees rather than this one.
+ * Not the answer to a slow render, and deliberately generous. A document whose
+ * script loops is answered by the server at its own 30s deadline with a real
+ * message, so a shorter client deadline would only pre-empt a better answer and
+ * would break the genuinely large documents that take most of that. What makes a
+ * long wait tolerable is the visible elapsed counter below, not a shorter fuse.
+ *
+ * The first version of this was 45s with a comment claiming it stopped the ui
+ * freezing for 31s, which it could not do: 45s is above the server's 30s, so it
+ * never fired. It exists for a wedged socket, which the server's deadline cannot
+ * cover because the request never reaches it.
  */
-const CLIENT_TIMEOUT_MS = 45_000;
+const CLIENT_TIMEOUT_MS = 90_000;
 
 /**
  * Renders are identified by a monotonically increasing number and every write
@@ -70,7 +75,10 @@ function syncBusy() {
 /** Read the toolbar. Empty format means "let the document decide". */
 function settings() {
   const format = el.format.value;
-  const margin = el.margin.value.trim();
+  // readOnly rather than disabled, so the field can still be focused and read.
+  // Its value is ignored here while a format is unset, because the server refuses
+  // a margin without one.
+  const margin = el.format.value ? el.margin.value.trim() : "";
   return {
     format: format || undefined,
     // The server rejects a margin without a format, because a document's own
@@ -176,6 +184,12 @@ async function render() {
   inflight++;
   syncBusy();
   const startedAt = performance.now();
+  // A ticking counter rather than a static "Rendering…". Measured: the status line
+  // read the same thirty times over 31 seconds, so a live document looked
+  // exactly like a wedged one.
+  const ticker = setInterval(() => {
+    if (mine === seq) say(`Rendering… ${Math.round((performance.now() - startedAt) / 1000)}s`);
+  }, 1000);
   say("Rendering…");
 
   try {
@@ -240,8 +254,9 @@ async function render() {
     const elapsed = Math.round(performance.now() - startedAt);
     if (aborted && controller.signal.reason === "timeout") {
       fail(
-        `the renderer did not answer within ${Math.round(CLIENT_TIMEOUT_MS / 1000)}s. ` +
-        `a script that never returns will do this; the server's own deadline is 30s.`,
+        `gave up after ${Math.round(CLIENT_TIMEOUT_MS / 1000)}s without an answer. that is this page's ` +
+        `own backstop for a connection that never completes, well past the server's 30s deadline, ` +
+        `so the renderer is not the slow part here. restart it, or check that it is still running.`,
         "error",
       );
     } else if (aborted) {
@@ -257,6 +272,7 @@ async function render() {
     void elapsed;
   } finally {
     clearTimeout(timer);
+    clearInterval(ticker);
     inflight--;
     syncBusy();
   }
@@ -279,14 +295,23 @@ function fail(message, level) {
 
 // ---- events ----
 
-// A margin without a format is always a mistake, so disable the field and say
-// why on hover. It stays focusable: a disabled control a keyboard user cannot
-// reach is one they never learn the reason for.
+/**
+ * A margin without a format is always a mistake, so the field is inert until a
+ * paper size is chosen, and it says why.
+ *
+ * aria-disabled rather than the disabled attribute. A disabled control cannot be
+ * focused at all: measured, margin.focus() left document.activeElement on BODY,
+ * so a keyboard or screen-reader user never reaches it and never learns the
+ * reason. aria-disabled keeps it in the tab order and announced as inactive, and
+ * the check below is what actually stops it being used.
+ */
 function syncMargin() {
-  el.margin.disabled = !el.format.value;
-  el.margin.title = el.format.value
-    ? ""
-    : "Margins apply to a paper size you choose here. A document's own @page margin wins otherwise.";
+  const inert = !el.format.value;
+  el.margin.setAttribute("aria-disabled", inert ? "true" : "false");
+  el.margin.readOnly = inert;
+  el.margin.title = inert
+    ? "Margins apply to a paper size you choose here. A document's own @page margin wins otherwise."
+    : "";
 }
 el.format.addEventListener("change", () => { syncMargin(); void render(); });
 el.margin.addEventListener("change", () => void render());

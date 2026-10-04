@@ -37,6 +37,10 @@ body {
   /* Rows: toolbar, panes, status. The middle row takes the slack so the panes
      scroll rather than the window. */
   grid-template-rows: auto minmax(0, 1fr) auto;
+  /* A grid item defaults to min-width:auto, so the column is forced to the
+     toolbar's min-content. That is 522px, which laid the whole app out 522px
+     wide inside a 380px window and put Download off screen. */
+  grid-template-columns: minmax(0, 1fr);
   overflow: hidden;
 
   background: Canvas;
@@ -49,6 +53,7 @@ body {
 .toolbar {
   display: flex;
   flex-wrap: wrap;
+  min-width: 0;
   align-items: end;
   gap: 4px 14px;
   padding: 8px 12px;
@@ -67,8 +72,10 @@ body {
 
 .group {
   display: flex;
+  flex-wrap: wrap;
   align-items: end;
   gap: 10px;
+  min-width: 0;
 }
 
 .spacer { flex: 1 1 auto; }
@@ -117,11 +124,18 @@ select, input[type="text"], input[type="number"], input[type="file"] {
    300 displayed as "30", which reads as a different setting. */
 input[type="number"] { width: 9ch; }
 input[type="text"] { width: 8ch; }
-input[type="file"] { width: 20ch; }
-select { max-width: 22ch; }
+/* min-width:0, not just width. The file input's min-content is 242px, which
+   drove the whole toolbar to 442px and pushed Download off a 380px screen. */
+input[type="file"] { width: 20ch; min-width: 0; }
+/* No width and no max-width. The UA sizes a select to its widest option, which
+   is the correct behaviour; capping it at 22ch clipped the default option
+   "document's own @page" at every window width, and to a single "d" at 380px. */
+select { min-width: 0; }
 
 input:disabled {
-  opacity: 0.55;
+  /* Not opacity. Stacked on a label already at 70% it measured 2.72:1 against
+     white, which exempts inactive components but is not readable by anyone. */
+  color: color-mix(in oklab, CanvasText 45%, transparent);
 }
 
 button {
@@ -137,6 +151,15 @@ button.primary {
 
 button:disabled { cursor: default; opacity: 0.55; }
 
+/* The UA default is a 1px ring drawn flush against the control, which on
+   #source — border: 0 — is the only focus indicator there is. Offset, thicker,
+   and the accent the file already declares. */
+:where(a, button, input, select, textarea):focus-visible {
+  outline: 2px solid accent-color;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 /* ---------- split panes ---------- */
 
 .split {
@@ -148,7 +171,7 @@ button:disabled { cursor: default; opacity: 0.55; }
 
 .pane {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
 }
@@ -202,6 +225,18 @@ button:disabled { cursor: default; opacity: 0.55; }
   color: color-mix(in oklab, CanvasText 55%, transparent);
   text-align: center;
   padding-top: 40px;
+}
+
+.stale {
+  margin: 0 auto 12px;
+  padding: 6px 10px;
+  max-width: 46ch;
+  font-size: 11px;
+  text-align: center;
+  color: light-dark(#8a5300, #f9d67c);
+  background: color-mix(in oklab, currentColor 8%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 4px;
 }
 
 .placeholder .sub {

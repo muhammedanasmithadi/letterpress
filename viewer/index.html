@@ -91,8 +91,13 @@
 <main class="split">
   <section class="pane" aria-labelledby="editor-label">
     <h2 id="editor-label">Source</h2>
+    <!--
+      aria-label, not aria-labelledby: the section's own heading names the
+      region, not the field. Accessibility.getFullAXTree reported this control
+      as textbox name="" while all eight others were correctly named.
+    -->
     <textarea id="source" spellcheck="false" autocomplete="off" autocapitalize="off"
-              aria-describedby="source-hint"><!doctype html>
+              aria-label="HTML source" aria-describedby="source-hint"><!doctype html>
 <style>
   @page { size: A4; margin: 15mm }
   body { font: 11pt/1.5 sans-serif; color: #1a1a1a }
@@ -111,6 +116,13 @@
 
   <section class="pane" aria-labelledby="preview-label">
     <h2 id="preview-label">Preview</h2>
+    <!--
+      Outside #preview, not inside it. The preview is rebuilt with
+      replaceChildren on every render, so a marker living in there was deleted by
+      the first render — and the first render happens on load. Found because the
+      element was in the served html and absent from the dom at the same moment.
+    -->
+    <p id="preview-note" class="stale" hidden></p>
     <div id="preview" class="preview">
       <p class="placeholder">
         Nothing rendered yet.
@@ -121,7 +133,13 @@
 </main>
 
 <footer class="status">
-  <output id="status" role="status" aria-live="polite">Ready.</output>
+  <!--
+    aria-atomic so a change re-announces as a whole. The page count is also in
+    the message app.js writes, not only in the metrics span beside it: the metrics
+    were a sibling element, so the count was painted and never announced, and it
+    is the one number a user wants.
+  -->
+  <output id="status" role="status" aria-live="polite" aria-atomic="true">Ready.</output>
   <span id="metrics" class="metrics"></span>
 </footer>
 

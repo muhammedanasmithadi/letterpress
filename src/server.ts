@@ -209,7 +209,17 @@ export async function startServer(opts: ServerOptions = {}) {
           if (!(await file.exists())) {
             return new Response("viewer not built yet", { status: 404 });
           }
-          return new Response(file, { headers: { "content-type": "text/html; charset=utf-8" } });
+          return new Response(file, {
+            // no-store, because the shell is served from disk with no version
+            // in its url. Chromium then heuristically cached it and served a
+            // stale copy: an element added to index.html was absent from the
+            // dom after a reload, which looks exactly like the markup being
+            // wrong. Verified while QAing the first shell.
+            headers: {
+              "content-type": "text/html; charset=utf-8",
+              "cache-control": "no-store",
+            },
+          });
         }
 
         // Static assets for the viewer, confined to the viewer directory.
@@ -237,7 +247,9 @@ export async function startServer(opts: ServerOptions = {}) {
             : ext === ".css" ? "text/css; charset=utf-8"
             : ext === ".json" ? "application/json"
             : undefined;
-          return new Response(file, type ? { headers: { "content-type": type } } : {});
+          return new Response(file, type
+            ? { headers: { "content-type": type, "cache-control": "no-store" } }
+            : { headers: { "cache-control": "no-store" } });
         }
 
         if (url.pathname !== "/render" || request.method !== "POST") {

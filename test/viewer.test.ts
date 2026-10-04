@@ -254,3 +254,113 @@ describe("the shell renders end to end", () => {
     expect(bytes.subarray(0, 5).toString()).toBe("%PDF-");
   }, 90_000);
 });
+describe("the toolbar wiring holds", () => {
+  // Each of these was a defect that a "does it return 200" assertion passed.
+  // The rule from the rest of this project: assert on the output, not on the
+  // request succeeding.
+  const shell = async () => (await (await fetch(`${origin}/`)).text()).replace(/<!--[\s\S]*?-->/g, "");
+  const css = async () => (await (await fetch(`${origin}/assets/theme.css`)).text())
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+  const script = async () => await (await fetch(`${origin}/assets/app.js`)).text();
+
+  test("the app sends printBackground, which is the field the server reads", async () => {
+    const js = await script();
+    // It sent `background`, a name the server never read, so unchecking Background
+    // changed nothing: measured, the red page still printed with the box off.
+    expect(js).toContain("printBackground");
+    expect(js).not.toMatch(/\bbackground:\s*el\.background/);
+  });
+
+  test("an unprintable background is actually not painted", async () => {
+    // The pixel check, not a status code. The old test sent printBackground and
+    // only asserted 200, which passed while the viewer sent the wrong key.
+    const doc = `<!doctype html><style>@page{size:a4;margin:5mm}body{margin:0}
+div{height:250px;background:#c03030}</style><div>BOX</div>`;
+    const painted = await (await post({ html: doc, printBackground: true })).json() as { pdf: string };
+    const bare = await (await post({ html: doc, printBackground: false })).json() as { pdf: string };
+    const withPaint = Buffer.from(painted.pdf, "base64");
+    const without = Buffer.from(bare.pdf, "base64");
+    // The two must differ, and the difference must be real content rather than a
+    // timestamp: a red page drawn or not drawn is a different compressed stream.
+    expect(withPaint.equals(without)).toBe(false);
+    // And the bytes that differ are the image, not the metadata. A body with a
+    // background that gets dropped is smaller, measurably.
+    expect(withPaint.byteLength).toBeGreaterThan(without.byteLength);
+  }, 120_000);
+
+  test("the stale marker cannot be deleted by a re-render", async () => {
+    const page = await shell();
+    // It used to live inside #preview, which app.js empties with
+    // replaceChildren on every render. The first render happens on load, so the
+    // marker was gone before anyone could see it: found because the element was
+    // in the served html and absent from the dom at the same moment.
+    const insidePreview = /<div id="preview"[^>]*>[\s\S]*?id="preview-note"/.test(page);
+    expect(insidePreview, "preview-note must not be inside the container that gets replaced").toBe(false);
+    expect(page).toContain('id="preview-note"');
+  });
+
+  test("the shell is not cacheable", async () => {
+    // Chromium held a stale index.html across a server restart and reported an
+    // element that was on disk as missing from the dom.
+    for (const path of ["/", "/assets/theme.css", "/assets/app.js"]) {
+      const r = await fetch(`${origin}${path}`);
+      expect(r.headers.get("cache-control"), path).toBe("no-store");
+    }
+  });
+
+  test("a narrow window does not push the app wider than the window", async () => {
+    // body is a grid, and a grid item defaults to min-width:auto, so the column
+    // was forced to the toolbar's 522px min-content. Measured at 380px: overflow
+    // 142, Download at right:510, off screen.
+    const sheet = await css();
+    expect(sheet).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+    expect(sheet).toMatch(/\.toolbar\s*\{[^}]*min-width: 0/s);
+    // The file input's min-content alone was 242px.
+    expect(sheet).toMatch(/input\[type="file"\][^}]*min-width: 0/s);
+  });
+
+  test("the select is not width-capped, so its default option is not clipped", async () => {
+    const sheet = await css();
+    // max-width: 22ch clipped "document's own @page" to "document's own @pa" at
+    // every width, and to a single character at 380px.
+    expect(sheet).not.toMatch(/select\s*\{[^}]*max-width/s);
+  });
+
+  test("the editor has an accessible name", async () => {
+    const page = await shell();
+    // Accessibility.getFullAXTree reported textbox name="" for the one control
+    // that is not wrapped in a label.
+    // The attribute is on the line after id="source", so the match spans a
+    // newline rather than sitting on one tag line.
+    const textarea = page.slice(page.indexOf('<textarea id="source"'), page.indexOf(">", page.indexOf('<textarea id="source"')));
+    expect(textarea).toContain('aria-label="HTML source"');
+  });
+
+  test("the status line carries the page count, so it is announced", async () => {
+    const js = await script();
+    // The metrics span is a sibling of the live region, so the count was painted
+    // and never announced. It has to be in the message the live region holds.
+    expect(js).toContain("Rendered ${pages}");
+  });
+
+  test("renders are ordered, so a slow one cannot overwrite a fast one", async () => {
+    const js = await script();
+    // A monotonic sequence, gated on every write. Measured before this: the
+    // editor held a one-page document, the status read "60 pages", and Download
+    // handed back 60 pages of a different document.
+    expect(js).toContain("if (mine !== seq) return;");
+    expect(js).toContain("controller?.abort()");
+  });
+
+  test("findings are shortened for the toolbar rather than pasted whole", async () => {
+    const js = await script();
+    // The renderer's wording is written for a terminal and tells a GUI user to
+    // "Pass --allow-network" with that checkbox 400px away. Measured at 358
+    // characters, which pushed the status line to three lines.
+    const line = js.slice(js.indexOf("function findingLine"), js.indexOf("function showPreview"));
+    expect(line, "the finding is truncated to its first sentence").toContain(".split(");
+    expect(line, "and the rest is counted rather than printed").toContain("more)");
+    // The untruncated text still has to reach the user somehow.
+    expect(js).toContain("el.status.title = findings.map");
+  });
+});

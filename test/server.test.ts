@@ -138,6 +138,46 @@ ${Array.from({ length: 6 }, (_, i) => `<div class="s">PAGE_${i + 1}</div>`).join
     const again = await post({ html: DOC });
     expect((await again.json() as { ok: boolean }).ok).toBe(true);
   }, 60_000);
+
+  test("a burst waits rather than being refused", async () => {
+    // Measured against the version that refused: eight concurrent requests came
+    // back four ok and four 429. A burst is not eight independent failures, it is
+    // eight documents that all need printing, so the overflow waits for a slot.
+    const burst = 8;
+    const results = await Promise.all(Array.from({ length: burst }, () => post({ html: DOC })));
+    const ok = results.filter((r) => r.status === 200);
+    expect(ok).toHaveLength(burst);
+    for (const r of ok) expect(((await r.json()) as { ok: boolean }).ok).toBe(true);
+  }, 120_000);
+
+  test("a burst beyond the queue is refused, and says so", async () => {
+    // The queue has to be bounded, or a burst becomes an unbounded wait and a
+    // client's deadline expires instead of an error arriving promptly.
+    const results = await Promise.all(Array.from({ length: 40 }, () => post({ html: DOC })));
+    const refused = results.filter((r) => r.status === 429);
+    expect(refused.length).toBeGreaterThan(0);
+    for (const r of refused) {
+      expect(r.headers.get("retry-after")).toBe("2");
+      const body = await r.json() as { ok: boolean; error: string };
+      expect(body.ok).toBe(false);
+      expect(body.error).toMatch(/retry/i);
+    }
+    // Everything accepted still renders rather than being dropped.
+    const ok = results.filter((r) => r.status === 200);
+    expect(ok.length).toBeGreaterThan(0);
+  }, 180_000);
+
+  test("a queued render still produces a whole pdf", async () => {
+    // The point of the queue is that a waiting request gets a real answer.
+    const results = await Promise.all(Array.from({ length: 6 }, () => post({ html: DOC })));
+    for (const r of results) {
+      expect(r.status).toBe(200);
+      const body = await r.json() as { ok: boolean; pdf: string; pages: number };
+      expect(body.ok).toBe(true);
+      expect(body.pages).toBe(1);
+      expect(Buffer.from(body.pdf, "base64").subarray(0, 5).toString()).toBe("%PDF-");
+    }
+  }, 120_000);
 });
 
 describe("loopback boundary", () => {

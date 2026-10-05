@@ -34,6 +34,11 @@ const LOOPBACK_HOST = /^(?:127\.0\.0\.1|\[::1\]|localhost)(?::\d+)?$/i;
 
 /** Renders allowed at once. Measured: 30 concurrent renders peaked at 4.7GB. */
 const MAX_CONCURRENT_RENDERS = Number(process.env.HTML2PDF_MAX_RENDERS ?? 4);
+/**
+ * Requests allowed to wait for a slot. Bounds the wait rather than the memory:
+ * a queued request holds only its parsed body, not a tab.
+ */
+const MAX_QUEUED_RENDERS = Number(process.env.HTML2PDF_MAX_QUEUE ?? 16);
 /** A render deadline is a resource hold. 10 minutes is already absurd. */
 const MAX_TIMEOUT_MS = 120_000;
 const MAX_SETTLE_MS = 30_000;
@@ -153,9 +158,45 @@ export async function startServer(opts: ServerOptions = {}) {
 
   const viewerDir = join(import.meta.dir, "..", "viewer");
   // A render holds a tab, a work directory and a work server. Thirty at once
-  // measured 4.7GB of chromium, so the queue is bounded and the overflow is
-  // refused rather than queued indefinitely.
+  // measured 4.7GB of chromium, so concurrency is bounded.
+  //
+  // Bounding concurrency is not the same as refusing. Measured at eight
+  // concurrent requests against the bounded version: four rendered and four came
+  // back 429. A burst is not eight independent failures, it is eight documents
+  // that all need printing, and turning half of them into errors costs the caller
+  // a retry that would otherwise not have been needed. So overflow waits in a
+  // FIFO queue of bounded depth, and only a queue that is itself full is refused.
+  //
+  // The queue is what makes the wait safe rather than unbounded: at the measured
+  // drain rate of about 6 renders a second, sixteen queued clear in under three
+  // seconds, which is inside any client's deadline.
   let active = 0;
+  let queued = 0;
+  const waiters: Array<() => void> = [];
+
+  /** Take a concurrency slot, or queue for one. Returns null when the queue is full. */
+  const acquire = (): Promise<void> | null => {
+    if (active < MAX_CONCURRENT_RENDERS) {
+      active++;
+      return Promise.resolve();
+    }
+    if (queued >= MAX_QUEUED_RENDERS) return null;
+    queued++;
+    return new Promise<void>((resolve) => {
+      waiters.push(() => {
+        queued--;
+        active++;
+        resolve();
+      });
+    });
+  };
+
+  /** Give a slot back, handing it straight to the next waiter if there is one. */
+  const release = () => {
+    active--;
+    waiters.shift()?.();
+  };
+
   const inFlight = new Set<Promise<unknown>>();
 
   // Annotated because the /health branch reads server.port, which would make the
@@ -268,10 +309,13 @@ export async function startServer(opts: ServerOptions = {}) {
           }, { status: 415 });
         }
 
-        if (active >= MAX_CONCURRENT_RENDERS) {
+        // Refuse before reading the body when the queue is already full: an 8MB body is
+        // not worth receiving for a request that will be turned away. Below that
+        // the request waits for a slot instead, which is the whole point.
+        if (active >= MAX_CONCURRENT_RENDERS && queued >= MAX_QUEUED_RENDERS) {
           return Response.json({
             ok: false,
-            error: `${MAX_CONCURRENT_RENDERS} renders are already running. wait for one to finish.`,
+            error: `${MAX_CONCURRENT_RENDERS} renders are running and ${MAX_QUEUED_RENDERS} are queued, which is the limit. retry shortly.`,
           }, { status: 429, headers: { "retry-after": "2" } });
         }
 
@@ -376,7 +420,19 @@ export async function startServer(opts: ServerOptions = {}) {
           return Math.min(Math.max(n, 0), max);
         };
 
-        active++;
+        const slot = acquire();
+        if (!slot) {
+          // The queue filled while the body was being read, which is the only way
+          // to arrive here having passed the check above.
+          return Response.json({
+            ok: false,
+            error: `the render queue filled up while this request was being read. retry shortly.`,
+          }, { status: 429, headers: { "retry-after": "2" } });
+        }
+        // Only now does the request hold a slot: waiting for one must not count
+        // against the concurrency cap, or a queue would deadlock itself.
+        await slot;
+
         const work = (async () => {
           try {
             const result = await render(browser, {
@@ -414,7 +470,7 @@ export async function startServer(opts: ServerOptions = {}) {
               { status: 500 },
             );
           } finally {
-            active--;
+            release();
           }
         })();
 
@@ -488,6 +544,10 @@ export async function startServer(opts: ServerOptions = {}) {
         Bun.sleep(4_000),
       ]);
     }
+    // Anything still queued will never get a slot now, so release it rather than
+    // leaving those requests waiting on a promise nothing will resolve. Without
+    // this a shutdown with queued requests hangs until every client's deadline.
+    for (const waiter of waiters.splice(0)) waiter();
     server.stop(true);
     await browser.close();
     await reapChromium();

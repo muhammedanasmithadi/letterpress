@@ -339,17 +339,33 @@ describe("bounded resources", () => {
     expect(Date.now() - started).toBeLessThan(130_000);
   }, 150_000);
 
-  test("renders are refused rather than queued past the concurrency cap", async () => {
-    // Thirty concurrent renders measured 4.7GB of chromium with no degradation
-    // on the way: every request succeeded and the machine simply died.
+  test("a burst is bounded and the machine survives it", async () => {
+    // Thirty concurrent renders measured 4.7GB of chromium with no degradation on
+    // the way: every request succeeded and the machine simply died. That is the
+    // failure this guards against, and it is prevented by never running more than
+    // the cap at once — not by turning requests away.
+    //
+    // This test used to require that some of a burst of twelve came back 429,
+    // which asserted the fail-fast design. Twelve now queue and all succeed, and
+    // the bound that protects the machine is the queue depth, asserted in
+    // server.test.ts by a burst large enough to overflow it.
     const burst = await Promise.all(
       Array.from({ length: 12 }, (_, i) => post({ html: `${DOC}<p>burst ${i}</p>` })),
     );
     const codes = burst.map((r) => r.status);
     expect(codes.every((c) => c === 200 || c === 429)).toBe(true);
-    expect(codes.filter((c) => c === 429).length).toBeGreaterThan(0);
-    const refused = burst.filter((r) => r.status === 429);
-    expect(Number(refused[0].headers.get("retry-after"))).toBeGreaterThan(0);
+    for (const r of burst) {
+      if (r.status !== 429) continue;
+      expect(Number(r.headers.get("retry-after"))).toBeGreaterThan(0);
+    }
+    // Every accepted request produced a real pdf rather than being dropped.
+    const ok = burst.filter((r) => r.status === 200);
+    expect(ok.length).toBeGreaterThan(0);
+    for (const r of ok.slice(0, 3)) {
+      const body = await r.json() as { ok: boolean; pdf: string };
+      expect(body.ok).toBe(true);
+      expect(Buffer.from(body.pdf, "base64").subarray(0, 5).toString()).toBe("%PDF-");
+    }
   }, 180_000);
 
   test("the server is healthy and rendering after the burst", async () => {

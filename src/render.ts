@@ -2,6 +2,7 @@ import { basename, dirname, isAbsolute, join, normalize, resolve } from "node:pa
 import { rm } from "node:fs/promises";
 import { Browser, type Tab } from "./browser.ts";
 import { fixFontDescriptors, unresolvedFontMetrics } from "./fontdesc.ts";
+import { addMetadata } from "./meta.ts";
 import { fixToUnicode } from "./tounicode.ts";
 import { audit } from "./lint.ts";
 import { declaredPageMargin, declaredPageSize, inspect, pageRules, type PdfInfo } from "./pdf.ts";
@@ -65,6 +66,16 @@ export type RenderRequest = {
    * is the print convention. 0 disables downsampling.
    */
   maxImagePpi?: number;
+  /**
+   * Document author, written to the PDF's information dictionary and to an XMP
+   * packet generated from it. Overrides a `<meta name="author">` the document
+   * declares. Omitted means nothing is written rather than something guessed.
+   */
+  author?: string;
+  /** Subject, same treatment as author. Overrides the document's own meta tag. */
+  subject?: string;
+  /** Keywords, same treatment as author. Overrides the document's own meta tag. */
+  keywords?: string;
   /**
    * Extra JavaScript evaluated in the page after fonts resolve and before the
    * print. Used by the image cap; exposed for callers who need to settle a
@@ -782,6 +793,38 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         }, timeoutMs);
       }
 
+      // An author the document states, read from the live page rather than the
+      // source string: the source is not always what is loaded, since a template
+      // fills it and setDocumentContent installs it.
+      const stated = await tab.send("Runtime.evaluate", {
+        expression: `(() => {
+          const pick = (names) => {
+            for (const name of names) {
+              const el = document.querySelector('meta[name="' + name + '"]') ||
+                document.querySelector('meta[property="' + name + '"]');
+              const value = el && (el.getAttribute("content") || "").trim();
+              if (value) return value;
+            }
+            return "";
+          };
+          return JSON.stringify({
+            author: pick(["author", "DC.creator", "dc.creator", "article:author", "biblio_author"]),
+            subject: pick(["subject", "DC.subject", "dc.subject", "description", "DC.description"]),
+            keywords: pick(["keywords", "DC.subject", "citation_keywords"]),
+          });
+        })()`,
+        returnByValue: true,
+      }, timeoutMs);
+      let docMeta: { author?: string; subject?: string; keywords?: string } = {};
+      try {
+        docMeta = JSON.parse((stated as { result?: { value?: string } }).result?.value ?? "{}");
+      } catch {
+        // A document with no meta tags, or an unparseable one. Neither is an error.
+      }
+      // The flag wins over the document: it is the more specific statement of the
+      // same fact, and a caller supplying one on the command line expects it used.
+      const author = req.author?.trim() || docMeta.author || "";
+
       // Downsample before measuring, so the findings describe the PDF that was
       // actually produced rather than the page as authored.
       const capped = req.maxImagePpi ? await capImageResolution(tab, req.maxImagePpi, timeoutMs) : [];
@@ -889,8 +932,39 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       // pads every edit back to the original length.
       // Both fixes rebuild the file and its cross-reference table, so they run
       // before stampPdf, whose fixed-width edits have to see the final bytes.
-      const described = fixFontDescriptors(fixToUnicode(raw));
+      // addMetadata reads the dictionary Chromium wrote, so it runs after the
+      // descriptor and ToUnicode fixes have rebuilt the file and before the title
+      // is stamped. StampPdf keeps every edit the same byte length, so an author
+      // written into the dictionary survives it unchanged.
+      const described = addMetadata(
+        fixFontDescriptors(fixToUnicode(raw)),
+        {
+          author,
+          // A description is the subject in Dublin Core, which is where the
+          // subject is read from. A document that states both gets the explicit
+          // subject, since that is the narrower claim.
+          subject: req.subject?.trim() || docMeta.subject || "",
+          keywords: req.keywords?.trim() || docMeta.keywords || "",
+        },
+      );
       const pdf = stampPdf(described, pdfTitle);
+      // An author the document declared but that no flag supplied. Worth saying:
+      // Chromium drops every meta tag on the way into the PDF, so without this
+      // the fact exists in the source and nowhere in the output.
+      if (docMeta.author && !req.author?.trim()) {
+        findings.push({
+          code: "metadata-authored",
+          severity: "info",
+          message: `wrote "${docMeta.author}" as the pdf author, from the document's own meta tag. pass --author to override it.`,
+        });
+      }
+      if (docMeta.subject?.trim()) {
+        findings.push({
+          code: "metadata-subject",
+          severity: "info",
+          message: `wrote "${docMeta.subject}" as the pdf subject, from the document's own meta tag.`,
+        });
+      }
       const info = inspect(pdf);
 
       for (const url of blocked) {

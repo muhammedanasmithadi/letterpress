@@ -31,6 +31,10 @@ options
       --no-background     omit background graphics
       --max-image-ppi <n>  downsample images above this resolution (default
                           300, the print convention; 0 disables)
+      --author <name>      pdf author. chromium drops the document's own
+                          <meta name="author">, so pass it here to keep it
+      --subject <text>     pdf subject
+      --keywords <text>    pdf keywords
       --settle <ms>       extra wait after fonts resolve (default 0)
       --timeout <ms>      per-render deadline (default 30000)
       --json              machine-readable result on stdout
@@ -62,6 +66,9 @@ type Options = {
   settleMs: number;
   timeoutMs: number;
   maxImagePpi: number;
+  author?: string;
+  subject?: string;
+  keywords?: string;
   json: boolean;
   quiet: boolean;
   help?: boolean;
@@ -139,6 +146,18 @@ export function parseArgs(argv: string[]): ParseResult {
         opts.timeoutMs = n;
         break;
       }
+      case "--author":
+        opts.author = need(i, a); i++;
+        if (!opts.author.trim()) return { opts, error: "--author needs a name" };
+        break;
+      case "--subject":
+        opts.subject = need(i, a); i++;
+        if (!opts.subject.trim()) return { opts, error: "--subject needs text" };
+        break;
+      case "--keywords":
+        opts.keywords = need(i, a); i++;
+        if (!opts.keywords.trim()) return { opts, error: "--keywords needs text" };
+        break;
       case "--json": opts.json = true; break;
       case "-q": case "--quiet": opts.quiet = true; break;
       default:
@@ -356,6 +375,9 @@ export async function main(argv: string[]): Promise<number> {
       settleMs: opts.settleMs,
       timeoutMs: opts.timeoutMs,
       maxImagePpi: opts.maxImagePpi || undefined,
+      author: opts.author,
+      subject: opts.subject,
+      keywords: opts.keywords,
     });
 
     await Bun.write(outPath, result.pdf);

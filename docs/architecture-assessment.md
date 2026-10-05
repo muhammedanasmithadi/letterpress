@@ -234,7 +234,65 @@ recorded as retractions with tests.
   not exist at 1–4%; the correctness argument is real but is better answered by
   the gate.
 
-## 7. How success would be verified
+## 7. What was implemented, and what it cost
+
+All three recommendations below were carried out after the assessment. Numbers
+are re-measured, not estimated.
+
+### A verification gate — `src/verify.ts`, `5bf7cfa`
+
+Four checks: one `startxref` pointing at a table, every in-use xref entry pointing
+at its own object header, every indirect reference resolving with every stream
+`/Length` matching, and — the one that earns its place — **every page's content
+stream byte-identical to what Chromium emitted**. No repair in this layer may move
+a glyph, so a changed content payload means one has done something it had no
+business doing. Comparing compressed payloads avoids decompressing every page.
+
+A failed check falls back to Chromium's own bytes and reports a `repair-rejected`
+warning, so the failure mode becomes a silent non-repair rather than a silent
+corruption.
+
+Measured cost: **0.1% of render time at one page, 2.3% at 74.** The gate's own
+proof is a test that rewrites a content stream and asserts the three structural
+checks pass while the content check fails — which is the demonstration that
+structure alone cannot do this job.
+
+### A queue instead of refusal — `3b07868`
+
+| burst | before | after |
+|---|---|---|
+| 8 | 4 ok, 4 refused | **8 ok**, 0 refused |
+| 12 | 4 ok, 8 refused | **12 ok** |
+| 24 | — | 20 ok, 4 refused |
+| 40 | — | 20 ok, 20 refused |
+
+Twenty is the designed ceiling: 4 running plus 16 queued. What protects the
+machine — never more than 4 at once — is unchanged.
+
+### Idempotence asserted per font family — `444e1ae`
+
+Every repair must return its own output untouched, asserted across five font
+configurations. This is the property that would have caught the `??` short-circuit
+before it shipped.
+
+### What was not done
+
+- **A2.** Unchanged. Worth 5% of file size, unsafe to implement, and the safe
+  subset is worth 50 bytes.
+- **Replacing Chromium.** No evidence of a limit being hit.
+- **Consolidating the rebuilds.** No performance argument exists at 1–4%.
+
+## 8. Still open
+
+1. **A 2,000-page document has never been rendered.** The server's cap asserts it
+   is possible; nothing has confirmed it.
+2. **Headful parity** is one test behind a `DISPLAY` gate.
+3. **The three fixes are tested on the documents that motivated them**, not a
+   corpus. Generalisation is argued from the mechanism and is unverified.
+4. **`stampPdf` truncates a title that exceeds its slot.** By design and
+   documented, but it means a long document title is silently clipped.
+
+## 9. How success would be verified
 
 - The gate: inject a known corruption into a rendered PDF and assert the shipped
   file is the un-repaired one. That test is the gate's own proof.

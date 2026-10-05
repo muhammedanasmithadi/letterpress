@@ -208,6 +208,25 @@ describe("fixToUnicode", () => {
     expect(sameBytes(fixToUnicode(input), input)).toBe(true);
   });
 
+  test("a ligature in a bfchar is fixed even when a bfrange is also rewritten", () => {
+    // The two forms arrive from different fonts in the same document, and
+    // `fixRanges(cmap) ?? fixCMap(cmap)` short-circuits on the first result. So a
+    // CMap carrying one of each had only its range fixed: with a serif face the
+    // shipped file kept U+FB03, "efficient" was not findable, and a second pass
+    // over the same bytes changed it. A repair that is not a function of its
+    // input is the defect, and the fix is that both passes run.
+    const withBoth = "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n" +
+      "1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n" +
+      "3 beginbfchar\n<0654> <FB03>\n<0003> <0020>\n<0014> <0031>\nendbfchar\n" +
+      "1 beginbfrange\n<0675> <0677> <FB00>\nendbfrange\n" +
+      "endcmap\nend\nend\n";
+    const out = fixToUnicode(pdfWithCMap(withBoth));
+    expect(unresolvedLigatures(out)).toEqual([]);
+    const text = cmaps(out).join("");
+    expect(text).toContain("<0654> <006600660069>");
+    expect(text).toContain("<0675> <00660066>");
+  });
+
   test("the codespacerange line is not mistaken for a glyph mapping", () => {
     const out = fixToUnicode(pdfWithCMap(cmapOfRange(0x0675, 0x0677, 0xfb00)));
     expect(cmaps(out).join("")).toContain("<0000> <FFFF>");
@@ -306,6 +325,38 @@ describe("rendered output", () => {
     expect(unresolvedLigatures(r.pdf)).toEqual([]);
     expect(await pdfText(r.pdf)).toContain("plain words only");
   });
+
+  test("no font family keeps a ligature, and no repair changes its own output", async () => {
+    // The property the short-circuit broke, and the one every repair in the layer
+    // needs: applying a repair to its own output must return those bytes
+    // untouched. With a serif face the two forms of the ligature arrive from
+    // different fonts, so a document can carry one of each — and the pass that
+    // fixed the range meant the bfchar pass never ran.
+    for (const style of [
+      "",
+      "font-family:serif",
+      "font-family:monospace",
+      "font-weight:700",
+      "font-style:italic",
+    ]) {
+      const r = await render(browser, {
+        html: `<!doctype html><meta charset="utf-8"><p style="${style}">` +
+          `office efficient different flags finished</p>`,
+      });
+      expect(unresolvedLigatures(r.pdf)).toEqual([]);
+      expect(sameBytes(fixToUnicode(r.pdf), r.pdf)).toBe(true);
+    }
+  }, 120_000);
+
+  test("a word containing an ffi ligature is findable in a serif document", async () => {
+    const r = await render(browser, {
+      html: `<!doctype html><meta charset="utf-8">
+<style>body{font-family:"DejaVu Serif",serif}</style><p>efficient sufficient</p>`,
+    });
+    expect(unresolvedLigatures(r.pdf)).toEqual([]);
+    expect(await pdfText(r.pdf)).toContain("efficient");
+    expect(await pdfText(r.pdf)).not.toContain(String.fromCodePoint(0xfb03));
+  }, 90_000);
 
   test("arabic letters carrying hamza keep their codepoints", async () => {
     // The case a blind NFKC pass would corrupt: these are single letters, and

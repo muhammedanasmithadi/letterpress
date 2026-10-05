@@ -220,9 +220,21 @@ function fixRanges(cmap: string): string | undefined {
  * The range pass runs first. A rewritten range emits `<gid> <dest>` pairs that
  * the bfchar pass would then read as a key and a destination and rewrite a
  * second time.
+ *
+ * Both passes must run, and both had been skipped for a document carrying a
+ * ligature in each form. `fixRanges(cmap) ?? fixCMap(cmap)` short-circuits on the
+ * first result, so a CMap with a ligature inside a bfrange destination never had
+ * its bfchar entries looked at. Measured with a serif face, where the `ffi`
+ * glyph arrives as a bfchar while `ff`, `fi` and `fl` arrive as a range: the
+ * shipped file kept U+FB03, a search for "efficient" failed, and a second pass
+ * over the same bytes fixed it. That is a repair layer that is not a function of
+ * its input, and nothing in the pipeline noticed.
  */
 function fixCMapBoth(cmap: string): string | undefined {
-  return fixRanges(cmap) ?? fixCMap(cmap);
+  const ranged = fixRanges(cmap);
+  const chars = fixCMap(ranged ?? cmap);
+  if (ranged === undefined && chars === undefined) return undefined;
+  return chars ?? ranged;
 }
 
 /* ------------------------------------------------------------------ *

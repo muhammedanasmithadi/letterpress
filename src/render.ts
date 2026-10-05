@@ -2,6 +2,7 @@ import { basename, dirname, isAbsolute, join, normalize, resolve } from "node:pa
 import { rm } from "node:fs/promises";
 import { Browser, type Tab } from "./browser.ts";
 import { fixFontDescriptors, unresolvedFontMetrics } from "./fontdesc.ts";
+import { fixToUnicode } from "./tounicode.ts";
 import { audit } from "./lint.ts";
 import { declaredPageMargin, declaredPageSize, inspect, pageRules, type PdfInfo } from "./pdf.ts";
 
@@ -886,7 +887,9 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       // it goes first. stampPdf edits at fixed offsets and has to see the final
       // bytes, and stampPdf's replacement values can shift nothing because it
       // pads every edit back to the original length.
-      const described = fixFontDescriptors(raw);
+      // Both fixes rebuild the file and its cross-reference table, so they run
+      // before stampPdf, whose fixed-width edits have to see the final bytes.
+      const described = fixFontDescriptors(fixToUnicode(raw));
       const pdf = stampPdf(described, pdfTitle);
       const info = inspect(pdf);
 

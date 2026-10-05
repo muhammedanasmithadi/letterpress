@@ -28,86 +28,7 @@
  */
 
 import { inflateSync } from "node:zlib";
-
-const LATIN1 = "latin1" as BufferEncoding;
-const NEWLINE = Buffer.from("\n", LATIN1);
-
-/* ------------------------------------------------------------------ *
- * Whole-file surgery
- * ------------------------------------------------------------------ */
-
-type Obj = { num: number; bytes: Buffer };
-
-/**
- * Split a PDF into header, indirect objects and trailer.
- *
- * Object offsets are what the cross-reference table stores, so anything that
- * changes a stream's length invalidates the table and it must be rebuilt.
- */
-function split(raw: Buffer): { head: Buffer; objs: Obj[]; trailer: Buffer } {
-  const text = raw.toString(LATIN1);
-  const starts: Array<{ num: number; at: number }> = [];
-  for (const m of text.matchAll(/(?:^|[^0-9])(\d+) \d+ obj\b/g)) {
-    starts.push({ num: Number(m[1]), at: m.index + (m.index > 0 && m[0][0] !== "0" ? 1 : 0) });
-  }
-  const trailerAt = text.indexOf("\ntrailer\n");
-  if (!starts.length || trailerAt === -1) throw new Error("not a linear pdf");
-  const objs: Obj[] = [];
-  for (let i = 0; i < starts.length; i++) {
-    const from = starts[i].at;
-    // An object ends at its own `endobj`, not at the next header: a stream
-    // payload may contain bytes that look like one.
-    const endObj = text.indexOf("endobj", from);
-    const next = i + 1 < starts.length ? starts[i + 1].at : trailerAt;
-    const to = endObj !== -1 && endObj + 6 <= next ? endObj + 6 : next;
-    objs.push({ num: starts[i].num, bytes: raw.subarray(from, to) });
-  }
-  // The trailer stops at the file's own `startxref`, not at `%%EOF`. Slicing to
-  // `%%EOF` carried the old pointer along, and appending a fresh one produced two
-  // `startxref` lines: readers disagreed about which to honour, and the stale
-  // offset pointed into the middle of the rebuilt table.
-  const oldStartxref = text.indexOf("\nstartxref", trailerAt);
-  if (oldStartxref === -1) throw new Error("no startxref");
-  return {
-    head: raw.subarray(0, starts[0].at),
-    objs,
-    trailer: raw.subarray(trailerAt + 1, oldStartxref),
-  };
-}
-
-/** Reassemble objects into a file with a freshly computed cross-reference table. */
-function join(head: Buffer, objs: Obj[], trailer: Buffer): Buffer {
-  const parts: Buffer[] = [head];
-  const at = new Map<number, number>();
-  let length = head.length;
-  for (const o of objs) {
-    at.set(o.num, length);
-    parts.push(o.bytes);
-    length += o.bytes.length;
-    // A newline after every object, so the last one does not end glued to the
-    // keyword that follows. `endobjxref` is one token to a reader: ghostscript
-    // reported "object lacks an endobj" and stopped there, while poppler happened
-    // to recover and read the file anyway.
-    parts.push(NEWLINE);
-    length += 1;
-  }
-  const size = Math.max(...objs.map((o) => o.num)) + 1;
-  const xrefAt = length;
-  parts.push(Buffer.from(`xref\n0 ${size}\n0000000000 65535 f \n`, LATIN1));
-  for (let n = 1; n < size; n++) {
-    const off = at.get(n);
-    // Chromium numbers its objects contiguously, so a free entry here means the
-    // input had a gap. It is written as the tail of the free list, which no
-    // reference can reach.
-    parts.push(Buffer.from(
-      off === undefined ? "0000000000 65535 f \n" : `${String(off).padStart(10, "0")} 00000 n \n`, LATIN1));
-  }
-  // /Size is one past the highest object number. Trusting the input's value is
-  // how a rebuilt table ends up contradicting itself.
-  const fixed = Buffer.from(trailer.toString(LATIN1).replace(/\/Size\s+\d+/, `/Size ${size}`), LATIN1);
-  parts.push(fixed, NEWLINE, Buffer.from(`startxref\n${xrefAt}\n%%EOF\n`, LATIN1));
-  return Buffer.concat(parts);
-}
+import { inflatedStream, join, LATIN1, trySplit, type Obj } from "./pdfparts.ts";
 
 /* ------------------------------------------------------------------ *
  * sfnt
@@ -225,33 +146,17 @@ export function flagsFrom(font: Sfnt, current: number): number {
  * Applying it
  * ------------------------------------------------------------------ */
 
-/** The FontFile2 payload of an object, decompressed. */
+/**
+ * The FontFile2 payload of an object, decompressed.
+ *
+ * `/Length1` is the check that this is an embedded font rather than any other
+ * kind of stream, so a content stream is never mistaken for one.
+ */
 function embeddedFont(o: Obj): Buffer | undefined {
-  const text = o.bytes.toString(LATIN1);
-  if (!/\/Length1\s+\d+/.test(text)) return undefined;
-  const marker = text.match(/stream\r?\n/);
-  if (!marker || marker.index === undefined) return undefined;
-  const at = marker.index + marker[0].length;
-  const end = text.lastIndexOf("\nendstream");
-  if (end <= at) return undefined;
-  try {
-    return inflateSync(o.bytes.subarray(at, end));
-  } catch {
-    return undefined;
-  }
+  if (!/\/Length1\s+\d+/.test(o.bytes.toString(LATIN1))) return undefined;
+  return inflatedStream(o, inflateSync);
 }
 
-/**
- * A Buffer view over any Uint8Array, without copying.
- *
- * `pdf as Buffer` is a type assertion, not a conversion, and it leaves a
- * Uint8Array in place. Its toString ignores the encoding argument and returns no
- * bytes at all, so split found no objects and every function here passed its
- * input through untouched and silently. That is the failure this exists to stop.
- */
-function asBuffer(pdf: Uint8Array): Buffer {
-  return Buffer.isBuffer(pdf) ? pdf : Buffer.from(pdf.buffer, pdf.byteOffset, pdf.byteLength);
-}
 
 /**
  * Rewrite every font descriptor the embedded fonts can speak for.
@@ -260,13 +165,8 @@ function asBuffer(pdf: Uint8Array): Buffer {
  * normal case for a file whose descriptors are already right.
  */
 export function fixFontDescriptors(pdf: Uint8Array): Uint8Array {
-  const raw = asBuffer(pdf);
-  let parts: { head: Buffer; objs: Obj[]; trailer: Buffer };
-  try {
-    parts = split(raw);
-  } catch {
-    return pdf;
-  }
+  const parts = trySplit(pdf);
+  if (!parts) return pdf;
 
   const byNum = new Map(parts.objs.map((o) => [o.num, o]));
   // CIDFontType2 and simple TrueType fonts both name a descriptor and a face.
@@ -340,12 +240,8 @@ export function fixFontDescriptors(pdf: Uint8Array): Uint8Array {
  */
 export function unresolvedFontMetrics(pdf: Uint8Array): Array<{ fontName: string; capHeight: number }> {
   const out: Array<{ fontName: string; capHeight: number }> = [];
-  let parts: { head: Buffer; objs: Obj[]; trailer: Buffer };
-  try {
-    parts = split(asBuffer(pdf));
-  } catch {
-    return out;
-  }
+  const parts = trySplit(pdf);
+  if (!parts) return out;
   for (const o of parts.objs) {
     const text = o.bytes.toString(LATIN1);
     if (!/\/Type\s*\/FontDescriptor\b/.test(text)) continue;

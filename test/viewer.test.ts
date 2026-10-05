@@ -95,7 +95,9 @@ describe("the toolbar controls reach the renderer", () => {
   test("margin is applied when format is given", async () => {
     const ok = await post({ html: `<!doctype html><body style="margin:0"><h1>T</h1></body>`, format: "a4", margin: "20mm" });
     expect(ok.status).toBe(200);
-    expect((await ok.json() as { findings: Array<{ code: string }> }).findings).toEqual([]);
+    // A warning about the Type 3 fallback face is expected here; an error is not.
+    const seen = (await ok.json() as { findings: Array<{ code: string; severity: string }> }).findings;
+    expect(seen.filter((f) => f.severity === "error")).toEqual([]);
   }, 90_000);
 
   test("allowNetwork is a boolean and defaults off", async () => {
@@ -245,11 +247,18 @@ describe("the shell renders end to end", () => {
       .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
     const r = await post({ html });
     expect(r.status).toBe(200);
-    const body = await r.json() as { ok: boolean; pages: number; bytes: number; pdf: string; findings: unknown[] };
+    const body = await r.json() as {
+      ok: boolean; pages: number; bytes: number; pdf: string;
+      findings: Array<{ code: string; severity: string }>;
+    };
     expect(body.ok).toBe(true);
     expect(body.pages).toBe(1);
     expect(body.bytes).toBeGreaterThan(1000);
-    expect(body.findings).toEqual([]);
+    // The starter document leans on a system font, so Chromium emits a Type 3
+    // fallback whose descriptor has no font program behind it. Warned, not
+    // corrected, and never an error.
+    expect(body.findings.filter((f) => f.severity === "error")).toEqual([]);
+    expect(body.findings.map((f) => f.code)).toEqual(["font-metrics"]);
     const bytes = Buffer.from(body.pdf, "base64");
     expect(bytes.subarray(0, 5).toString()).toBe("%PDF-");
   }, 90_000);

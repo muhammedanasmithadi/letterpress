@@ -41,7 +41,11 @@ afterAll(async () => {
 test("renders a file and reports where it went", async () => {
   const out = join(dir, "one.pdf");
   const r = await run([doc, "-o", out]);
-  expect(r.stderr).toBe("");
+  // The fixture leans on a system face, so chromium emits a Type 3 fallback with
+  // no font program behind it and one warning is printed. An error would go to
+  // stderr too, so its absence is asserted separately below.
+  expect(r.stderr).toMatch(/^warn: {2}/);
+  expect(r.stderr).not.toMatch(/error:/);
   expect(r.code).toBe(0);
   expect(r.stdout).toMatch(/one\.pdf\s+2 pages\s+[\d.]+ KB\s+\d+ms/);
   const bytes = await Bun.file(out).arrayBuffer();
@@ -50,6 +54,18 @@ test("renders a file and reports where it went", async () => {
   const info = await pdfInfo(new Uint8Array(bytes));
   expect(info.pages).toBe(2);
   expect(info.pageSize).toContain("594.96");
+  // The fixture leans on a system face, so Chromium emits a Type 3 fallback with
+  // no font program and the descriptor cannot be derived from anything. That is
+  // reported as a warning and does not fail the render or write to stderr.
+  const second = await run([doc, "-o", join(dir, "warn.json"), "--json"]);
+  const codes = JSON.parse(second.stdout) as {
+    ok: boolean; findings: Array<{ code: string; severity: string }>;
+  };
+  expect(codes.ok).toBe(true);
+  expect(second.code).toBe(0);
+  // Findings print to stderr ahead of the json on stdout, so the run above had
+  // stderr non-empty. Only an error is a failure, and a warning is not.
+  for (const f of codes.findings) expect(f.severity).not.toBe("error");
 }, 60_000);
 
 test("json output is machine readable", async () => {

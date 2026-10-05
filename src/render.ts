@@ -1,6 +1,7 @@
 import { basename, dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import { rm } from "node:fs/promises";
 import { Browser, type Tab } from "./browser.ts";
+import { fixFontDescriptors, unresolvedFontMetrics } from "./fontdesc.ts";
 import { audit } from "./lint.ts";
 import { declaredPageMargin, declaredPageSize, inspect, pageRules, type PdfInfo } from "./pdf.ts";
 
@@ -881,7 +882,12 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         : req.url
           ? new URL(req.url).hostname
           : "document";
-      const pdf = stampPdf(raw, pdfTitle);
+      // The descriptor fix rebuilds the file and its cross-reference table, so
+      // it goes first. stampPdf edits at fixed offsets and has to see the final
+      // bytes, and stampPdf's replacement values can shift nothing because it
+      // pads every edit back to the original length.
+      const described = fixFontDescriptors(raw);
+      const pdf = stampPdf(described, pdfTitle);
       const info = inspect(pdf);
 
       for (const url of blocked) {
@@ -917,6 +923,24 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           code: "url-render-blocked",
           severity: "error",
           message: `rendering a remote URL blocks its own subresources and usually the document itself. Set allowNetwork to render ${req.url}.`,
+        });
+      }
+      // Reported rather than corrected. Chromium emits a Type 3 font when it
+      // cannot embed a face, and a Type 3 font's glyphs are drawing procedures
+      // with no font program to read a cap height out of. Every other descriptor
+      // was corrected from its own embedded font, so anything still negative here
+      // has nothing behind it to derive from.
+      const unresolved = unresolvedFontMetrics(pdf);
+      if (unresolved.length) {
+        const named = [...new Set(unresolved.map((u) => u.fontName))].slice(0, 3);
+        findings.push({
+          code: "font-metrics",
+          severity: "warn",
+          message:
+            `${unresolved.length} font descriptor${unresolved.length === 1 ? " still carries" : "s still carry"} a negative cap height (${unresolved.map((u) => `${u.fontName} ${u.capHeight}`).slice(0, 3).join(", ")}). ` +
+            `The PDF specification calls a negative CapHeight an error a viewer may refuse to render text over. ` +
+            `Chromium emitted ${unresolved.length === 1 ? "this face" : "these faces"} as Type 3 fonts, whose glyphs are drawing procedures with no embedded font to read the metric from, so the value cannot be derived and was left as produced. ` +
+            `Embedding the font as a file rather than relying on a system face usually removes it.`,
         });
       }
 

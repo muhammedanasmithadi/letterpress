@@ -47,13 +47,17 @@ describe("render", () => {
     expect(r.status).toBe(200);
     const body = await r.json() as {
       ok: boolean; pdf: string; pages: number; bytes: number; ms: number;
-      mediaBoxes: string[]; tagged: boolean; findings: unknown[];
+      mediaBoxes: string[]; tagged: boolean; findings: Array<{ code: string; severity: string }>;
     };
     expect(body.ok).toBe(true);
     expect(body.pages).toBe(1);
     expect(body.tagged).toBe(true);
     expect(body.mediaBoxes[0]).toContain("594.95996");
-    expect(body.findings).toEqual([]);
+    // Nothing may be an error here, and the one warning the fixture earns is the
+    // Type 3 fallback face, which has no font program to derive a cap height from.
+    const findings = body.findings as Array<{ code: string; severity: string }>;
+    expect(findings.filter((f) => f.severity === "error")).toEqual([]);
+    expect(findings.map((f) => f.code)).toEqual(["font-metrics"]);
 
     const pdf = Buffer.from(body.pdf, "base64");
     expect(pdf.byteLength).toBe(body.bytes);

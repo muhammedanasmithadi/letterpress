@@ -552,6 +552,29 @@ function stampPdf(pdf: Uint8Array, fallbackTitle: string): Uint8Array {
     for (const m of text.matchAll(/D:\d{14}[+\-Z][\d'Z]{0,5}/g)) {
       if (m.index !== undefined) edits.push([m.index, m[0].length, pdfDate]);
     }
+    // The XMP packet carries the same two timestamps in ISO 8601, and pinning
+    // only the PDF form left the document disagreeing with itself: the
+    // information dictionary said the pinned epoch while `xmp:CreateDate` said
+    // the wall clock, so two renders a second apart still differed byte for byte
+    // and SOURCE_DATE_EPOCH did not make the output reproducible.
+    //
+    // Measured: with the epoch set, a pair of renders a second apart differed at
+    // `<xmp:CreateDate>2026-10-05T08:38:49` against `...:50`. Both are 19
+    // characters, so the fixed-width edit that keeps every offset valid still
+    // holds.
+    const iso = `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}` +
+      `T${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
+    for (const m of text.matchAll(/<(xmp:(?:CreateDate|ModifyDate))>[^<]{0,40}<\/\1>/g)) {
+      if (m.index === undefined) continue;
+      const open = m[0].indexOf(">") + 1;
+      // The value runs from just after the opening tag to the start of the
+      // closing one. Deriving that as `length - open - lastIndexOf` gives zero,
+      // because the closing tag is at the end: the edit then had a zero-length
+      // slot and silently wrote nothing, which is why the packet kept the wall
+      // clock while the dictionary was correctly pinned.
+      const closeAt = m[0].lastIndexOf("</");
+      edits.push([m.index + open, closeAt - open, iso]);
+    }
   }
 
   // Chromium titles the document from the page URL, and which URL depends on how

@@ -261,3 +261,71 @@ describe("page limit", () => {
     expect(body.pages).toBe(2);
   }, 120_000);
 });
+
+describe("response format", () => {
+  const DOC2 = `<!doctype html><meta charset="utf-8"><title>Format</title>
+<style>@page{size:A4;margin:12mm}</style><h1>Report</h1><p>office efficient flags finished</p>`;
+
+  test("json is the default and carries the report", async () => {
+    const r = await post({ html: DOC2, author: "Someone" });
+    expect(r.headers.get("content-type")).toMatch(/application\/json/);
+    const body = await r.json() as { ok: boolean; pdf: string; pages: number; findings: unknown[] };
+    expect(body.ok).toBe(true);
+    expect(body.pages).toBe(1);
+    expect(Array.isArray(body.findings)).toBe(true);
+    expect(Buffer.from(body.pdf, "base64").subarray(0, 5).toString()).toBe("%PDF-");
+  }, 90_000);
+
+  test("responseFormat pdf returns the bytes and the report as headers", async () => {
+    const r = await post({ html: DOC2, author: "Someone", responseFormat: "pdf" });
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toBe("application/pdf");
+    expect(r.headers.get("x-letterpress-pages")).toBe("1");
+    expect(r.headers.get("x-letterpress-tagged")).toBe("true");
+    expect(Number(r.headers.get("content-length"))).toBeGreaterThan(1000);
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    expect(Buffer.from(bytes).subarray(0, 5).toString()).toBe("%PDF-");
+  }, 90_000);
+
+  test("both formats return the same document", async () => {
+    // The binary path must not be a different render. Two renders are not
+    // generally byte-identical -- /CreationDate has one-second resolution -- so
+    // what is compared is what the document says, with the clock pinned.
+    process.env.SOURCE_DATE_EPOCH = "1700000000";
+    try {
+      const viaJson = await (await post({ html: DOC2, author: "Someone" })).json() as { pdf: string; pages: number };
+      const viaPdf = new Uint8Array(
+        await (await post({ html: DOC2, author: "Someone", responseFormat: "pdf" })).arrayBuffer());
+      const fromJson = Buffer.from(viaJson.pdf, "base64");
+      expect(fromJson.byteLength).toBe(viaPdf.byteLength);
+      expect(fromJson.equals(Buffer.from(viaPdf))).toBe(true);
+      expect(viaJson.pages).toBe(1);
+    } finally {
+      delete process.env.SOURCE_DATE_EPOCH;
+    }
+  }, 120_000);
+
+  test("the binary response is smaller, because base64 inflates by a third", async () => {
+    const jsonBytes = (await (await post({ html: DOC2 })).arrayBuffer()).byteLength;
+    const pdfBytes = (await (await post({ html: DOC2, responseFormat: "pdf" })).arrayBuffer()).byteLength;
+    expect(pdfBytes).toBeLessThan(jsonBytes);
+  }, 120_000);
+
+  test("an unknown responseFormat is refused rather than ignored", async () => {
+    // Silently returning JSON to a caller that asked for a PDF would be found by
+    // failing to parse a response that looked successful.
+    const r = await post({ html: DOC2, responseFormat: "nope" });
+    expect(r.status).toBe(400);
+    expect((await r.json() as { error: string }).error).toMatch(/responseFormat/);
+  }, 60_000);
+
+  test("metadata reaches the renderer over http", async () => {
+    // --author worked from the cli and did nothing over http: the three fields
+    // were never forwarded from the server to render().
+    const r = await post({ html: DOC2, author: "Ahammed Sahad", subject: "CV" });
+    const body = await r.json() as { pdf: string };
+    const info = Buffer.from(body.pdf, "base64").toString("latin1");
+    expect(info).toContain("/Author (Ahammed Sahad)");
+    expect(info).toContain("/Subject (CV)");
+  }, 90_000);
+});

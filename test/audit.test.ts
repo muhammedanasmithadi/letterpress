@@ -263,14 +263,45 @@ test("SOURCE_DATE_EPOCH makes output byte-reproducible", async () => {
   process.env.SOURCE_DATE_EPOCH = "1700000000";
   try {
     const html = `<!doctype html><style>@page{size:A4;margin:10mm}</style><p>reproducible</p>`;
-    const a = await render(browser, { html });
-    const b = await render(browser, { html });
+    const a = await render(browser, { html, author: "Someone" });
+    // Straddle a second boundary on purpose. Rendering twice back to back lands in
+    // the same second, where the timestamps are equal however they are handled, so
+    // this test could not see a timestamp that was never pinned at all -- which is
+    // how the XMP packet kept the wall clock while the dictionary was pinned.
+    await Bun.sleep(1_100);
+    const b = await render(browser, { html, author: "Someone" });
     // Chromium varies both /CreationDate and the document title, which it takes
     // from the page URL. Fixing only the date still leaves the bytes different.
     expect(new TextDecoder("latin1").decode(a.pdf)).toBe(new TextDecoder("latin1").decode(b.pdf));
     const text = new TextDecoder("latin1").decode(a.pdf);
     expect(text).toMatch(/D:20231114\d{6}Z/);
     expect(text).toContain("document");
+    // The packet carries the same two timestamps in ISO 8601, and both are pinned.
+    expect(text).toContain("<xmp:CreateDate>2023-11-14T");
+    expect(text).toContain("<xmp:ModifyDate>2023-11-14T");
+    expect(text).not.toMatch(/<xmp:(?:Create|Modify)Date>(?!2023-11-14)/);
+  } finally {
+    if (previous === undefined) delete process.env.SOURCE_DATE_EPOCH;
+    else process.env.SOURCE_DATE_EPOCH = previous;
+  }
+}, 60_000);
+
+test("without a pinned clock two renders differ only in their timestamps", async () => {
+  // The counterpart to the above, and the reason the epoch exists: an unpinned
+  // render is not reproducible, and pretending otherwise is what a test that
+  // renders twice in the same second would do.
+  const previous = process.env.SOURCE_DATE_EPOCH;
+  delete process.env.SOURCE_DATE_EPOCH;
+  try {
+    const html = `<!doctype html><style>@page{size:A4;margin:10mm}</style><p>unpinned</p>`;
+    const a = await render(browser, { html });
+    await Bun.sleep(1_100);
+    const b = await render(browser, { html });
+    const first = new TextDecoder("latin1").decode(a.pdf);
+    const second = new TextDecoder("latin1").decode(b.pdf);
+    expect(first).not.toBe(second);
+    // Same length: only the digits of the timestamp differ.
+    expect(first.length).toBe(second.length);
   } finally {
     if (previous === undefined) delete process.env.SOURCE_DATE_EPOCH;
     else process.env.SOURCE_DATE_EPOCH = previous;

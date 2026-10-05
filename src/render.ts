@@ -4,6 +4,7 @@ import { Browser, type Tab } from "./browser.ts";
 import { fixFontDescriptors, unresolvedFontMetrics } from "./fontdesc.ts";
 import { addMetadata } from "./meta.ts";
 import { fixToUnicode } from "./tounicode.ts";
+import { FIGURE_ALT_JS, fixFigureAlts, parseFigureAlts } from "./figurealt.ts";
 import { repairOrKeep } from "./verify.ts";
 import { audit } from "./lint.ts";
 import { declaredPageMargin, declaredPageSize, inspect, pageRules, type PdfInfo } from "./pdf.ts";
@@ -862,6 +863,22 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
 
       findings.push(...await audit(tab, timeoutMs));
 
+      // The alt text of every <figure>, read while the document is still live.
+      //
+      // Chromium discards <img alt> on the way into the PDF: measured across ten
+      // forms, none of `alt`, `title`, `aria-label`, `role="img"` or `role="figure"`
+      // on the <img> produces a Figure element with an /Alt, and a container that
+      // wraps an <img> is not tagged either. Only <svg role="img" aria-label> and
+      // generic containers carrying role and aria-label come through. So the text is
+      // taken from the DOM here and written into the structure tree afterwards.
+      //
+      // Read before printToPDF, from the same page and the same layout, so the order
+      // here is the document order the structure tree is walked in.
+      const figureAltRaw = await tab.send("Runtime.evaluate", {
+        expression: FIGURE_ALT_JS, returnByValue: true, awaitPromise: false,
+      }, timeoutMs).then((r: { result?: { value?: unknown } }) => r.result?.value).catch(() => undefined);
+      const figureAlts = parseFigureAlts(figureAltRaw);
+
       // Does the document actually declare its own paper? A local file can be
       // read before navigating, but a remote URL cannot, and Chromium's default
       // is US Letter, so an undeclared remote page would print on Letter paper
@@ -980,6 +997,9 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
 
       let described = gated(raw, "ToUnicode", fixToUnicode);
       described = gated(described, "font descriptor", fixFontDescriptors);
+      if (figureAlts) {
+        described = gated(described, "figure description", (p) => fixFigureAlts(p, figureAlts!));
+      }
       described = gated(described, "metadata", (p) => addMetadata(p, {
         author,
         // A description is the subject in Dublin Core, which is where the subject

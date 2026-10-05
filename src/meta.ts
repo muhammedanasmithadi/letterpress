@@ -247,9 +247,23 @@ ${alt("title", info.title)}${alt("description", info.subject)}${bag("creator", i
  * Both string forms are matched, and the replacement uses whichever one
  * `pdfString` produced, so a value that needs hex is not written as a literal.
  */
-function setKey(body: string, key: string, value: string): string {
+/**
+ * A complete PDF value for `value`, delimiters included.
+ *
+ * `pdfString` returns the body only, because the two forms differ in where the
+ * delimiters go: a hex string's angle brackets are part of the value, while a
+ * literal string's parentheses are not. Getting this wrong writes a bare token where
+ * a value belongs -- `/Alt fig-1` instead of `/Alt (fig-1)` -- which no structural
+ * check objects to and no reader necessarily recovers from, so the rule lives here
+ * rather than at each call site.
+ */
+export function pdfValue(value: string): string {
   const escaped = pdfString(value);
-  const asValue = escaped.startsWith("<") ? `<${escaped.slice(1, -1)}>` : `(${escaped})`;
+  return escaped.startsWith("<") ? `<${escaped.slice(1, -1)}>` : `(${escaped})`;
+}
+
+function setKey(body: string, key: string, value: string): string {
+  const asValue = pdfValue(value);
   const either = new RegExp(`/${key}\\s*(?:\\((?:[^()\\\\]|\\\\.)*\\)|<[0-9A-Fa-f]*>)`);
   if (either.test(body)) return body.replace(either, `/${key} ${asValue}`);
   return insertIntoDict(body, `/${key} ${asValue}`);

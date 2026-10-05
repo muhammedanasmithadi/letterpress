@@ -866,12 +866,12 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
 
       // The alt text of every <figure>, read while the document is still live.
       //
-      // Chromium discards <img alt> on the way into the PDF: measured across ten
-      // forms, none of `alt`, `title`, `aria-label`, `role="img"` or `role="figure"`
-      // on the <img> produces a Figure element with an /Alt, and a container that
-      // wraps an <img> is not tagged either. Only <svg role="img" aria-label> and
-      // generic containers carrying role and aria-label come through. So the text is
-      // taken from the DOM here and written into the structure tree afterwards.
+      // Usually redundant: when an image loads, Chromium tags it and carries the alt
+      // itself, measured on nine forms. What is left is the broken-image path and a
+      // figure container whose image was never tagged. An earlier note here said
+      // Chromium discarded the attribute outright; that came from a fixture whose
+      // base64 was invalid, so the image never loaded and what was observed was the
+      // broken-image placeholder. See the retraction at the head of figurealt.ts.
       //
       // Read before printToPDF, from the same page and the same layout, so the order
       // here is the document order the structure tree is walked in.

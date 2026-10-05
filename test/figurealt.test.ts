@@ -15,8 +15,16 @@ import { verify } from "../src/verify.ts";
 import { LATIN1, trySplit } from "../src/pdfparts.ts";
 
 /**
- * Chromium discards `<img alt>`, so the description is read from the DOM and written
- * into the structure tree afterwards.
+ * Chromium carries an img's alt into a Figure structure element itself when the image
+ * loads, so this repair is usually redundant. What is left is the broken-image path
+ * and a figure container whose image was never tagged. The description is read from the
+ * DOM and written into the structure tree afterwards.
+ *
+ * An earlier version of this file asserted the opposite -- that Chromium discarded the
+ * attribute -- on the strength of ten measured forms. All ten used a base64 string that
+ * was not valid base64, so no image ever loaded and what was measured was Chromium's
+ * broken-image placeholder. The "the fixture image really is a loadable png" test below
+ * exists because a naturalWidth of 0 would have caught it before any of that.
  *
  * What these tests protect is the pairing, not the presence of the key. A repair that
  * put an /Alt on every figure but attached the wrong description to the wrong figure
@@ -233,4 +241,77 @@ describe("figure descriptions", () => {
       await tab.close();
     }
   }, 60_000);
+});
+describe("what Chromium does with an image's alt", () => {
+  // The premise this file originally rested on was that Chromium discards the
+  // attribute. It does not: with an image that loads, Chromium tags the image as a
+  // nested Figure element and carries the alt itself. The ten forms that "proved"
+  // otherwise used a base64 string that was not valid base64, so no image ever loaded.
+  //
+  // These tests pin the behaviour that is actually true, so the premise cannot be
+  // re-invented from another broken fixture.
+
+  let browser: Browser;
+  let profile: string;
+
+  beforeAll(async () => {
+    profile = await mkdtemp(join(tmpdir(), "letterpress-figalt-premise-"));
+    browser = await Browser.launch({ profile });
+  }, 60_000);
+
+  afterAll(async () => {
+    await browser?.close();
+    await rm(profile, { recursive: true, force: true }).catch(() => {});
+  });
+
+  /** A one-pixel PNG, so the image genuinely loads rather than becoming a placeholder. */
+  const REAL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+  test("the fixture image really is a loadable png", async () => {
+    const tab = await browser.newTab();
+    try {
+      await tab.send("Page.enable");
+      const { frameTree } = await tab.send("Page.getFrameTree") as { frameTree: { frame: { id: string } } };
+      await tab.send("Page.setDocumentContent", {
+        frameId: frameTree.frame.id,
+        html: `<!doctype html><img id="probe" src="${REAL}" alt="x">`,
+      });
+      await Bun.sleep(400);
+      const res = await tab.send("Runtime.evaluate", {
+        expression: `(() => { const i = document.getElementById('probe'); return JSON.stringify({ w: i.naturalWidth, h: i.naturalHeight }); })()`,
+        returnByValue: true,
+      }) as { result?: { value?: string } };
+      // naturalWidth is 0 for an image the browser could not decode. This is the check
+      // that would have caught the invalid base64 before ten measurements were taken
+      // on the strength of it.
+      expect(JSON.parse(res.result?.value ?? "{}")).toEqual({ w: 1, h: 1 });
+    } finally {
+      await tab.close();
+    }
+  }, 60_000);
+
+  test("chromium tags the image and carries the alt itself", async () => {
+    const r = await render(browser, {
+      html: DOC(`<p>before <img src="${REAL}" alt="the alt text"> after</p>`), author: "t",
+    });
+    const alts = readAlts(r.pdf);
+    expect(alts).toContain("the alt text");
+    // No finding at all: a loadable inline image is not a subresource failure.
+    expect(r.findings.map((f) => f.code)).not.toContain("subresource-failed");
+  }, 90_000);
+
+  test("an img with no alt gets a Figure with no alt, and nothing is invented", async () => {
+    const r = await render(browser, {
+      html: DOC(`<p>before <img src="${REAL}"> after</p>`), author: "t",
+    });
+    expect(readAlts(r.pdf).filter((a) => a.length > 0)).toEqual([]);
+  }, 90_000);
+
+  test("the repair is a no-op when chromium already described the figure", async () => {
+    // Measured: run against a real document it returned its input byte for byte,
+    // because the PDF holds two Figure elements for one figure in the document.
+    const html = DOC(fig("the alt text", "capA") + fig("second alt", "capB"));
+    const r = await render(browser, { html, author: "t" });
+    expect(Buffer.from(fixFigureAlts(r.pdf, ["the alt text"])).equals(Buffer.from(r.pdf))).toBe(true);
+  }, 90_000);
 });

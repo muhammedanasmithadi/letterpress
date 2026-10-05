@@ -1,23 +1,34 @@
 /**
  * Give a Figure structure element the description the document already contains.
  *
- * Chromium drops `<img alt>` on the floor. Measured across ten forms: `alt`,
- * `title`, `aria-label`, `role="img"` and `role="figure"` on the `<img>` itself
- * produce no Figure element and no `/Alt`. Only `<svg role="img" aria-label>`, and
- * generic containers carrying `role="img"` or `role="figure"` with an `aria-label`,
- * come through -- and a container that *wraps* an `<img>` does not, so there is no
- * attribute combination that gets an `<img>` described.
+ * RETRACTION, and the correction matters more than the code. An earlier version of this
+ * file said Chromium drops the alt attribute of an img element entirely, on the basis
+ * of ten measured forms. That was wrong. The fixture used for those measurements
+ * carried a hand-written base64 string that was not valid base64 at all -- 193
+ * characters, not a multiple of 4 -- so Chromium rejected the image, drew its
+ * broken-image placeholder, and what was measured was the placeholder. An img element
+ * whose alt is empty gets no Figure element and no /Alt, which is what made every
+ * result come back empty.
  *
- * That leaves post-processing as the only route, and it is safe here because a
- * Figure element's dictionary can be extended without touching a content stream:
- * the image is still drawn at the same place with the same glyphs, and the
- * description is added to the structure rather than to the page.
+ * With an image that loads, Chromium supplies the description itself. Measured on nine
+ * forms: `<img alt>` produces a Figure element carrying that alt, an aria-label
+ * overrides the alt, `<svg role="img" aria-label>` produces one, and an img with no alt
+ * produces a Figure element with no /Alt, which is correct -- there is nothing to
+ * describe and this repair will not invent it.
+ *
+ * So what is left for this repair is the case where Chromium tagged nothing: the
+ * broken-image path, and a `<figure>` container whose image was never tagged. In the
+ * ordinary case it is a no-op, and measurably so -- run against a real document it
+ * returned its input byte for byte, because the PDF holds two Figure elements for one
+ * figure in the document and the counts do not line up.
+ *
+ * That count check is the load-bearing part. Attaching a description to the wrong
+ * Figure element would have a screen reader announce the wrong thing, which is worse
+ * than silence, so a mismatch returns the input untouched.
  *
  * The mapping is a depth-first walk of the structure tree, not the order objects
- * appear in the file. Those differ: a nested figure's element is written *before*
- * its parent's, so a file-order scan attributes descriptions inside out. The tree
- * walk gives document order, verified over flat, nested, doubly nested,
- * flat-then-nested and figure-inside-a-paragraph documents.
+ * appear in the file. Those differ: a nested figure's element is written *before* its
+ * parent's, so a file-order scan attributes descriptions inside out.
  */
 import { dictOf, insertIntoDict, join, LATIN1, trySplit, type Parts } from "./pdfparts.ts";
 import { pdfValue } from "./meta.ts";

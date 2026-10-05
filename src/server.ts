@@ -42,7 +42,22 @@ const MAX_QUEUED_RENDERS = Number(process.env.HTML2PDF_MAX_QUEUE ?? 16);
 /** A render deadline is a resource hold. 10 minutes is already absurd. */
 const MAX_TIMEOUT_MS = 120_000;
 const MAX_SETTLE_MS = 30_000;
-const MAX_PAGES = 2000;
+/**
+ * Pages allowed in one document.
+ *
+ * This was 2000 and it was never checked, so a 3,664-page document rendered
+ * through the server without complaint. The number was a guess; this one is
+ * measured. Peak RSS for a whole render, browser included:
+ *
+ *   2,000 pages   820 MB   25.7 s   15.5 MB pdf
+ *   3,664 pages 1,262 MB   86.6 s   28.6 MB pdf
+ *
+ * so 6,000 pages lands near 2GB, which is a defensible ceiling on a machine that
+ * is also running everything else. Memory is the reason for a page cap at all:
+ * time is already bounded by MAX_TIMEOUT_MS, and a document that overruns that
+ * fails on its own with a clear message.
+ */
+const MAX_PAGES = Number(process.env.HTML2PDF_MAX_PAGES ?? 6000);
 
 export type ServerOptions = {
   port?: number;
@@ -451,6 +466,25 @@ export async function startServer(opts: ServerOptions = {}) {
               settleMs: clamp(body.settleMs, MAX_SETTLE_MS, undefined as unknown as number),
               timeoutMs: clamp(body.timeoutMs, MAX_TIMEOUT_MS, undefined as unknown as number),
             });
+
+            // Page count is only knowable once the document has been printed, so
+            // the cap is applied here rather than refused up front. Refusing a
+            // document that turned out to be fine is worse than printing it and
+            // then declining to hand it over.
+            //
+            // pageRanges makes this a count of what was emitted, not the
+            // document's length, so it is exempt: the caller asked for those
+            // pages and got them.
+            if (result.info.pages > MAX_PAGES && !body.pageRanges) {
+              return Response.json({
+                ok: false,
+                error: `this document is ${result.info.pages} pages, over the ${MAX_PAGES}-page limit. ` +
+                  `split it, or render it with the cli, which has no page limit.`,
+                pages: result.info.pages,
+                limit: MAX_PAGES,
+              }, { status: 413 });
+            }
+
             return Response.json({
               ok: true,
               pdf: Buffer.from(result.pdf).toString("base64"),

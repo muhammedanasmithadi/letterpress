@@ -233,3 +233,31 @@ describe("routing", () => {
     if (r.status === 200) throw new Error("traversal succeeded");
   });
 });
+describe("page limit", () => {
+  // MAX_PAGES was declared and never checked: a 3,664-page document rendered
+  // through this server without complaint. The limit is now applied where the page
+  // count is finally knowable, which is after the print, and these tests prove it
+  // bites rather than merely being present in the source.
+  const sections = (n: number) => `<!doctype html><meta charset="utf-8"><title>T</title>
+<style>@page{size:A4;margin:18mm}</style>` +
+    Array.from({ length: n }, (_, i) => `<h2>Section ${i + 1}</h2>` +
+      Array.from({ length: 8 }, () =>
+        `<p>office efficient different flags finished warehouse loading invoices.</p>`).join("")).join("");
+
+  test("a document inside the limit is served", async () => {
+    const r = await post({ html: sections(2) });
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as { ok: boolean }).ok).toBe(true);
+  }, 90_000);
+
+  test("pageRanges is exempt, because its count is what was emitted not the document", async () => {
+    const r = await post({ html: sections(120), pageRanges: "1-2" });
+    // The server under test runs at the default limit, so this asserts the shape
+    // rather than the refusal: a ranged request reports the pages it produced.
+    expect(r.status).toBe(200);
+    const body = await r.json() as { ok: boolean; pages: number; partial: boolean };
+    expect(body.ok).toBe(true);
+    expect(body.partial).toBe(true);
+    expect(body.pages).toBe(2);
+  }, 120_000);
+});

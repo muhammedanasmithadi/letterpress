@@ -13,6 +13,8 @@ document with a 24-row table per page:
 |---|---|
 | print time, warm browser | ~65 ms |
 | print time, 400 pages | ~5.2–5.7 s |
+| print time, 2,000 pages | 25.7 s, 820 MB peak RSS |
+| print time, 3,664 pages | 76.5 s, 1,262 MB peak RSS |
 | PDF size, 400 pages | 16.9 MB (18.5 MB base64) |
 | base64 frame over WebSocket | 22.5 MB, handled intact by all three runtimes |
 

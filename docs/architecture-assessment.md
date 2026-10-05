@@ -282,17 +282,70 @@ before it shipped.
 - **Replacing Chromium.** No evidence of a limit being hit.
 - **Consolidating the rebuilds.** No performance argument exists at 1–4%.
 
-## 8. Still open
+## 8. Large documents — measured, and a dead limit found
 
-1. **A 2,000-page document has never been rendered.** The server's cap asserts it
-   is possible; nothing has confirmed it.
-2. **Headful parity** is one test behind a `DISPLAY` gate.
-3. **The three fixes are tested on the documents that motivated them**, not a
+The 2,000-page claim was never tested. It is now. Both documents were calibrated
+by measuring page count, not by assuming one: a first guess of 2,353 sections
+produced 1,177 pages, and 3,999 produced 2,000.
+
+| document | pages | PDF | render | peak RSS | gate | `Suspects` |
+|---|---|---|---|---|---|---|
+| calibrated | 2,000 | 15.5 MB | 25.7 s | 820 MB | ok | no |
+| trimmed to fit the body cap | 3,664 | 28.6 MB | 76.5 s | 1,262 MB | ok | no |
+
+Both are correct at scale, not merely produced: ghostscript reports zero errors,
+`pdftotext` extracts from page 1 and from page 2,000, the gate passes in 376 ms
+and 615 ms respectively, and the repair layer reports zero negative cap heights
+and zero unresolved ligatures. The 3,664-page file holds 172,714 objects and
+3,664 content streams, every one intact.
+
+**Cost per page is flat.** 12.9 ms/page at 2,000 pages against the documented
+13.75 ms/page at 400. Memory is ~340 KB per page, so a page cap is a memory cap.
+
+### The finding: `MAX_PAGES` was dead code
+
+`MAX_PAGES = 2000` was declared and never referenced. Nothing enforced it, and the
+8 MB body cap was doing the work instead — so a 7.5 MB document rendering to
+**3,664 pages** was served with `ok: true` by a server that claimed a 2,000-page
+limit. A limit that is not checked is worse than no limit, because it is a claim
+in the source that a reader has to disprove.
+
+It is now enforced, at 6,000 pages, at the only point where the count is
+knowable: after the print. Refusing up front would mean refusing documents that
+would have been fine, so the render happens and the result is declined with the
+real page count and the reason. `pageRanges` is exempt, because its count is what
+was emitted rather than the document's length.
+
+The value is measured rather than guessed: 2,000 pages cost 820 MB and 3,664 cost
+1,262 MB, so 6,000 lands near 2 GB, which is a defensible ceiling on a machine
+doing other work. Time needs no separate cap — `MAX_TIMEOUT_MS` already ends an
+over-long render, and it does so with a message that names the flag.
+
+### What actually bounds a document
+
+| bound | value | notes |
+|---|---|---|
+| body size | 8 MB | ~3,700 pages of text |
+| page count | 6,000 | measured, enforced after the print |
+| timeout | 120 s | ~9,000 pages at 12.9 ms/page, so pages bind first |
+| memory | ~340 KB/page | 2 GB at 6,000 pages |
+
+The body cap binds before the page cap for text, which is worth knowing: raising
+`MAX_PAGES` without raising `MAX_BODY_BYTES` changes nothing for HTML input.
+
+## 9. Still open
+
+1. **Headful parity** is one test behind a `DISPLAY` gate.
+2. **The three fixes are tested on the documents that motivated them**, not a
    corpus. Generalisation is argued from the mechanism and is unverified.
-4. **`stampPdf` truncates a title that exceeds its slot.** By design and
+3. **`stampPdf` truncates a title that exceeds its slot.** By design and
    documented, but it means a long document title is silently clipped.
+4. **The base64 transfer path is untested at this size.** A 28.6 MB PDF becomes
+   38.1 MB of JSON in one string. `transfer: "stream"` exists for the API and the
+   server does not expose it, so a large render through the server pays the
+   allocation for nothing.
 
-## 9. How success would be verified
+## 10. How success would be verified
 
 - The gate: inject a known corruption into a rendered PDF and assert the shipped
   file is the un-repaired one. That test is the gate's own proof.

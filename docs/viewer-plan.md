@@ -15,8 +15,9 @@ the render API that the protocol investigation surfaced.**
 
 ## Verified findings this plan rests on
 
-Each was tested. Two earlier claims of mine were retracted during verification;
-see "What I got wrong" below.
+Each was tested. Earlier claims of mine that verification retracted are listed
+under "What I got wrong" below — including the tagged-PDF one, which was the
+basis for treating heading roles as an engine defect.
 
 | finding | evidence |
 |---|---|
@@ -220,6 +221,33 @@ can run commands.
   rejected for size (7× the bytes, 5–8× startup), not licence.
 - **"DevTools uses CodeMirror 6."** It uses CodeMirror **5**. CM6 is still the
   right pick, on different grounds.
+- **"Chromium emits `NonStruct` for `<h1>`–`<h6>`, so heading roles are
+  missing."** The engine tags them correctly. Measured across 35 constructs:
+  `<h1>`–`<h6>` give `H1`–`H6`, `<p>` gives `P`, `<ul>`/`<ol>`/`<li>` give
+  `L`/`LI`/`Lbl`, tables give `Table`/`TR`/`TH`/`TD`, `<figure>` gives
+  `Figure`/`Caption`, and `<blockquote>`, `<strong>`, `<em>`, `<code>`,
+  `<a href>`, `<article>`, `<aside>` and `<img alt>` all give their own roles.
+  Ghostscript reports no problems and `pdfinfo` reports `Suspects: no`.
+
+  The audited resume emitted no `H*` and no `P` because **it contains neither**:
+  its element census is 48 `span`, 42 `div`, 14 `li`, 5 `section`, 3 `ul`, 2 `a`,
+  1 `header`, and zero `h1`–`h6` or `p`. Every heading and paragraph on that page
+  is a `div` or a `span`. For those, `NonStruct` is the correct answer — a `div`
+  carries no semantics, and assigning it a role would be fabricating one.
+
+  So this is a **document-markup** finding, not an output-quality defect. The fix
+  is real `<h2>`, `<p>` and `<ul>` in the source, which changes the HTML rather
+  than the PDF. Two gaps are real but small and neither is worth post-processing:
+  `<dl>`/`<dt>`/`<dd>` produce only `NonStruct`, and `<section>`, `<nav>`,
+  `<main>`, `<header>` and `<footer>` produce none.
+- **Two false alarms from my own ParentTree checker.** Checking MCID ownership
+  against the structure tree reported a defect on the resume — twice, on identical
+  data. Both were the checker: Chromium batches all 95 MCIDs into a single
+  `/ParentTreeNumberTree` array node with `/ParentTreeNextKey 3`, which is valid
+  PDF and which a per-key lookup does not understand. Real readers are
+  unambiguous. Trusting my checker would have meant "fixing" a non-defect and
+  probably breaking the tag tree. A finding now needs a reader to agree with it,
+  not just a script I wrote.
 
 ## Unverified, and therefore not load-bearing
 

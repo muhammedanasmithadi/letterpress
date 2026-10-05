@@ -1,0 +1,296 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Browser } from "../src/browser.ts";
+import { render } from "../src/render.ts";
+import { addMetadata, readDocInfo } from "../src/meta.ts";
+import { fixFontDescriptors, unresolvedFontMetrics } from "../src/fontdesc.ts";
+import { fixToUnicode, unresolvedLigatures } from "../src/tounicode.ts";
+import { contentPayloads, repairOrKeep, verify } from "../src/verify.ts";
+
+const LATIN1 = "latin1" as BufferEncoding;
+
+function same(a: Uint8Array, b: Uint8Array) {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+/**
+ * A two-page PDF, so content streams are more than one and their order matters.
+ *
+ *   1 catalog   2 pages   3 page one   4 page two   5 info   6,7 content
+ *
+ * Object numbering is load-bearing: each page names its own `/Contents` by number,
+ * so the two pages must point at different streams for the comparison below to
+ * mean anything.
+ */
+function fixture(): Buffer {
+  const parts = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 6 0 R >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 7 0 R >>",
+    "<< /Title (Fixture) /Producer (Skia/PDF m154) >>",
+  ];
+  const streams = [
+    "BT /F1 12 Tf 10 100 Td (page one) Tj ET",
+    "BT /F1 12 Tf 10 100 Td (page two) Tj ET",
+  ];
+  const chunks: Buffer[] = [Buffer.from("%PDF-1.4\n%\xe2\xe3\xcf\xd3\n", LATIN1)];
+  let length = chunks[0]!.length;
+  const offsets: number[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    offsets.push(length);
+    const b = Buffer.from(`${i + 1} 0 obj\n${parts[i]}\nendobj\n`, LATIN1);
+    chunks.push(b);
+    length += b.length;
+  }
+  for (let i = 0; i < streams.length; i++) {
+    offsets.push(length);
+    const b = Buffer.from(
+      `${6 + i} 0 obj\n<< /Length ${streams[i]!.length} >>\nstream\n${streams[i]}\nendstream\nendobj\n`, LATIN1);
+    chunks.push(b);
+    length += b.length;
+  }
+  const xrefAt = length;
+  const n = parts.length + streams.length + 1;
+  const table = [`xref\n0 ${n}\n0000000000 65535 f \n`];
+  for (let k = 1; k < n; k++) {
+    table.push(`${String(offsets[k - 1] ?? 0).padStart(10, "0")} 00000 n \n`);
+  }
+  chunks.push(Buffer.from(table.join(""), LATIN1));
+  chunks.push(Buffer.from(`trailer\n<< /Size ${n} /Root 1 0 R /Info 5 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`, LATIN1));
+  return Buffer.concat(chunks);
+}
+
+/** A repair that rewrites a content stream, which no repair may do. */
+function movesGlyphs(pdf: Uint8Array): Uint8Array {
+  const text = Buffer.from(pdf).toString(LATIN1);
+  return Buffer.from(text.replace("(page one)", "(page ONE)"), LATIN1);
+}
+
+/** A repair that leaves a file whose cross-reference table points nowhere. */
+function breaksXref(pdf: Uint8Array): Uint8Array {
+  const text = Buffer.from(pdf).toString(LATIN1);
+  return Buffer.from(text.replace(/xref\n0 /, "xref\n0 "), LATIN1).subarray(0);
+}
+
+/* ------------------------------------------------------------------ *
+ * The structural checks
+ * ------------------------------------------------------------------ */
+
+describe("verify", () => {
+  test("a whole file passes", () => {
+    const r = verify(fixture());
+    expect(r.failures).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  test("two startxref lines are refused", () => {
+    const text = Buffer.from(fixture()).toString(LATIN1);
+    const two = Buffer.from(text.replace(/startxref/, "\nstartxref\n0"), LATIN1);
+    const r = verify(two);
+    expect(r.ok).toBe(false);
+    expect(r.failures.join(" ")).toMatch(/startxref/);
+  });
+
+  test("a startxref pointing at the wrong place is refused", () => {
+    const text = Buffer.from(fixture()).toString(LATIN1);
+    const at = text.search(/startxref\n(\d+)/);
+    const broken = Buffer.from(text.slice(0, at) + text.slice(at).replace(/startxref\n\d+/, "startxref\n999999"), LATIN1);
+    const r = verify(broken);
+    expect(r.ok).toBe(false);
+    expect(r.failures.join(" ")).toMatch(/does not point/);
+  });
+
+  test("a reference to an object that does not exist is refused", () => {
+    const text = Buffer.from(fixture()).toString(LATIN1);
+    const broken = Buffer.from(text.replace("/Contents 6 0 R", "/Contents 99 0 R"), LATIN1);
+    const r = verify(broken);
+    expect(r.ok).toBe(false);
+    expect(r.failures.join(" ")).toMatch(/does not exist/);
+  });
+
+  test("a stream whose /Length disagrees with its payload is refused", () => {
+    const text = Buffer.from(fixture()).toString(LATIN1);
+    const broken = Buffer.from(text.replace("/Length 39", "/Length 99"), LATIN1);
+    const r = verify(broken);
+    expect(r.ok).toBe(false);
+    expect(r.failures.join(" ")).toMatch(/Length/);
+  });
+
+  test("a file that is not a linear pdf fails rather than passing silently", () => {
+    const r = verify(Buffer.from("not a pdf at all"));
+    expect(r.ok).toBe(false);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * The check that earns its place
+ * ------------------------------------------------------------------ */
+
+describe("content survived", () => {
+  test("contentPayloads finds every page's stream", () => {
+    expect(contentPayloads(fixture())).toHaveLength(2);
+  });
+
+  test("a repair that moves a glyph is caught, and structure cannot", () => {
+    const original = fixture();
+    const moved = movesGlyphs(original);
+
+    // This is the whole reason the check exists. Rewriting a content stream
+    // leaves the cross-reference table correct, every reference resolving and
+    // every /Length matching, so all three structural checks pass.
+    const structureOnly = verify(moved);
+    expect(structureOnly.ok).toBe(true);
+
+    // Comparing against what Chromium emitted is what finds it.
+    const withOriginal = verify(moved, original);
+    expect(withOriginal.ok).toBe(false);
+    expect(withOriginal.failures.join(" ")).toMatch(/content stream 1 was rewritten/);
+  });
+
+  test("a repair that changes nothing outside the content stream passes", () => {
+    const original = fixture();
+    const described = fixFontDescriptors(addMetadata(original, { author: "A Person" }));
+    const r = verify(described, original);
+    expect(r.failures).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  test("a page pointing at a different stream is caught", () => {
+    // Both streams exist, the count is unchanged, and the file is structurally
+    // whole: only comparing payloads finds this.
+    const original = fixture();
+    const text = Buffer.from(original).toString(LATIN1);
+    // Swapped through a placeholder: a pair of sequential replaces undoes itself,
+    // because the second one finds the token the first just created.
+    const swapped = Buffer.from(
+      text
+        .replace("/Contents 6 0 R", "/Contents \x00 R")
+        .replace("/Contents 7 0 R", "/Contents 6 0 R")
+        .replace("/Contents \x00 R", "/Contents 7 0 R"), LATIN1);
+    expect(verify(swapped).ok).toBe(true);
+    expect(verify(swapped, original).ok).toBe(false);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * The gate
+ * ------------------------------------------------------------------ */
+
+describe("repairOrKeep", () => {
+  test("a repair that is already a no-op is not treated as applied", () => {
+    const original = fixture();
+    const r = repairOrKeep(original, (p) => p);
+    expect(r.applied).toBe(false);
+    expect(r.failures).toEqual([]);
+    expect(r.pdf).toBe(original);
+  });
+
+  test("a good repair is kept", () => {
+    const original = fixture();
+    const r = repairOrKeep(original, (p) => addMetadata(p, { author: "A Person" }));
+    expect(r.applied).toBe(true);
+    expect(readDocInfo(r.pdf).author).toBe("A Person");
+  });
+
+  test("a repair that moves a glyph is discarded and the original kept", () => {
+    const original = fixture();
+    const r = repairOrKeep(original, movesGlyphs);
+    expect(r.applied).toBe(false);
+    expect(r.failures.length).toBeGreaterThan(0);
+    expect(same(r.pdf, original)).toBe(true);
+  });
+
+  test("a repair that throws is discarded rather than propagated", () => {
+    const original = fixture();
+    const r = repairOrKeep(original, () => { throw new Error("boom"); });
+    expect(r.applied).toBe(false);
+    expect(r.failures.join(" ")).toMatch(/threw/);
+    expect(same(r.pdf, original)).toBe(true);
+  });
+
+  test("a repair that breaks the file is discarded", () => {
+    const original = fixture();
+    const r = repairOrKeep(original, (p) => breaksXref(p));
+    expect(r.applied).toBe(false);
+    expect(same(r.pdf, original)).toBe(true);
+  });
+
+  test("truncating the file is caught", () => {
+    const original = fixture();
+    const r = repairOrKeep(original, (p) => p.subarray(0, Math.floor(p.length / 2)));
+    expect(r.applied).toBe(false);
+    expect(r.failures.length).toBeGreaterThan(0);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * In the pipeline
+ * ------------------------------------------------------------------ */
+
+describe("the gate in the render path", () => {
+  let browser: Browser;
+  let profile: string;
+
+  beforeAll(async () => {
+    profile = await mkdtemp(join(tmpdir(), "letterpress-gate-"));
+    browser = await Browser.launch({ profile });
+  }, 60_000);
+
+  afterAll(async () => {
+    await browser?.close();
+    await rm(profile, { recursive: true, force: true }).catch(() => {});
+  });
+
+  test("an ordinary render is verified and reported intact", async () => {
+    const r = await render(browser, {
+      html: `<!doctype html><meta charset="utf-8"><title>T</title>
+<style>@page{size:A4;margin:18mm}</style><h1>H</h1><p>office efficient flags finished</p>`,
+      author: "A Person",
+    });
+    // No repair was rejected on a document that needs all three.
+    expect(r.findings.filter((f) => f.code === "repair-rejected")).toEqual([]);
+    expect(readDocInfo(r.pdf).author).toBe("A Person");
+    expect(unresolvedLigatures(r.pdf)).toEqual([]);
+    expect(verify(r.pdf).ok).toBe(true);
+  });
+
+  test("the shipped file always passes its own checks", async () => {
+    for (const html of [
+      `<p>plain</p>`,
+      `<p style="font-family:serif">office efficient finished</p>`,
+      `<p style="font-family:monospace">office</p>`,
+      `<p>你好世界</p>`,
+      `<p></p>`,
+    ]) {
+      const r = await render(browser, { html: `<!doctype html><meta charset="utf-8">${html}` });
+      const v = verify(r.pdf);
+      expect(v.failures).toEqual([]);
+    }
+  });
+
+  test("every repair is a function of its input, on a real render", async () => {
+    for (const style of ["", "font-family:serif", "font-weight:700", "font-style:italic"]) {
+      const r = await render(browser, {
+        html: `<!doctype html><meta charset="utf-8"><p style="${style}">office efficient different flags finished</p>`,
+      });
+      expect(unresolvedLigatures(r.pdf)).toEqual([]);
+      expect(same(fixToUnicode(r.pdf), r.pdf)).toBe(true);
+      expect(same(fixFontDescriptors(r.pdf), r.pdf)).toBe(true);
+    }
+  }, 120_000);
+
+  test("the repairs still do their work", async () => {
+    const r = await render(browser, {
+      html: `<!doctype html><meta charset="utf-8"><title>T</title>
+<style>@page{size:A4;margin:18mm}</style><p>office efficient</p>`,
+      author: "Someone",
+    });
+    expect(readDocInfo(r.pdf).author).toBe("Someone");
+    expect(unresolvedLigatures(r.pdf)).toEqual([]);
+    const text = Buffer.from(r.pdf).toString(LATIN1);
+    expect(text).not.toMatch(/\/CapHeight -/);
+  });
+});

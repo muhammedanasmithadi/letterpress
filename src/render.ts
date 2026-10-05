@@ -4,6 +4,7 @@ import { Browser, type Tab } from "./browser.ts";
 import { fixFontDescriptors, unresolvedFontMetrics } from "./fontdesc.ts";
 import { addMetadata } from "./meta.ts";
 import { fixToUnicode } from "./tounicode.ts";
+import { repairOrKeep } from "./verify.ts";
 import { audit } from "./lint.ts";
 import { declaredPageMargin, declaredPageSize, inspect, pageRules, type PdfInfo } from "./pdf.ts";
 
@@ -926,27 +927,44 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         : req.url
           ? new URL(req.url).hostname
           : "document";
-      // The descriptor fix rebuilds the file and its cross-reference table, so
-      // it goes first. stampPdf edits at fixed offsets and has to see the final
-      // bytes, and stampPdf's replacement values can shift nothing because it
-      // pads every edit back to the original length.
-      // Both fixes rebuild the file and its cross-reference table, so they run
-      // before stampPdf, whose fixed-width edits have to see the final bytes.
-      // addMetadata reads the dictionary Chromium wrote, so it runs after the
-      // descriptor and ToUnicode fixes have rebuilt the file and before the title
-      // is stamped. StampPdf keeps every edit the same byte length, so an author
-      // written into the dictionary survives it unchanged.
-      const described = addMetadata(
-        fixFontDescriptors(fixToUnicode(raw)),
-        {
-          author,
-          // A description is the subject in Dublin Core, which is where the
-          // subject is read from. A document that states both gets the explicit
-          // subject, since that is the narrower claim.
-          subject: req.subject?.trim() || docMeta.subject || "",
-          keywords: req.keywords?.trim() || docMeta.keywords || "",
-        },
-      );
+      // Every repair goes through the gate, which keeps the result only if the
+      // file is still whole and its content streams are byte-identical to what
+      // Chromium emitted. No repair in this layer may move a glyph, so a changed
+      // content payload means one of them has done something it had no business
+      // doing — which is exactly how a TJ merge misplaced 192 of 2,613 glyphs and
+      // every structural check still passed.
+      //
+      // Each is gated separately rather than chained, because a chain that fails
+      // halfway would leave a partially repaired file with no way to say which
+      // step broke it. The input is passed in rather than closed over: `pdf` is
+      // declared further down, so reading it here is a temporal dead zone error.
+      const gated = (
+        input: Uint8Array,
+        label: string,
+        repair: (pdf: Uint8Array) => Uint8Array,
+      ): Uint8Array => {
+        const attempt = repairOrKeep(input, repair);
+        if (attempt.failures.length) {
+          findings.push({
+            code: "repair-rejected",
+            severity: "warn",
+            message: `the ${label} fix was discarded because it did not leave a valid pdf: ` +
+              `${attempt.failures.join("; ")}. the file is chromium's own output, unmodified.`,
+          });
+        }
+        return attempt.pdf;
+      };
+
+      let described = gated(raw, "ToUnicode", fixToUnicode);
+      described = gated(described, "font descriptor", fixFontDescriptors);
+      described = gated(described, "metadata", (p) => addMetadata(p, {
+        author,
+        // A description is the subject in Dublin Core, which is where the subject
+        // is read from. A document that states both gets the explicit subject,
+        // since that is the narrower claim.
+        subject: req.subject?.trim() || docMeta.subject || "",
+        keywords: req.keywords?.trim() || docMeta.keywords || "",
+      }));
       const pdf = stampPdf(described, pdfTitle);
       // An author the document declared but that no flag supplied. Worth saying:
       // Chromium drops every meta tag on the way into the PDF, so without this

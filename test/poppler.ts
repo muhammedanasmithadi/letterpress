@@ -3,7 +3,8 @@
  * an independent implementation, so agreement between it and the renderer's own
  * output is real evidence rather than a regex agreeing with itself.
  */
-import { rm } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 const TMP = process.env.TMPDIR ?? "/tmp";
 let counter = 0;
@@ -80,12 +81,22 @@ export async function pdfToPng(bytes: Uint8Array, { dpi = 110, prefix }: { dpi?:
   const base = prefix ?? `${TMP}/letterpress-png-${process.pid}-${counter++}`;
   return withPdf(bytes, async (path) => {
     await Bun.$`pdftoppm -png -r ${dpi} ${path} ${base}`.quiet();
-    const files: string[] = [];
-    for (let i = 0; true; i++) {
-      const candidate = `${base}-${String(i + 1).padStart(2, "0")}.png`;
-      if (!(await Bun.file(candidate).exists())) break;
-      files.push(candidate);
+    // The output files are found by matching, not by counting. An earlier version
+    // probed for `<base>-01.png`, `-02.png` and so on, which was how older poppler
+    // padded, but poppler 26.01 writes `<base>-1.png` with no padding. The probe
+    // therefore matched nothing and this function returned an empty list for every
+    // document, silently: a caller comparing two page-image lists compared nothing
+    // and passed. Padding also stops being two digits past page 99, so a count-based
+    // probe is wrong for a long document whichever way it is written.
+    const dir = dirname(base);
+    const stem = basename(base);
+    const entries = await readdir(dir).catch(() => [] as string[]);
+    const pages: Array<{ page: number; path: string }> = [];
+    for (const name of entries) {
+      if (!name.startsWith(`${stem}-`)) continue;
+      const m = /^(\d+)\.png$/.exec(name.slice(stem.length + 1));
+      if (m) pages.push({ page: Number(m[1]), path: join(dir, name) });
     }
-    return files;
+    return pages.sort((a, b) => a.page - b.page).map((x) => x.path);
   });
 }

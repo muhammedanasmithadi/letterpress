@@ -85,17 +85,28 @@ export class Browser {
 
   constructor(profile: string) { this.#profile = profile; }
 
-  static async launch({ profile, extraArgs = [] }: { profile: string; extraArgs?: string[] }): Promise<Browser> {
+  static async launch({
+    profile,
+    extraArgs = [],
+    headless = true,
+  }: { profile: string; extraArgs?: string[]; headless?: boolean }): Promise<Browser> {
     const browser = new Browser(profile);
-    await browser.#start(extraArgs);
+    await browser.#start(extraArgs, headless);
     return browser;
   }
 
-  async #start(extraArgs: string[]) {
+  /**
+   * @param headless false runs a real windowed browser. `--headless=new` is
+   *   omitted rather than overridden, because a flag appended after it cannot
+   *   cancel it: Chromium takes the last occurrence of a switch, so passing
+   *   `--headless=new=false` or `--no-headless` still launched headless, which is
+   *   why headful parity was untested rather than merely unverified.
+   */
+  async #start(extraArgs: string[], headless: boolean) {
     const bin = resolveChromium();
     const proc = Bun.spawn([
       bin,
-      "--headless=new",
+      ...(headless ? ["--headless=new"] : []),
       "--disable-gpu",
       "--no-sandbox",
       "--no-first-run",

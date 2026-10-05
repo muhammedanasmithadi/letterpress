@@ -5,6 +5,7 @@ import { fixFontDescriptors, unresolvedFontMetrics } from "./fontdesc.ts";
 import { addMetadata } from "./meta.ts";
 import { fixToUnicode } from "./tounicode.ts";
 import { FIGURE_ALT_JS, fixFigureAlts, parseFigureAlts } from "./figurealt.ts";
+import { LINK_DESC_JS, fixLinkDescs, parseLinkDescs } from "./linkdesc.ts";
 import { repairOrKeep } from "./verify.ts";
 import { audit } from "./lint.ts";
 import { declaredPageMargin, declaredPageSize, inspect, pageRules, type PdfInfo } from "./pdf.ts";
@@ -879,6 +880,14 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       }, timeoutMs).then((r: { result?: { value?: unknown } }) => r.result?.value).catch(() => undefined);
       const figureAlts = parseFigureAlts(figureAltRaw);
 
+      // The description of every link, for the same reason: Chromium writes a link
+      // annotation with no /Contents at all, and clause 7.18.5 fails every link
+      // because of it. Read from the live document before printing.
+      const linkDescRaw = await tab.send("Runtime.evaluate", {
+        expression: LINK_DESC_JS, returnByValue: true, awaitPromise: false,
+      }, timeoutMs).then((r: { result?: { value?: unknown } }) => r.result?.value).catch(() => undefined);
+      const linkDescs = parseLinkDescs(linkDescRaw);
+
       // Does the document actually declare its own paper? A local file can be
       // read before navigating, but a remote URL cannot, and Chromium's default
       // is US Letter, so an undeclared remote page would print on Letter paper
@@ -999,6 +1008,9 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       described = gated(described, "font descriptor", fixFontDescriptors);
       if (figureAlts) {
         described = gated(described, "figure description", (p) => fixFigureAlts(p, figureAlts!));
+      }
+      if (linkDescs) {
+        described = gated(described, "link description", (p) => fixLinkDescs(p, linkDescs!));
       }
       described = gated(described, "metadata", (p) => addMetadata(p, {
         author,

@@ -27,7 +27,7 @@
  * or a fact the caller supplies; when neither does, none is written.
  */
 
-import { join, LATIN1, trySplit, type Obj } from "./pdfparts.ts";
+import { insertIntoDict, join, LATIN1, trySplit, type Obj } from "./pdfparts.ts";
 
 /* ------------------------------------------------------------------ *
  * Escaping
@@ -267,41 +267,6 @@ function setKey(body: string, key: string, value: string): string {
   const either = new RegExp(`/${key}\\s*(?:\\((?:[^()\\\\]|\\\\.)*\\)|<[0-9A-Fa-f]*>)`);
   if (either.test(body)) return body.replace(either, `/${key} ${asValue}`);
   return insertIntoDict(body, `/${key} ${asValue}`);
-}
-
-/**
- * Add an entry inside a dictionary that spans several lines.
- *
- * A dictionary's closing `>>` cannot be found by anchoring at the end of the
- * object, because the object ends with `endobj`. It also cannot be found by
- * matching the first `>>`, because Chromium nests dictionaries — the catalog
- * carries `/MarkInfo << /Type /MarkInfo /Marked true >>` — and an insertion at
- * the wrong one lands inside a nested dictionary. `/Marked true/Metadata 27 0 R`
- * is what that mistake produces: a key in a dictionary that does not have it,
- * and a catalog with no /Metadata at all.
- *
- * So the insert point is the last `>>` that is not nested inside another `<<`,
- * which is counted rather than guessed.
- */
-function insertIntoDict(body: string, entry: string): string {
-  let depth = 0;
-  let close = -1;
-  for (let i = 0; i < body.length - 1; i++) {
-    const pair = body.slice(i, i + 2);
-    if (pair === "<<") {
-      depth++;
-      i++;
-    } else if (pair === ">>") {
-      depth--;
-      // `i` is the index of the first `>` of the pair, and the entry belongs
-      // immediately before it. Landing after it puts the key outside the
-      // dictionary, where a reader never sees it and the file fails to parse.
-      if (depth === 0) close = i;
-      i++;
-    }
-  }
-  if (close === -1) return body;
-  return body.slice(0, close) + entry + "\n" + body.slice(close);
 }
 
 /** Attach `/Metadata N 0 R` to the catalog, or replace the reference it has. */

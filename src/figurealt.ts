@@ -19,7 +19,7 @@
  * walk gives document order, verified over flat, nested, doubly nested,
  * flat-then-nested and figure-inside-a-paragraph documents.
  */
-import { asBuffer, join, split, trySplit, LATIN1, type Obj, type Parts } from "./pdfparts.ts";
+import { dictOf, insertIntoDict, join, LATIN1, trySplit, type Parts } from "./pdfparts.ts";
 import { pdfValue } from "./meta.ts";
 
 /**
@@ -65,22 +65,20 @@ export function parseFigureAlts(returned: unknown): string[] | null {
   return value as string[];
 }
 
-type Dict = { num: number; text: string; obj: Obj };
-
-/** The object dictionary, with any stream payload removed. */
-function dictOf(o: Obj): string {
-  const text = o.bytes.toString(LATIN1);
-  const at = text.search(/\bstream\b/);
-  return (at === -1 ? text : text.slice(0, at)).trim();
-}
+type Dict = { num: number; text: string };
 
 /**
- * Figure structure elements in document order, by walking the tree from
- * /StructTreeRoot.
+ * Structure elements with the given role, in document order, by walking the tree
+ * from /StructTreeRoot.
+ *
+ * Shared because both repairs that match DOM nodes to structure elements need the
+ * same thing, and the reason for a walk rather than a file scan is the same in both:
+ * a nested element is written *before* its parent, so object order is not document
+ * order.
  */
-export function figureOrder(parts: Parts): number[] {
+export function structElementsInOrder(parts: Parts, role: string): number[] {
   const byNum = new Map<number, Dict>();
-  for (const o of parts.objs) byNum.set(o.num, { num: o.num, text: dictOf(o), obj: o });
+  for (const o of parts.objs) byNum.set(o.num, { num: o.num, text: dictOf(o) });
 
   // The catalog holds /StructTreeRoot N 0 R. Found by scanning, because the
   // StructTreeRoot object itself does not name its own number.
@@ -91,6 +89,10 @@ export function figureOrder(parts: Parts): number[] {
   }
   if (start === undefined) return [];
 
+  // The slash is part of the pattern: the file holds `/S /Figure`, so matching
+  // `/S\s*Figure` finds nothing. That mistake made every role return an empty list,
+  // which looked exactly like a document with no figures of that kind.
+  const want = new RegExp(`/S\\s*/${role.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
   const order: number[] = [];
   const seen = new Set<number>();
   const walk = (num: number, depth: number): void => {
@@ -100,7 +102,7 @@ export function figureOrder(parts: Parts): number[] {
     seen.add(num);
     const d = byNum.get(num);
     if (!d) return;
-    if (/\/Type\s*\/StructElem/.test(d.text) && /\/S\s*\/Figure\b/.test(d.text)) order.push(num);
+    if (/\/Type\s*\/StructElem/.test(d.text) && want.test(d.text)) order.push(num);
     const kids = /\/K\s*(?:\[([\s\S]*?)\]|(\d+) 0 R)/.exec(d.text);
     if (!kids) return;
     const refs = kids[2] ? [Number(kids[2])] : [...(kids[1] ?? "").matchAll(/(\d+) 0 R/g)].map((x) => Number(x[1]));
@@ -108,6 +110,11 @@ export function figureOrder(parts: Parts): number[] {
   };
   walk(start, 0);
   return order;
+}
+
+/** Figure structure elements in document order. */
+export function figureOrder(parts: Parts): number[] {
+  return structElementsInOrder(parts, "Figure");
 }
 
 /**
@@ -137,18 +144,11 @@ export function fixFigureAlts(pdf: Uint8Array, alts: string[]): Uint8Array {
     if (/\/Alt\b/.test(dict)) continue;
     const alt = alts[figures.indexOf(num)] ?? "";
     if (!alt) continue;
-    // Insert before the closing >> of this object's dictionary. The dictionary is
-    // the object's whole body minus `endobj`, so the last >> in it is its own.
-    const at = dict.lastIndexOf(">>");
-    if (at === -1) continue;
-    const text = obj.bytes.toString(LATIN1);
-    const dictStart = text.length - text.trimStart().length;
-    const insertAt = dictStart + at;
-    obj.bytes = Buffer.concat([
-      asBuffer(obj.bytes.subarray(0, insertAt)),
-      Buffer.from(` /Alt ${pdfValue(alt)} `, LATIN1),
-      asBuffer(obj.bytes.subarray(insertAt)),
-    ]);
+    // insertIntoDict counts `<<` nesting rather than anchoring at the last `>>`. A
+    // Figure whose /K is an inline object reference dictionary ends in `>> >>`, and
+    // the last pair belongs to the inner one -- so the earlier version of this wrote
+    // `/Alt` inside an object reference dictionary, where it means nothing.
+    obj.bytes = Buffer.from(insertIntoDict(obj.bytes.toString(LATIN1), `/Alt ${pdfValue(alt)}`), LATIN1);
     changed++;
   }
   if (changed === 0) return pdf;

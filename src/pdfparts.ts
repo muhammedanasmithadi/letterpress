@@ -108,6 +108,53 @@ export function trySplit(pdf: Uint8Array): Parts | undefined {
   }
 }
 
+/**
+ * Add an entry inside a dictionary that spans several lines.
+ *
+ * A dictionary's closing `>>` cannot be found by anchoring at the end of the object,
+ * because the object ends with `endobj`. Nor by matching the first `>>`, because
+ * dictionaries nest -- the catalog carries `/MarkInfo << /Type /MarkInfo /Marked
+ * true >>` -- and an insertion at the wrong one lands inside the nested dictionary,
+ * producing `/Marked true/Metadata 27 0 R`.
+ *
+ * So the insert point is the last `>>` not nested inside another `<<`, counted rather
+ * than guessed. `lastIndexOf(">>")` is the tempting one-liner and is wrong for the
+ * same reason: a struct element whose /K is an inline object reference dictionary ends
+ * in `>> >>`, and the last pair belongs to the inner one. Measured on a Link element:
+ * `/K [13 0 R <</Type /OBJR /Obj 5 0 R /Pg 2 0 R>>]`, where the inner `>>` is the
+ * last one in the text.
+ *
+ * Shared rather than written per module, because several repairs now add keys to
+ * dictionaries of different shapes and the counting is the part that must not drift.
+ */
+export function insertIntoDict(body: string, entry: string): string {
+  let depth = 0;
+  let close = -1;
+  for (let i = 0; i < body.length - 1; i++) {
+    const pair = body.slice(i, i + 2);
+    if (pair === "<<") {
+      depth++;
+      i++;
+    } else if (pair === ">>") {
+      depth--;
+      // `i` is the index of the first `>` of the pair, and the entry belongs
+      // immediately before it. Landing after it puts the key outside the
+      // dictionary, where a reader never sees it and the file fails to parse.
+      if (depth === 0) close = i;
+      i++;
+    }
+  }
+  if (close === -1) return body;
+  return body.slice(0, close) + entry + "\n" + body.slice(close);
+}
+
+/** An object's dictionary with any stream payload removed, trimmed. */
+export function dictOf(o: Obj): string {
+  const text = o.bytes.toString(LATIN1);
+  const at = text.search(/\bstream\b/);
+  return (at === -1 ? text : text.slice(0, at)).trim();
+}
+
 /** Decompressed payload of a FlateDecode stream object, if that is what it is. */
 export function inflatedStream(o: Obj, inflate: (b: Buffer) => Buffer): Buffer | undefined {
   const text = o.bytes.toString(LATIN1);

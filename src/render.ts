@@ -4,7 +4,6 @@ import { Browser, type Tab } from "./browser.ts";
 import { fixFontDescriptors, unresolvedFontMetrics } from "./fontdesc.ts";
 import { addMetadata } from "./meta.ts";
 import { fixToUnicode } from "./tounicode.ts";
-import { FIGURE_ALT_JS, fixFigureAlts, parseFigureAlts } from "./figurealt.ts";
 import { LINK_DESC_JS, fixLinkDescs, parseLinkDescs } from "./linkdesc.ts";
 import { repairOrKeep } from "./verify.ts";
 import { audit } from "./lint.ts";
@@ -864,24 +863,8 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
 
       findings.push(...await audit(tab, timeoutMs));
 
-      // The alt text of every <figure>, read while the document is still live.
-      //
-      // Usually redundant: when an image loads, Chromium tags it and carries the alt
-      // itself, measured on nine forms. What is left is the broken-image path and a
-      // figure container whose image was never tagged. An earlier note here said
-      // Chromium discarded the attribute outright; that came from a fixture whose
-      // base64 was invalid, so the image never loaded and what was observed was the
-      // broken-image placeholder. See the retraction at the head of figurealt.ts.
-      //
-      // Read before printToPDF, from the same page and the same layout, so the order
-      // here is the document order the structure tree is walked in.
-      const figureAltRaw = await tab.send("Runtime.evaluate", {
-        expression: FIGURE_ALT_JS, returnByValue: true, awaitPromise: false,
-      }, timeoutMs).then((r: { result?: { value?: unknown } }) => r.result?.value).catch(() => undefined);
-      const figureAlts = parseFigureAlts(figureAltRaw);
-
-      // The description of every link, for the same reason: Chromium writes a link
-      // annotation with no /Contents at all, and clause 7.18.5 fails every link
+      // The description of every link, read from the live document: Chromium writes a
+      // link annotation with no /Contents at all, and clause 7.18.5 fails every link
       // because of it. Read from the live document before printing.
       const linkDescRaw = await tab.send("Runtime.evaluate", {
         expression: LINK_DESC_JS, returnByValue: true, awaitPromise: false,
@@ -1006,9 +989,6 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
 
       let described = gated(raw, "ToUnicode", fixToUnicode);
       described = gated(described, "font descriptor", fixFontDescriptors);
-      if (figureAlts) {
-        described = gated(described, "figure description", (p) => fixFigureAlts(p, figureAlts!));
-      }
       if (linkDescs) {
         described = gated(described, "link description", (p) => fixLinkDescs(p, linkDescs!));
       }

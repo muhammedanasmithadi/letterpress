@@ -389,8 +389,9 @@ conformance this output does not have.
   external plus an internal link). Chromium fills in the key PDF provides — an inline
   `/Obj` inside the element's object-reference dictionary — so the annotation is found
   by following a reference.
-- **7.3 — figure descriptions.** See the retraction below. The repair is a no-op in the
-  ordinary case.
+- **7.3 — figure descriptions.** Not an engine fix. A repair was written for it and then
+  deleted: see the retraction below. `tools/probe-image-alt.ts` reproduces the
+  measurement.
 - **Headful parity.** One test, seven dimensions, all matching including the role
   histogram. `--headless=new` had to be omitted rather than overridden, since Chromium
   takes the last occurrence of a switch.
@@ -405,6 +406,13 @@ untagged glyphs. What was measured was the placeholder.
 With an image that loads, Chromium tags the image as a Figure element nested inside the
 one its `<figure>` produced, and carries the `alt` itself. An `aria-label` overrides the
 `alt`; an `img` with no `alt` yields a Figure with no `/Alt`, which is correct.
+
+So the repair was removed rather than kept as a rarely-used path. It could only ever act
+where Chromium had tagged nothing, and its one guard — the description count has to
+match the Figure element count — meant it declined to act in the ordinary case anyway,
+returning its input byte for byte. A no-op that exists to be justified is worse than no
+op. `tools/probe-image-alt.ts` keeps the measurement; `tools/structure-tree.ts` prints
+the tree it reads.
 
 The retraction dissolved the next piece of work as well. Clause 7.1 was reported at 61
 unmarked content items, which were the placeholder's own alt text plus its two draws.

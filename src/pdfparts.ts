@@ -155,6 +155,53 @@ export function dictOf(o: Obj): string {
   return (at === -1 ? text : text.slice(0, at)).trim();
 }
 
+/**
+ * Structure elements with the given role, in document order, by walking the tree from
+ * /StructTreeRoot.
+ *
+ * A walk rather than a scan of the file, because the two orders differ: a nested
+ * element is written *before* its parent, so object order is not document order.
+ * Measured for outer-then-inner figures: [15,12] in the file, [12,15] in the tree.
+ *
+ * Lives here rather than in a repair, because matching a document node to the structure
+ * element it produced needs it and the walk is the same either way.
+ */
+export function structElementsInOrder(parts: Parts, role: string): number[] {
+  const byNum = new Map<number, string>();
+  for (const o of parts.objs) byNum.set(o.num, dictOf(o));
+
+  // The catalog holds /StructTreeRoot N 0 R. Found by scanning, because the
+  // StructTreeRoot object itself does not name its own number.
+  let start: number | undefined;
+  for (const text of byNum.values()) {
+    const m = /\/StructTreeRoot\s+(\d+) 0 R/.exec(text);
+    if (m) { start = Number(m[1]); break; }
+  }
+  if (start === undefined) return [];
+
+  // The slash is part of the pattern: the file holds `/S /Figure`, so matching
+  // `/S\s*Figure` finds nothing. That mistake made every role return an empty list,
+  // which looked exactly like a document with no elements of that kind.
+  const want = new RegExp(`/S\\s*/${role.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+  const order: number[] = [];
+  const seen = new Set<number>();
+  const walk = (num: number, depth: number): void => {
+    // A structure tree is a graph in principle, so a cycle guard is not paranoia;
+    // depth is a second bound because a malformed tree could otherwise be very deep.
+    if (seen.has(num) || depth > 64) return;
+    seen.add(num);
+    const text = byNum.get(num);
+    if (text === undefined) return;
+    if (/\/Type\s*\/StructElem/.test(text) && want.test(text)) order.push(num);
+    const kids = /\/K\s*(?:\[([\s\S]*?)\]|(\d+) 0 R)/.exec(text);
+    if (!kids) return;
+    const refs = kids[2] ? [Number(kids[2])] : [...(kids[1] ?? "").matchAll(/(\d+) 0 R/g)].map((x) => Number(x[1]));
+    for (const ref of refs) walk(ref, depth + 1);
+  };
+  walk(start, 0);
+  return order;
+}
+
 /** Decompressed payload of a FlateDecode stream object, if that is what it is. */
 export function inflatedStream(o: Obj, inflate: (b: Buffer) => Buffer): Buffer | undefined {
   const text = o.bytes.toString(LATIN1);

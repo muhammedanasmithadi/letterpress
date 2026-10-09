@@ -22,8 +22,7 @@
  * checked against the annotation; 7.18.1 accepts either the annotation's /Contents or
  * an /Alt on the enclosing element.
  */
-import { dictOf, insertIntoDict, join, LATIN1, trySplit, type Obj, type Parts } from "./pdfparts.ts";
-import { structElementsInOrder } from "./figurealt.ts";
+import { dictOf, insertIntoDict, join, LATIN1, structElementsInOrder, trySplit, type Obj, type Parts } from "./pdfparts.ts";
 import { pdfValue } from "./meta.ts";
 
 /**

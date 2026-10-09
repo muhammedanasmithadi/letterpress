@@ -14,10 +14,50 @@ let dir: string;
 // A 16x16 PNG. Chosen because chromium's broken-image placeholder is 14x16, so
 // the two are distinguishable in pdfimages output: a document that lost its
 // picture would otherwise still report "an image is present".
+//
+// The previous literal was 102 characters, so 101 data characters: not valid base64
+// at all. Decoders that drop the trailing partial group produced 75 bytes whose IDAT
+// failed its CRC and which had no IEND, and chromium happened to draw a 16x16 box
+// anyway -- so four tests passed against an image no conforming decoder could read.
+// The same class of error as the invalid base64 that made ten alt-text measurements
+// describe a broken-image placeholder.
 const PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAHElEQVQ4jWNgGAWjYBSMglEwCkbBKBgFo4A6AAAAAASUVORK5CYII=",
+  "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAGUlEQVR4nGM8oWHDQApgIkn1qIZRDUNKAwDJMQFMogTzfQAAAABJRU5ErkJggg==",
   "base64",
 );
+
+/**
+ * Fails loudly if the fixture stops being a decodable 16x16 image.
+ *
+ * Base64 validity is a precondition of every test in this file and nothing else
+ * checks it, so it is checked once, here, where the failure is legible.
+ */
+test("the image fixture is a decodable 16x16 png", async () => {
+  expect(PNG.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  expect(PNG.readUInt32BE(16)).toBe(16); // IHDR width
+  expect(PNG.readUInt32BE(20)).toBe(16); // IHDR height
+  // Walk to IEND, checking every chunk's CRC.
+  let at = 8;
+  const seen: string[] = [];
+  while (at + 12 <= PNG.length) {
+    const length = PNG.readUInt32BE(at);
+    const type = PNG.subarray(at + 4, at + 8).toString("latin1");
+    seen.push(type);
+    const stored = PNG.readUInt32BE(at + 8 + length);
+    let crc = ~0 >>> 0;
+    const bytes = PNG.subarray(at + 4, at + 8 + length);
+    for (const b of bytes) {
+      crc ^= b;
+      for (let k = 0; k < 8; k++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+    expect(((~crc) >>> 0), `crc of ${type}`).toBe(stored);
+    at += 12 + length;
+    if (type === "IEND") break;
+  }
+  expect(seen).toContain("IHDR");
+  expect(seen).toContain("IDAT");
+  expect(seen[seen.length - 1]).toBe("IEND");
+});
 
 /** Real pictures only: pdfimages also lists the soft mask that accompanies each. */
 const pictures = async (bytes: Uint8Array) =>
@@ -168,14 +208,21 @@ describe("assets reach the document without rewriting it", () => {
   }, 60_000);
 
   test("an asset outside the document directory is refused", async () => {
-    await writeFile("/tmp/opencode/outside-secret.png", PNG);
-    await writeFile(join(dir, "escape.html"),
-      `<!doctype html><style>@page{size:A4;margin:8mm}</style><img src="../../opencode/outside-secret.png">`);
-    const r = await render(browser, { path: join(dir, "escape.html") });
-    // It must not be staged: the file is outside the document's directory, so
-    // the only thing in the pdf is chromium's placeholder, not the secret.
-    expect(await pictures(r.pdf)).toHaveLength(0);
-    await rm("/tmp/opencode/outside-secret.png", { force: true });
+    // A sibling directory, created here. The path used to be a hardcoded
+    // /tmp/opencode/outside-secret.png, which only exists on the machine that wrote
+    // it: the first CI run failed this with ENOENT before it tested anything.
+    const outside = await mkdtemp(join(tmpdir(), "letterpress-outside-"));
+    try {
+      await writeFile(join(outside, "outside-secret.png"), PNG);
+      await writeFile(join(dir, "escape.html"),
+        `<!doctype html><style>@page{size:A4;margin:8mm}</style><img src="${join(outside, "outside-secret.png")}">`);
+      const r = await render(browser, { path: join(dir, "escape.html") });
+      // It must not be staged: the file is outside the document's directory, so
+      // the only thing in the pdf is chromium's placeholder, not the secret.
+      expect(await pictures(r.pdf)).toHaveLength(0);
+    } finally {
+      await rm(outside, { recursive: true, force: true }).catch(() => {});
+    }
   }, 60_000);
 });
 

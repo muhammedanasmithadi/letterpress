@@ -294,12 +294,21 @@ describe("fixFontDescriptors", () => {
     expect(text.slice(at, at + 4)).toBe("xref");
     // Every in-use entry must point at its own object header.
     const size = Number(text.slice(at).match(/xref\s+0\s+(\d+)/)![1]);
-    const body = text.slice(at).slice(text.slice(at).indexOf("\n") + 1);
+    // Start after the whole "xref\n0 N\n" line, not after the first one. Skipping only
+    // the first newline left "0 N\n" at the head of the body, so every 20-byte slice
+    // was four bytes out and `entry[17] !== "n"` was true for all of them: the loop
+    // below checked none of the entries and the test passed on a file with no
+    // cross-reference table at all.
+    const header = /xref\s+0\s+\d+\s*\n/.exec(text.slice(at))![0];
+    const body = text.slice(at + header.length);
+    let checked = 0;
     for (let n = 1; n < size; n++) {
       const entry = body.slice(n * 20, n * 20 + 20);
       if (entry[17] !== "n") continue;
+      checked++;
       expect(text.slice(Number(entry.slice(0, 10)), Number(entry.slice(0, 10)) + 20)).toStartWith(`${n} 0 obj`);
     }
+    expect(checked, "no in-use xref entries were examined").toBeGreaterThan(0);
     // An object glued to the keyword after it is one token to a reader.
     expect(text).not.toContain("endobjxref");
     expect(text).toMatch(/\/Size 7/);
@@ -415,6 +424,9 @@ describe("rendered output", () => {
   test("the symbolic bit is replaced by non-symbolic on every embedded face", async () => {
     const r = await render(browser, { html: threeFaces });
     const withProgram = descriptors(r.pdf).filter((d) => d.hasProgram);
+    // A loop over a possibly empty list asserts nothing, and the neighbouring test has
+    // exactly this guard for exactly this reason.
+    expect(withProgram.length).toBeGreaterThan(0);
     for (const d of withProgram) {
       expect(d.flags & 4).toBe(0);
       expect(d.flags & 32).toBe(32);

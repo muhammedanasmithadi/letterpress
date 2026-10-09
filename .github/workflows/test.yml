@@ -39,16 +39,30 @@ jobs:
       # project has found came from one of them or from veraPDF, never from this
       # repository's own tests, so a run without them proves much less than it looks
       # like it does.
-      - name: install the pdf readers
+      #
+      # The fonts are not optional either. Several tests name a specific family --
+      # DejaVu Sans for cap heights, Noto Naskh Arabic and Noto Kufi Arabic for the
+      # fallback chain -- and a document's page count depends on the metrics of
+      # whatever face it resolved to. The first CI run failed nine tests for exactly
+      # this reason: not one of them was a product defect, and all nine were a font set
+      # this repository depends on without declaring.
+      - name: install the pdf readers and the fonts
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends poppler-utils ghostscript fonts-dejavu-core
+          sudo apt-get install -y --no-install-recommends \
+            poppler-utils ghostscript \
+            fonts-dejavu-core fonts-liberation2 fonts-noto-core
 
-      # The headful parity test needs a display and skips without one. Skipping is
-      # better than failing, but running it is the point of having it, so the whole
-      # suite runs under a virtual framebuffer and the test executes for real.
-      - name: install a display
-        run: sudo apt-get install -y --no-install-recommends xvfb
+      # The headful parity test needs a display and skips without one. xvfb-run did not
+      # give the test process a DISPLAY on the first attempt -- the run reported the
+      # parity test skipped, which is the outcome this step exists to prevent -- so X
+      # is started directly and the variable exported.
+      - name: start a virtual display
+        run: |
+          sudo apt-get install -y --no-install-recommends xvfb
+          Xvfb :99 -screen 0 1280x1024x24 >/tmp/xvfb.log 2>&1 &
+          for _ in $(seq 1 20); do [ -e /tmp/.X11-unix/X99 ] && break; sleep 0.5; done
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
 
       - name: install dependencies
         run: bun install --frozen-lockfile
@@ -57,7 +71,7 @@ jobs:
         run: bun run typecheck
 
       - name: test
-        run: xvfb-run -a bun test
+        run: bun test
 
       # A rendered sample, so the run proves the whole path works rather than only that
       # assertions pass: a browser that fails to launch fails every render test anyway,

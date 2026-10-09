@@ -283,7 +283,11 @@ describe("addMetadata", () => {
     for (const info of [{ author: "A" }, { subject: "S" }, { keywords: "K" },
       { author: "A", subject: "S", keywords: "K" }]) {
       const text = Buffer.from(addMetadata(pdfFixture(), info)).toString(LATIN1);
-      for (const d of dictionaries(text)) expect(d.balanced).toBe(true);
+      // Guarded: a loop over zero dictionaries would report balanced output for a file
+      // whose dictionaries were never examined.
+      const found = dictionaries(text);
+      expect(found.length).toBeGreaterThan(0);
+      for (const d of found) expect(d.balanced).toBe(true);
     }
   });
 

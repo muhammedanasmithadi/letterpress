@@ -204,6 +204,50 @@ export function readDocInfo(pdf: Uint8Array): DocInfo {
  * value per language rather than a plain string, and an author is a person whose
  * position carries meaning.
  */
+/**
+ * Replace the document title, at any length.
+ *
+ * This exists because the title used to be stamped in place, which meant it could only
+ * be written into the slot the previous title occupied. Chromium takes the title from
+ * the page URL, so that slot is however long `about:blank` or a loopback address
+ * happens to be -- 11 characters -- and the replacement was silently cut to fit:
+ *
+ *   Quarterly-Regional-Board-Directors-Financial-Report-2026.html   61 characters
+ *   Quarterly-R                                                       11 characters
+ *
+ * which is worse than no title at all, because a file manager shows something that
+ * looks like a real one. The file stayed structurally valid and the text stayed intact,
+ * so nothing complained.
+ *
+ * Any length is written here through the same machinery as every other dictionary key,
+ * so the length is free and the escaping is not re-derived.
+ */
+export function setDocTitle(pdf: Uint8Array, title: string): Uint8Array {
+  const parts = trySplit(pdf);
+  if (!parts) return pdf;
+  const ref = parts.trailer.toString(LATIN1).match(/\/Info\s+(\d+)\s+0\s+R/);
+  if (!ref) return pdf;
+  const obj = parts.objs.find((o) => o.num === Number(ref[1]));
+  if (!obj) return pdf;
+  const current = obj.bytes.toString(LATIN1);
+  if (readString(current, "Title") === title) return pdf;
+  obj.bytes = Buffer.from(setKey(current, "Title", title), LATIN1);
+  return new Uint8Array(join(parts.head, parts.objs, parts.trailer));
+}
+
+/**
+ * Chromium titles a document from the page URL, and which URL depends on how it was
+ * loaded: the work server's loopback address with a random port, `about:blank` when
+ * setDocumentContent installed it, or the remote address. A document with no `<title>`
+ * therefore came out titled `127.0.0.1:40263/input.html`, differing on every run, and
+ * that rewrite was only applied when SOURCE_DATE_EPOCH was set.
+ *
+ * A document that declares its own title does not match, and is left alone.
+ */
+export function isVolatileTitle(title: string): boolean {
+  return /^(?:127\.0\.0\.1|localhost|\[::1\]):\d+\/\S*|^about:blank$/i.test(title);
+}
+
 export function buildXmp(info: DocInfo): string {
   const alt = (tag: string, value?: string) =>
     value === undefined

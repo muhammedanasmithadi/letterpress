@@ -192,7 +192,12 @@ describe("fixToUnicode", () => {
   test("a block header states the number of entries it actually contains", () => {
     const out = fixToUnicode(pdfWithCMap(cmapOfRange(0x0675, 0x0677, 0xfb00)));
     const text = cmaps(out).join("");
-    for (const m of text.matchAll(/(\d+) begin(bfchar|bfrange)\n([\s\S]*?)\nend\1/g)) {
+    // The backreference is \2, the block keyword. As \1 it pointed at the digit group,
+    // so the pattern demanded the literal text "end3" and never matched: the loop body
+    // ran zero times and this test asserted nothing.
+    const blocks = [...text.matchAll(/(\d+) begin(bfchar|bfrange)\n([\s\S]*?)\nend\2/g)];
+    expect(blocks.length, "no cmap blocks were matched at all").toBeGreaterThan(0);
+    for (const m of blocks) {
       const entries = m[3]!.split("\n").filter((l) => l.trim()).length;
       expect(Number(m[1])).toBe(entries);
     }

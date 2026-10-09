@@ -26,7 +26,7 @@ import { verify } from "../src/verify.ts";
  * /Contents exists".
  */
 
-const GIF = "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=";
+const GIF = "data:image/gif;base64,R0lGODdhAQABAIAAAAAAAAAAACwAAAAAAQABAAAIBAABBAQAOw==";
 const DOC = (body: string) =>
   `<!doctype html><html lang="en"><meta charset="utf-8"><title>t</title>` +
   `<style>@page{size:A4;margin:20mm}</style><body><p>prose</p>${body}</body>`;

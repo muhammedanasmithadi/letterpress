@@ -69,10 +69,30 @@ function movesGlyphs(pdf: Uint8Array): Uint8Array {
   return Buffer.from(text.replace("(page one)", "(page ONE)"), LATIN1);
 }
 
-/** A repair that leaves a file whose cross-reference table points nowhere. */
+/**
+ * A repair that leaves a file whose cross-reference table points nowhere.
+ *
+ * This used to be `text.replace(/xref\n0 /, "xref\n0 ")` followed by `.subarray(0)`,
+ * which replaces the matched text with itself and returns the same bytes. The test
+ * "a repair that breaks the file is discarded" therefore handed the gate an unchanged
+ * file and passed -- so the gate's headline claim, that a repair which breaks the file
+ * is thrown away, had no test at all.
+ *
+ * Two real corruptions, so the check is not satisfied by one of them:
+ *
+ *   startxref pointing at an offset that is not the table, which is what a reader
+ *   follows first, and
+ *   an entry whose offset is wrong while startxref is honest, which is what a reader
+ *   notices second.
+ */
 function breaksXref(pdf: Uint8Array): Uint8Array {
   const text = Buffer.from(pdf).toString(LATIN1);
-  return Buffer.from(text.replace(/xref\n0 /, "xref\n0 "), LATIN1).subarray(0);
+  const bad = text.replace(/startxref\n(\d+)/, (_m, at: string) => `startxref\n${Number(at) + 7}`);
+  // And an entry offset that no longer names its object.
+  return Buffer.from(
+    bad.replace(/\n(\d{10}) 00000 n \n/, (_m, off: string) => `\n${String(Number(off) + 3).padStart(10, "0")} 00000 n \n`),
+    LATIN1,
+  );
 }
 
 /* ------------------------------------------------------------------ *
@@ -213,9 +233,18 @@ describe("repairOrKeep", () => {
 
   test("a repair that breaks the file is discarded", () => {
     const original = fixture();
+    // The helper must actually corrupt the file. Asserted first, because a test that
+    // hands the gate unchanged bytes passes for the wrong reason: this exact helper
+    // was once the identity function and the test below was green throughout.
+    const broken = breaksXref(original);
+    expect(same(broken, original), "the corruption helper changed nothing").toBe(false);
+    expect(verify(broken).ok, "the corrupted file should not verify").toBe(false);
+
     const r = repairOrKeep(original, (p) => breaksXref(p));
     expect(r.applied).toBe(false);
     expect(same(r.pdf, original)).toBe(true);
+    // And it was rejected for the right reason rather than by the no-op short-circuit.
+    expect(r.failures.join(" ")).toMatch(/xref|startxref/i);
   });
 
   test("truncating the file is caught", () => {

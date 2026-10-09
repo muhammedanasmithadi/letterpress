@@ -123,6 +123,10 @@ describe("known gaps, recorded rather than papered over", () => {
     // Real and unfixed. Left as a test so it is a known quantity rather than a
     // surprise, and so a future engine that fixes it fails here visibly.
     const r = await roles("<dl><dt>term</dt><dd>definition</dd></dl>");
+    // Non-empty first. `[].every(...)` is true, so the assertion below also held for a
+    // document with no structure tree at all -- which is the opposite of what this test
+    // records.
+    expect(r.length, "the document produced no structure elements at all").toBeGreaterThan(0);
     expect(r.every((x) => x === "NonStruct")).toBe(true);
   });
 
@@ -130,6 +134,9 @@ describe("known gaps, recorded rather than papered over", () => {
     for (const html of ["<section><p>x</p></section>", "<nav>link</nav>", "<main>body</main>",
       "<header>head</header>", "<footer>foot</footer>"]) {
       const r = await roles(html);
+      // Same guard: a filter over an empty list is an empty list, so this would pass
+      // for a document that produced nothing.
+      expect(r.length, `${html} produced no structure elements at all`).toBeGreaterThan(0);
       expect(r.filter((x) => x === "Sect")).toEqual([]);
     }
   });
@@ -230,7 +237,11 @@ describe("the tree is structurally sound", () => {
     expect(treeRoot).toContain("/ParentTreeNextKey");
     const ptNum = Number(/\/ParentTree (\d+) 0 R/.exec(treeRoot)![1]);
     const pt = objs.get(ptNum)!;
-    for (const m of pt.matchAll(/(\d+) 0 R/g)) {
+    // Guarded: the matchAll below is empty for a parent tree holding no references,
+    // and an empty loop asserts nothing about any of them.
+    const refs = [...pt.matchAll(/(\d+) 0 R/g)];
+    expect(refs.length, "the parent tree named no objects").toBeGreaterThan(0);
+    for (const m of refs) {
       expect(objs.get(Number(m[1]))).toBeDefined();
     }
   });

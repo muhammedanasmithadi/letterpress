@@ -353,9 +353,18 @@ describe("bounded resources", () => {
       Array.from({ length: 12 }, (_, i) => post({ html: `${DOC}<p>burst ${i}</p>` })),
     );
     const codes = burst.map((r) => r.status);
+    // Every request got a definite answer. This assertion accepts a burst that was
+    // wholly refused as readily as one that was wholly served, which is the right
+    // property here -- the point is that nothing was dropped -- but it means the checks
+    // below are the ones that carry weight, and they must not be skipped.
     expect(codes.every((c) => c === 200 || c === 429)).toBe(true);
-    for (const r of burst) {
-      if (r.status !== 429) continue;
+    const refused = burst.filter((r) => r.status === 429);
+    const served = burst.filter((r) => r.status === 200);
+    // At least one of the two actually happened, and the split is total: nothing fell
+    // outside 200 and 429.
+    expect(refused.length + served.length).toBe(burst.length);
+    expect(refused.length > 0 || served.length > 0).toBe(true);
+    for (const r of refused) {
       expect(Number(r.headers.get("retry-after"))).toBeGreaterThan(0);
     }
     // Every accepted request produced a real pdf rather than being dropped.

@@ -413,9 +413,14 @@ describe("ctrl-c cancels", () => {
     // Scoped to this run's profile directory. Counting every chromium on the
     // machine measures this test file's own beforeAll browser, which is about
     // eleven processes and has nothing to do with the child.
+    //
+    // Matched on the profile directory alone. The binary name used to be part of the
+    // match, which holds only where the executable happens to be called
+    // "chromium-browser": the first CI run counted zero processes and failed with
+    // "chromium should be running before the signal" while chromium was running.
     const chromiumForRun = async () =>
       (await Bun.$`ps -eo args`.text())
-        .split("\n").filter((l) => l.includes("chromium-browser") && l.includes("letterpress-cli-")).length;
+        .split("\n").filter((l) => l.includes("letterpress-cli-")).length;
     const alive = await chromiumForRun();
     expect(alive, "chromium should be running before the signal").toBeGreaterThan(2);
     // If the render already finished, this test measures nothing at all. A warm

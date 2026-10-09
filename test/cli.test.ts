@@ -10,7 +10,11 @@ let doc: string;
 
 const DOC = `<!doctype html><html><head><meta charset="utf-8"><style>
 @page { size: A4; margin: 12mm; @bottom-center { content: counter(page) " of " counter(pages); font: 9pt sans-serif } }
-body { font-family: sans-serif }
+/* A named family, not the generic sans-serif. A generic family resolves through
+   fontconfig, so the page count came out 2 on the machine that wrote this and 1 on a
+   CI runner with a different font set -- and the test was asserting on fontconfig's
+   choice rather than on the cli. */
+body { font-family: "DejaVu Sans", sans-serif }
 td { border: 0.5pt solid #999; padding: 2pt }
 </style></head><body><h1>CLI fixture</h1><p>Rendered from a file.</p>
 <table>${Array.from({ length: 24 }, (_, i) => `<tr><td>Row ${i + 1}</td></tr>`).join("")}</table>
@@ -41,31 +45,52 @@ afterAll(async () => {
 test("renders a file and reports where it went", async () => {
   const out = join(dir, "one.pdf");
   const r = await run([doc, "-o", out]);
-  // The fixture leans on a system face, so chromium emits a Type 3 fallback with
-  // no font program behind it and one warning is printed. An error would go to
-  // stderr too, so its absence is asserted separately below.
-  expect(r.stderr).toMatch(/^warn: {2}/);
+  // No error on stderr. An error and a warning both go there, so the absence of one is
+  // asserted here.
+  //
+  // This used to assert a warning appeared, which it did only because the fixture
+  // leaned on a face the local font set lacked, so Chromium fell back to a Type 3 font
+  // with no program behind it. That is an accident of one machine's fonts: the first CI
+  // run failed here with empty stderr on a run that was entirely correct.
   expect(r.stderr).not.toMatch(/error:/);
   expect(r.code).toBe(0);
-  expect(r.stdout).toMatch(/one\.pdf\s+2 pages\s+[\d.]+ KB\s+\d+ms/);
   const bytes = await Bun.file(out).arrayBuffer();
   expect(bytes.byteLength).toBeGreaterThan(1000);
 
   const info = await pdfInfo(new Uint8Array(bytes));
-  expect(info.pages).toBe(2);
+  // Checked against the document rather than written down. The claim under test is that
+  // the cli reports the truth; a hardcoded number is an assertion about the font set,
+  // and came out 2 here and 1 on CI for exactly that reason.
+  expect(r.stdout).toMatch(new RegExp(`one\\.pdf\\s+${info.pages} pages\\s+[\\d.]+ KB\\s+\\d+ms`));
+  expect(info.pages).toBeGreaterThan(0);
   expect(info.pageSize).toContain("594.96");
-  // The fixture leans on a system face, so Chromium emits a Type 3 fallback with
-  // no font program and the descriptor cannot be derived from anything. That is
-  // reported as a warning and does not fail the render or write to stderr.
+  // Any findings the render did produce must be warnings, not errors: a warning is
+  // reported and the document is still written.
   const second = await run([doc, "-o", join(dir, "warn.json"), "--json"]);
   const codes = JSON.parse(second.stdout) as {
     ok: boolean; findings: Array<{ code: string; severity: string }>;
   };
   expect(codes.ok).toBe(true);
   expect(second.code).toBe(0);
-  // Findings print to stderr ahead of the json on stdout, so the run above had
-  // stderr non-empty. Only an error is a failure, and a warning is not.
   for (const f of codes.findings) expect(f.severity).not.toBe("error");
+}, 60_000);
+
+test("a finding is printed to stderr and the document is still written", async () => {
+  // The only coverage that findings reach stderr used to be an assertion that a
+  // Type 3 font fallback produced a warning, which happened solely because this
+  // machine lacks a face the fixture asked for. It is now provoked on purpose, so it
+  // holds wherever the suite runs.
+  const broken = join(dir, "broken.html");
+  await writeFile(broken,
+    `<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:10mm}</style>` +
+    `<p>text</p><img src="does-not-exist.png">`, "utf8");
+  const out = join(dir, "broken.pdf");
+  const r = await run([broken, "-o", out]);
+  expect(r.code).toBe(0);
+  expect(r.stderr).toMatch(/^warn:/m);
+  expect(r.stderr).not.toMatch(/error:/);
+  // A warning is not a failure: the file exists and is a pdf.
+  expect((await Bun.file(out).arrayBuffer()).byteLength).toBeGreaterThan(1000);
 }, 60_000);
 
 test("json output is machine readable", async () => {

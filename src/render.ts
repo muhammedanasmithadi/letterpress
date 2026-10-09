@@ -2,7 +2,7 @@ import { basename, dirname, isAbsolute, join, normalize, resolve } from "node:pa
 import { rm } from "node:fs/promises";
 import { Browser, type Tab } from "./browser.ts";
 import { fixFontDescriptors, unresolvedFontMetrics } from "./fontdesc.ts";
-import { addMetadata } from "./meta.ts";
+import { addMetadata, isVolatileTitle, readDocInfo, setDocTitle } from "./meta.ts";
 import { fixToUnicode } from "./tounicode.ts";
 import { LINK_DESC_JS, fixLinkDescs, parseLinkDescs } from "./linkdesc.ts";
 import { fixRedundantFigures, redundantFigureCount } from "./figrole.ts";
@@ -574,21 +574,12 @@ function stampPdf(pdf: Uint8Array, fallbackTitle: string): Uint8Array {
     }
   }
 
-  // Chromium titles the document from the page URL, and which URL depends on how
-  // it was loaded: the work server's loopback address with a random port,
-  // "about:blank" when setDocumentContent installed it, or the remote address.
-  // A document with no <title> therefore came out titled
-  // "127.0.0.1:40263/input.html", with a different random port every run. That
-  // only got rewritten when SOURCE_DATE_EPOCH was set, so it was normal output.
-  // It is fixed unconditionally now; a document that declares its own title is
-  // left alone because it does not match.
-  const volatileTitle = /^(?:127\.0\.0\.1|localhost|\[::1\]):\d+\/\S*|^about:blank$/i;
-  for (const m of text.matchAll(/\/Title \(((?:[^()\\]|\\.)*)\)/g)) {
-    if (m.index === undefined) continue;
-    const title = m[1];
-    if (!volatileTitle.test(title)) continue;
-    edits.push([m.index + "/Title (".length, title.length, fallbackTitle]);
-  }
+  // The title is no longer stamped here. This function edits in place at fixed widths,
+  // so it could only write a title into the slot the previous one occupied -- and that
+  // slot is however long "about:blank" is, because Chromium takes the title from the
+  // page URL. A 61-character filename came out as "Quarterly-R". setDocTitle rewrites
+  // the dictionary and has no such limit; it runs in the gated chain instead.
+  void fallbackTitle;
 
   // Patch from the end so earlier offsets stay valid.
   for (const [at, length, value] of edits.sort((a, b) => b[0] - a[0])) {
@@ -1019,6 +1010,15 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           });
         }
       }
+      // Chromium titles a document from the page URL, which is a loopback address with
+      // a random port or "about:blank" depending on how it was loaded. Rewritten here
+      // rather than in stampPdf because the title is the one field whose length cannot
+      // be constrained: the old fixed-width edit cut it to fit whatever Chromium left.
+      const currentTitle = readDocInfo(described).title ?? "";
+      if (currentTitle && isVolatileTitle(currentTitle) && currentTitle !== pdfTitle) {
+        described = gated(described, "document title", (p) => setDocTitle(p, pdfTitle));
+      }
+
       described = gated(described, "metadata", (p) => addMetadata(p, {
         author,
         // A description is the subject in Dublin Core, which is where the subject

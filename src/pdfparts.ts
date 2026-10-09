@@ -167,18 +167,45 @@ export function dictOf(o: Obj): string {
  * element it produced needs it and the walk is the same either way.
  */
 /**
- * Child object numbers of a structure element.
+ * Child structure elements of an element, by object number.
  *
  * `/K` has three shapes and only two of them name children: a bare reference, and an
  * array mixing references with MCIDs. A bare integer is an MCID resolved against the
  * element's `/Pg`, so treating it as a reference would walk to whichever unrelated
  * object happened to share that number.
+ *
+ * Only references at the *top level* of the array count. An array also holds inline
+ * object reference dictionaries, and those name things that are not children:
+ *
+ *   /K [13 0 R <</Type /OBJR /Obj 5 0 R /Pg 2 0 R>> 19 0 R]
+ *        ^ a child        ^ the image, and the page it is on
+ *
+ * Matching every `N 0 R` in the array returns [13, 2, 19] -- the page, in place of the
+ * image. That is not a harmless extra step: a walk that lands on a page object treats it
+ * as a structure element and stops descending, so an element's descendants can be
+ * reported as missing. Skipping a `<<` group therefore means skipping it to its *matching*
+ * `>>`, counting rather than searching, because these dictionaries nest.
  */
 export function kidsOf(text: string): number[] {
   const kids = /\/K\s*(?:\[([\s\S]*?)\]|(\d+) 0 R)/.exec(text);
   if (!kids) return [];
   if (kids[2]) return [Number(kids[2])];
-  return [...(kids[1] ?? "").matchAll(/(\d+) 0 R/g)].map((m) => Number(m[1]));
+
+  const array = kids[1] ?? "";
+  const out: number[] = [];
+  let depth = 0;
+  let i = 0;
+  while (i < array.length - 1) {
+    const pair = array.slice(i, i + 2);
+    if (pair === "<<") { depth++; i += 2; continue; }
+    if (pair === ">>") { depth--; i += 2; continue; }
+    if (depth === 0) {
+      const m = /^\s*(\d+) 0 R/.exec(array.slice(i));
+      if (m) { out.push(Number(m[1])); i += m[0].length; continue; }
+    }
+    i++;
+  }
+  return out;
 }
 
 export function structElementsInOrder(parts: Parts, role: string): number[] {

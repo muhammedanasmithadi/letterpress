@@ -393,6 +393,24 @@ function isTeardownAbort(errorText: string | undefined): boolean {
   return /ERR_ABORTED/.test(errorText ?? "");
 }
 
+/**
+ * The names in the work directory that the document itself occupies.
+ *
+ * Staging must not write to either. A reference that clamps to `input.html` -- a
+ * document linking a file called input.html, which is an ordinary name to choose -- was
+ * staged over the served copy: the caller asked for `p.html` and the render printed
+ * `input.html`'s content, with no finding. Found by an audit subagent and reproduced before
+ * changing anything.
+ */
+const SERVED_DOCUMENT = "input.html";
+const OVERRIDE_DOCUMENT = "override.html";
+
+/** Why a reference the document made was not staged. */
+export type RefusalReason = "outside-root" | "document";
+
+/** A reference that was not staged, and the path it named. */
+export type RefusedRef = { ref: string; abs: string; why: RefusalReason };
+
 function absRoot(root: string): string {
   return resolve(root.startsWith("/") ? root : `${process.cwd()}/${root}`);
 }
@@ -412,7 +430,7 @@ export async function stageAssets(
   source: string,
   dir: string,
   rootArg?: string,
-): Promise<Array<{ ref: string; abs: string }>> {
+): Promise<RefusedRef[]> {
   if (!html || /^https?:/i.test(source)) return [];
   // Relative paths always resolve against the document. `root` only bounds where the
   // result may land, so widening it never changes what a relative reference means.
@@ -428,8 +446,12 @@ export async function stageAssets(
   const written = new Set<string>();
   /** References found so far, each with the directory its own relative paths resolve from. */
   const queue: Array<{ ref: string; from: string; outside: boolean }> = [];
-  /** References that resolved outside the root, checked for existence below. */
-  const refused: Array<{ ref: string; abs: string }> = [];
+  /**
+   * References deliberately not staged, and why. Two reasons, and they want different
+   * findings: one is a boundary the caller can widen, the other is a name that would
+   * overwrite the document.
+   */
+  const refused: Array<{ ref: string; abs: string; why: RefusalReason }> = [];
   /** Absolute paths already considered, so a file is read and reported once. */
   const seen = new Set<string>();
 
@@ -456,6 +478,12 @@ export async function stageAssets(
     if (!urlPath) return;
     const target = join(dir, urlPath);
     if (!target.startsWith(dir + "/") || written.has(target)) return;
+    // Never over the document itself. Two reserved names, both at the top level because
+    // the document is served from `/`.
+    if (urlPath === SERVED_DOCUMENT || urlPath === OVERRIDE_DOCUMENT) {
+      if (refused.length < 8) refused.push({ ref: clean, abs, why: "document" });
+      return;
+    }
     written.add(target);
     // The boundary is *not* checked here. It is checked once, below, against the path
     // the filesystem resolves to -- and checking it here as well is what broke a document
@@ -520,7 +548,7 @@ export async function stageAssets(
     // references ../../etc/passwd as an image must not become a way to read outside the
     // root: narrow by default, and widened only by a caller who named it.
     if (real && !insideRoot(real)) {
-      if (refused.length < 8 && !refused.some((r) => r.abs === real)) refused.push({ ref, abs: real });
+      if (refused.length < 8 && !refused.some((r) => r.abs === real)) refused.push({ ref, abs: real, why: "outside-root" });
       continue;
     }
     if (!real) {
@@ -533,7 +561,7 @@ export async function stageAssets(
       // POST a document naming /etc/passwd and get a finding, name a path that is not
       // there and get none. `server.ts` hands findings to whoever asked.
       if (outside && refused.length < 8 && !refused.some((r) => r.abs === from)) {
-        refused.push({ ref, abs: from });
+        refused.push({ ref, abs: from, why: "outside-root" });
       }
       continue;
     }
@@ -640,7 +668,7 @@ async function resolveSource(req: RenderRequest, dir: string): Promise<{ html: s
     // Chromium will not print a string, and about:blank gives the document no
     // origin for relative assets, so the HTML becomes a real file. The work
     // server below is what actually loads it.
-    await Bun.write(join(dir, "input.html"), req.html);
+    await Bun.write(join(dir, SERVED_DOCUMENT), req.html);
     return { html: req.html, url: `${dir}/input.html`, source: "html" };
   }
   if (req.path) {
@@ -648,7 +676,7 @@ async function resolveSource(req: RenderRequest, dir: string): Promise<{ html: s
     // Copy the source into the work directory so it is served, not opened from
     // its original location: relative assets resolve against the served copy.
     const html = await Bun.file(abs).text();
-    await Bun.write(join(dir, "input.html"), html);
+    await Bun.write(join(dir, SERVED_DOCUMENT), html);
     return { html, url: abs, source: abs };
   }
   if (req.url) return { html: "", url: req.url, source: req.url };
@@ -672,7 +700,7 @@ async function serveWorkDir(dir: string): Promise<{ origin: string; stop: () => 
     idleTimeout: 10,
     async fetch(request) {
       const path = new URL(request.url).pathname;
-      const name = path === "/" ? "input.html" : decodeURIComponent(path.slice(1));
+      const name = path === "/" ? SERVED_DOCUMENT : decodeURIComponent(path.slice(1));
       // Confine to the work directory: a request must not be able to walk out.
       const resolved = join(dir, name);
       if (!resolved.startsWith(dir)) return new Response("forbidden", { status: 403 });
@@ -815,7 +843,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
     // Skipped when the document references nothing relative: there is then no
     // origin to solve, and Page.setDocumentContent prints without writing a
     // file or opening a socket.
-    let outsideRoot: Array<{ ref: string; abs: string }> = [];
+    let outsideRoot: RefusedRef[] = [];
     const relative = hasRelativeAssets(src.html ?? "");
     const fastPath = !isRemote && src.html != null && req.preferFastPath !== false &&
       !relative && !req.maxImagePpi;
@@ -841,7 +869,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
     if (fastPath) srcUrl = "about:blank";
     else srcUrl = isRemote ? src.url : `${server!.origin}/input.html`;
     if (override && !fastPath) {
-      await Bun.write(join(dir, "override.html"), override);
+      await Bun.write(join(dir, OVERRIDE_DOCUMENT), override);
       srcUrl = `${server!.origin}/override.html`;
     }
 
@@ -1220,22 +1248,37 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           message: `blocked a remote request to ${url}. Pass --allow-network to permit it, or inline the asset.`,
         });
       }
-      if (outsideRoot.length) {
+      const outside = outsideRoot.filter((o) => o.why === "outside-root");
+      const overDocument = outsideRoot.filter((o) => o.why === "document");
+      if (overDocument.length) {
+        findings.push({
+          code: "asset-overwrites-document",
+          severity: "warn",
+          url: overDocument[0]!.abs,
+          message:
+            `${overDocument.length} referenced ${overDocument.length === 1 ? "path is" : "paths are"} ` +
+            `named after the document itself and ${overDocument.length === 1 ? "was" : "were"} not staged: ` +
+            `${overDocument.map((o) => o.ref).join(", ")}.\n` +
+            `staging one would replace the page being printed with a different one, so the ` +
+            `render would show a document nobody asked for. rename the file it points at.`,
+        });
+      }
+      if (outside.length) {
         // Name the flag and the directory. A count sends the reader to the document to
         // hunt for the cause, which is the work this finding exists to save them.
-        const listed = outsideRoot
+        const listed = outside
           .map((o) => `  ${o.ref} -> ${o.abs}`)
           .join("\n");
         findings.push({
           code: "asset-outside-root",
           severity: "warn",
-          url: outsideRoot[0].abs,
+          url: outside[0]!.abs,
           message:
-            `${outsideRoot.length} referenced ${outsideRoot.length === 1 ? "path is" : "paths are"} outside ` +
+            `${outside.length} referenced ${outside.length === 1 ? "path is" : "paths are"} outside ` +
             `${req.root ? `the root you named (${absRoot(req.root)})` : "the document's own directory"}, ` +
-            `so ${outsideRoot.length === 1 ? "it was" : "they were"} not read:\n${listed}\n` +
+            `so ${outside.length === 1 ? "it was" : "they were"} not read:\n${listed}\n` +
             `pass --root naming a directory that contains ` +
-            `${outsideRoot.length === 1 ? "it" : "them"} to allow it.`,
+            `${outside.length === 1 ? "it" : "them"} to allow it.`,
         });
       }
       if (failedSubresources.length) {

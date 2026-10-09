@@ -327,7 +327,7 @@ describe("the asset root", () => {
       // And the caller is told which path and which flag, not just that something failed.
       // Reported whether or not the file is there: checking would make this a yes/no
       // oracle over arbitrary paths, which `server.ts` hands to whoever asked.
-      expect(refused).toEqual([{ ref: "../assets/styles.css", abs: join(root, "assets", "styles.css") }]);
+      expect(refused).toEqual([{ ref: "../assets/styles.css", abs: join(root, "assets", "styles.css"), why: "outside-root" }]);
     } finally {
       for (const d of [root, work]) await rm(d, { recursive: true, force: true });
     }
@@ -553,6 +553,45 @@ describe("the asset root", () => {
       expect(await staged(work)).toEqual(["sibling.css"]);
     } finally {
       await rm(parent, { recursive: true, force: true });
+      await rm(work, { recursive: true, force: true });
+    }
+  }, 30_000);
+  test("an asset named after the served document is not staged over it", async () => {
+    // Found by an audit subagent, and reproduced before fixing: a document linking a file
+    // called input.html -- an ordinary name to choose -- had it staged over the served
+    // copy. The caller asked for p.html and the render printed input.html's content, with
+    // no finding at all.
+    const root = await mkdtemp(join(tmpdir(), "lp-self-"));
+    const work = await mkdtemp(join(tmpdir(), "lp-selfw-"));
+    try {
+      await writeFile(join(root, "input.html"), "<p>THE DECOY</p>");
+      await writeFile(join(root, "p.html"), '<link rel="stylesheet" href="input.html"><p>THE DOCUMENT</p>');
+      const page = join(root, "p.html");
+      await Bun.write(join(work, "input.html"), "<p>THE DOCUMENT</p>");
+      const refused = await stageAssets(await Bun.file(page).text(), page, work);
+
+      expect(await Bun.file(join(work, "input.html")).text()).toBe("<p>THE DOCUMENT</p>");
+      expect(refused).toEqual([{ ref: "input.html", abs: join(root, "input.html"), why: "document" }]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(work, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("the same applies to the override document's name", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lp-self2-"));
+    const work = await mkdtemp(join(tmpdir(), "lp-self2w-"));
+    try {
+      await writeFile(join(root, "override.html"), "<p>DECOY</p>");
+      await writeFile(join(root, "p.html"), '<link rel="stylesheet" href="override.html">');
+      const page = join(root, "p.html");
+      await Bun.write(join(work, "override.html"), "<p>THE DOCUMENT</p>");
+      const refused = await stageAssets(await Bun.file(page).text(), page, work);
+
+      expect(await Bun.file(join(work, "override.html")).text()).toBe("<p>THE DOCUMENT</p>");
+      expect(refused.map((r) => r.why)).toEqual(["document"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
       await rm(work, { recursive: true, force: true });
     }
   }, 30_000);

@@ -460,8 +460,12 @@ describe("ctrl-c cancels", () => {
     // count reaches zero immediately, and under a loaded machine a crashpad
     // handler can still be a second late. What matters is that nothing is
     // orphaned, not that the kernel reaped it within 2000ms.
+    // Forty seconds, not fifteen. The note above this block records the measured linger
+    // as about twenty, so a fifteen-second budget could fail on behaviour that had not
+    // changed at all -- which is what CI did, leaving ten processes at the end of a
+    // window shorter than the teardown the test had already measured.
     let remaining = await chromiumForRun();
-    for (let waited = 0; waited < 15_000 && remaining > 0; waited += 500) {
+    for (let waited = 0; waited < 40_000 && remaining > 0; waited += 500) {
       await Bun.sleep(500);
       remaining = await chromiumForRun();
     }

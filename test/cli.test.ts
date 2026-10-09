@@ -44,7 +44,10 @@ afterAll(async () => {
 
 test("renders a file and reports where it went", async () => {
   const out = join(dir, "one.pdf");
-  const r = await run([doc, "-o", out]);
+  // A deadline of its own. The default is 30s, which is ample here -- 555ms measured on
+  // two cores -- but this is the first thing the file does, so it pays for a cold
+  // Chromium launch on a shared runner, and the default is not what this test is about.
+  const r = await run([doc, "-o", out, "--timeout", "120000"]);
   // No error on stderr. An error and a warning both go there, so the absence of one is
   // asserted here.
   //
@@ -53,7 +56,10 @@ test("renders a file and reports where it went", async () => {
   // with no program behind it. That is an accident of one machine's fonts: the first CI
   // run failed here with empty stderr on a run that was entirely correct.
   expect(r.stderr).not.toMatch(/error:/);
-  expect(r.code).toBe(0);
+  // The child's own output travels with the assertion. A bare `code === 0` told me
+  // nothing when CI failed it: the cli prints "render failed: ..." without the word
+  // "error:", so the stderr check above passed and the reason was lost.
+  expect(r.code, `stdout:\n${r.stdout}\nstderr:\n${r.stderr}`).toBe(0);
   const bytes = await Bun.file(out).arrayBuffer();
   expect(bytes.byteLength).toBeGreaterThan(1000);
 

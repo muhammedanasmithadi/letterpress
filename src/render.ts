@@ -441,11 +441,17 @@ export async function stageAssets(
     // a way to read outside the root. Narrow by default, and widened only by a
     // caller who named the root.
     if (!abs.startsWith(root + "/") && abs !== root) {
-      // A reference that lands outside the root is the case worth telling the caller
-      // about when the file behind it actually exists: the document is not asking for
-      // something absent, it is asking for something we refused. Reported rather than
-      // dropped, because the alternative is a PDF missing its stylesheet with no reason
-      // given. Measured: eight pages of a ten-page site, every one silently unstyled.
+      // Reported rather than dropped, because the alternative is a PDF missing its
+      // stylesheet with no reason given. Measured: eight pages of a ten-page site, every
+      // one silently unstyled.
+      //
+      // Every refusal is reported, with no check for whether the file is there. An
+      // existence check made this a yes/no oracle over arbitrary paths -- POST a document
+      // naming /etc/passwd and get a finding; name /etc/definitely-not-here and get none
+      // -- and `server.ts` hands findings to whoever made the request. The canonical path
+      // came back too. The content was refused either way, so what leaked was existence,
+      // which is not worth a diagnostic; the accompanying `subresource-failed` already
+      // names the URL that 404'd.
       if (refused.length < 8) refused.push({ ref: clean, abs });
       return;
     }
@@ -522,13 +528,7 @@ export async function stageAssets(
     }
   }
 
-  const present: Array<{ ref: string; abs: string }> = [];
-  for (const r of refused) {
-    // `.exists()` is the async form; `.size` is a property that throws on a path that
-    // is not there, which is the half of this check that must not.
-    if (await Bun.file(r.abs).exists()) present.push(r);
-  }
-  return present;
+  return refused;
 }
 
 /**
@@ -1208,11 +1208,11 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           severity: "warn",
           url: outsideRoot[0].abs,
           message:
-            `${outsideRoot.length} referenced ${outsideRoot.length === 1 ? "file is" : "files are"} outside ` +
-            `${req.root ? `the root you named (${absRoot(req.root)})` : "the document's own directory"} ` +
-            `and ${outsideRoot.length === 1 ? "exists" : "exist"} on disk:\n${listed}\n` +
-            `they were not read, because doing so would mean reading outside that boundary. ` +
-            `pass --root ${dirname(outsideRoot[0].abs)} to allow it.`,
+            `${outsideRoot.length} referenced ${outsideRoot.length === 1 ? "path is" : "paths are"} outside ` +
+            `${req.root ? `the root you named (${absRoot(req.root)})` : "the document's own directory"}, ` +
+            `so ${outsideRoot.length === 1 ? "it was" : "they were"} not read:\n${listed}\n` +
+            `pass --root naming a directory that contains ` +
+            `${outsideRoot.length === 1 ? "it" : "them"} to allow it.`,
         });
       }
       if (failedSubresources.length) {

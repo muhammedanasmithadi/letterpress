@@ -324,7 +324,9 @@ describe("the asset root", () => {
       const html = await Bun.file(page).text();
       const refused = await stageAssets(html, page, work);
       expect(await has(work, "assets")).toBe(false);
-      // And the caller is told which file and which flag, not just that something failed.
+      // And the caller is told which path and which flag, not just that something failed.
+      // Reported whether or not the file is there: checking would make this a yes/no
+      // oracle over arbitrary paths, which `server.ts` hands to whoever asked.
       expect(refused).toEqual([{ ref: "../assets/styles.css", abs: join(root, "assets", "styles.css") }]);
     } finally {
       for (const d of [root, work]) await rm(d, { recursive: true, force: true });
@@ -344,9 +346,11 @@ describe("the asset root", () => {
       ].join("\n"));
       await writeFile(join(outside, "secret.png"), "not really a png");
       const html = await Bun.file(page).text();
-      const refused = await stageAssets(html, page, work, root);
+      await stageAssets(html, page, work, root);
       expect(await has(work, "assets")).toBe(true);
-      expect(refused.every((r) => !r.ref.includes("secret"))).toBe(true);
+      // The thing that matters is what reached the work directory, not what was
+      // reported. A refusal is the safe outcome; reading the file is not.
+      expect(await staged(work)).toEqual(["assets/styles.css"]);
     } finally {
       for (const d of [root, work, outside]) await rm(d, { recursive: true, force: true });
     }
@@ -437,6 +441,30 @@ describe("the asset root", () => {
       expect(refused[0]!.abs).toBe(join(outside, "far.css"));
     } finally {
       for (const d of [root, work, outside]) await rm(d, { recursive: true, force: true });
+    }
+  });
+  test("a refusal does not depend on whether the file is there", async () => {
+    // An existence check made this a yes/no oracle over arbitrary paths: POST a document
+    // naming /etc/passwd and get a finding, name a path that is not there and get none.
+    // `server.ts` hands findings to whoever made the request, so existence and canonical
+    // path were disclosed to anyone who could POST. The content was refused either way.
+    const root = await mkdtemp(join(tmpdir(), "lp-oracle-"));
+    const work = await mkdtemp(join(tmpdir(), "lp-oraclew-"));
+    try {
+      await writeFile(join(root, "x.html"), "");
+      const page = join(root, "x.html");
+      const html = [
+        '<img src="../../../../../../etc/passwd">',
+        '<img src="../../../../../../etc/definitely-not-here-xyz">',
+      ].join("\n");
+      const refused = await stageAssets(html, page, work);
+      expect(refused).toHaveLength(2);
+      // Same shape either way: the answer does not reveal which paths exist.
+      expect(refused.every((r) => typeof r.abs === "string" && r.abs.startsWith("/"))).toBe(true);
+      expect(await staged(work)).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(work, { recursive: true, force: true });
     }
   });
 });

@@ -99,8 +99,10 @@ bun src/cli.ts --root site site/lessons/x.html -o lesson.pdf
 relative path means, so a document that says `assets/styles.css` still resolves
 against its own directory. A stylesheet's `@import`s and a module script's
 `import`s are followed to the same boundary. A reference that lands outside it
-and names a file that exists is reported as `asset-outside-root`, with the flag
-and the directory to pass.
+is reported as `asset-outside-root`, with each path and the flag that would
+allow it. Whether the file exists is not checked: that would make the finding
+a yes/no oracle over arbitrary paths, which the render server hands to whoever
+asked.
 
 ## Findings
 
@@ -121,7 +123,7 @@ of the summary.
 | `json-rendered` | a data file was printed as a document |
 | `network-blocked` | a remote request was blocked, with its URL |
 | `subresource-failed` | a referenced asset did not load, so the pdf will not look like the source |
-| `asset-outside-root` | the document references a file that exists but sits outside its own directory; pass `--root` |
+| `asset-outside-root` | the document references a path outside its own directory, which was not read; pass `--root` |
 
 ## Right-to-left text
 
@@ -172,7 +174,7 @@ escaped and printed.
 ## Development
 
 ```bash
-bun test          # 471 tests across 19 files
+bun test          # 472 tests across 19 files
 bun run bench     # cold start, concurrency and footprint, cross-runtime
 bun run typecheck
 ```

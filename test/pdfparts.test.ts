@@ -437,3 +437,56 @@ describe("split keeps a stream object whole", () => {
     expect(o.bytes.toString(LATIN1)).toBe("4 0 obj\n<< /Alt (a stream\nof text) >>\nendobj");
   });
 });
+
+/* ------------------------------------------------------------------ *
+ * The keyword `endobj` appears in ordinary documents
+ *
+ * Found by an audit subagent reading this file, not by any test: the non-stream branch of
+ * split() searched the raw text, while the stream branch had been taught to search the
+ * masked window. Same bug, one branch over, and the branch that reached it far more often.
+ *
+ * A link to https://example.com/docs/endobject.html contains the six letters `endobj` as
+ * the *prefix* of `endobject`, so a plain indexOf cut the annotation there:
+ *
+ *   /URI (https://example.com/docs/endobj
+ *   6 0 obj
+ *   <</Filter /FlateDecode
+ *
+ * verify() returned ok with no failures. There were no findings. pdftotext exited 0 while
+ * printing three syntax errors, so a caller checking its exit code saw a success.
+ *
+ * Both halves of the fix are needed and neither is sufficient alone: a word boundary still
+ * trips on `/URI (endobj)`, and masking still trips on `endobject`.
+ * ------------------------------------------------------------------ */
+
+describe("split when a non-stream object carries the keyword", () => {
+  const body = (extra: string) => `<< ${extra} /Type /Free >>`;
+
+  const cases: Array<[string, string]> = [
+    ["inside a literal string", "/A (endobj)"],
+    ["as the prefix of a longer word", "/A (endobject)"],
+    ["inside an array", "/A [endobj]"],
+    ["with no parens at all", "/A endobj"],
+    ["and then a real reference after it", "/A (endobj) /Ref 99 0 R"],
+  ];
+
+  for (const [name, extra] of cases) {
+    test(name, () => {
+      // The trailing /Ref 99 0 R is the point: if the object is truncated at the
+      // keyword, that reference disappears and nothing notices.
+      const pdf = fileWithObject4(body(extra));
+      const o = trySplit(pdf)!.objs.find((x) => x.num === 4)!;
+      expect(o.bytes.toString(LATIN1)).toBe(`4 0 obj\n${body(extra)}\nendobj`);
+      // And the dangling reference the truncation would have hidden is still seen.
+      const dangling = fileWithObject4(body("/A (endobj) /Ref 99 0 R"));
+      expect(verify(dangling).ok).toBe(false);
+    });
+  }
+
+  test("the keyword still ends the object when it is the real one", () => {
+    const pdf = fileWithObject4("<< /A (nothing here) >>");
+    const o = trySplit(pdf)!.objs.find((x) => x.num === 4)!;
+    expect(o.bytes.toString(LATIN1)).toBe("4 0 obj\n<< /A (nothing here) >>\nendobj");
+    expect(verify(pdf).ok).toBe(true);
+  });
+});

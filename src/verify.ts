@@ -153,11 +153,10 @@ export function verify(pdf: Uint8Array, original?: Uint8Array): Verification {
   // Every stream's declared length must match what follows it, or a reader stops
   // at the wrong offset and the rest of the file is noise.
   for (const o of parts?.objs ?? []) {
-    // The dictionary half, taken by masking rather than by splitting on the substring
-    // "stream". A dictionary carrying `/Producer (upstream)` before its /Length was cut
-    // there, so the length check was skipped entirely and a payload of the wrong size
-    // passed -- and /Length is the check that would catch a repair that resized one.
-    const body = maskStrings(o.bytes.toString(LATIN1));
+    // The dictionary half, taken through streamDict rather than by splitting on the
+    // substring "stream". A dictionary carrying `/Producer (upstream)` before its /Length
+    // was cut there, so the length check was skipped entirely and a payload of the wrong
+    // size passed -- and /Length is the check that would catch a repair that resized one.
     const len = streamDict(o).match(/\/Length\s+(\d+)/);
     if (!len) continue;
     const range = streamRange(o.bytes);

@@ -75,8 +75,29 @@ export function split(raw: Buffer): Parts {
         to = next; // no terminator: fall through to the next header rather than guess
       }
     } else {
-      const endObj = text.indexOf("endobj", from);
-      to = endObj !== -1 && endObj + 6 <= next ? endObj + 6 : next;
+      // The same search, on the same masked window, and with two constraints the plain
+      // `indexOf` did not have.
+      //
+      // Masking, because a literal string can carry the keyword. And a word boundary
+      // followed by an end-of-line, which is what ISO 32000-1 §7.3.10 requires of the
+      // keyword itself. The boundary is what an ordinary document hits: a link to
+      // `https://example.com/docs/endobject.html` contains the six letters `endobj` as
+      // the *prefix* of `endobject`, so a plain indexOf cut the annotation there. Object
+      // 6 was spliced into the middle of the /URI string, and the file shipped that way:
+      //
+      //   /URI (https://example.com/docs/endobj
+      //   6 0 obj
+      //   <</Filter /FlateDecode
+      //
+      // verify() returned ok with no failures, there were no findings, and pdftotext
+      // exited 0 while printing three syntax errors.
+      //
+      // The end-of-line requirement is what tells a name from the keyword. `/A (endobj)`
+      // is handled by the masking, but `/A [endobj]` and `/A endobj` are a bare name and
+      // a name in an array -- legal PDF, and textually indistinguishable from the keyword
+      // except by what follows. Requiring end-of-line is the specification's own answer.
+      const m = /\bendobj[ \t]*[\r\n]/.exec(maskStrings(window));
+      to = m ? from + m.index + 6 : next;
     }
     objs.push({ num: starts[i].num, bytes: raw.subarray(from, Math.min(to, next)) });
   }

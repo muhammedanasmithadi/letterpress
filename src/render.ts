@@ -1,4 +1,4 @@
-import { basename, dirname, isAbsolute, join, normalize, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { rm } from "node:fs/promises";
 import { Browser, type Tab } from "./browser.ts";
 import { fixFontDescriptors, unresolvedFontMetrics } from "./fontdesc.ts";
@@ -370,6 +370,43 @@ async function capImageResolution(
  * occurrences of a filename inside prose and inside scripts. Mirroring removes
  * both problems rather than working around them.
  */
+/**
+ * A relative filesystem path turned into the path a browser asks the origin for.
+ *
+ * `..` clamps at the origin rather than escaping, which is what a browser does with a
+ * `..` in a URL, and what a `srcset` candidate like `../a.png 2x` needs. Empty means the
+ * path resolves to the origin itself, which is the document and is never staged.
+ */
+/**
+ * Whether a load failure is the render being torn down rather than an asset missing.
+ *
+ * `net::ERR_ABORTED` is what Chromium reports for every request still in flight when the
+ * tab closes at the end of a print, so it arrived once per late-loading asset and was
+ * counted as one more missing file. The finding then claimed the pdf was missing things
+ * it never had a chance to load, and the named list held an error string rather than a
+ * path -- the report naming a thing that does not exist is worse than no report.
+ *
+ * Safe to drop, because a genuine failure is still caught: a 404 arrives as a status on
+ * `responseReceived`, and a blocked request carries `blockedReason`.
+ */
+function isTeardownAbort(errorText: string | undefined): boolean {
+  return /ERR_ABORTED/.test(errorText ?? "");
+}
+
+function absRoot(root: string): string {
+  return resolve(root.startsWith("/") ? root : `${process.cwd()}/${root}`);
+}
+
+function clampedUrlPath(rel: string): string {
+  const out: string[] = [];
+  for (const part of rel.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") { out.pop(); continue; }
+    out.push(part);
+  }
+  return out.join("/");
+}
+
 export async function stageAssets(
   html: string,
   source: string,
@@ -380,9 +417,7 @@ export async function stageAssets(
   // Relative paths always resolve against the document. `root` only bounds where the
   // result may land, so widening it never changes what a relative reference means.
   const base = source.startsWith("/") ? dirname(source) : process.cwd();
-  const root = rootArg
-    ? resolve(rootArg.startsWith("/") ? rootArg : `${process.cwd()}/${rootArg}`)
-    : base;
+  const root = rootArg ? absRoot(rootArg) : base;
   const written = new Set<string>();
   /** References found so far, each with the directory its own relative paths resolve from. */
   const queue: Array<{ ref: string; from: string }> = [];
@@ -415,9 +450,19 @@ export async function stageAssets(
       return;
     }
 
-    const rel = normalize(clean).replace(/^(\.\.(\/|$))+/, "");
-    if (!rel || rel.startsWith("..")) return;
-    const target = join(dir, rel);
+    // Where the browser will look for it. Not the filesystem-root-relative path: the
+    // document is served at `<origin>/input.html`, so a relative reference resolves
+    // against `/` and not against the document's own directory. Measured with `--root`:
+    // `../assets/styles.css` happened to work, because `..` clamps to the same string
+    // either way, and `sibling.css` -- a file sitting beside the document, the common
+    // case -- was staged at `lessons/sibling.css` and requested as `/sibling.css`, so it
+    // 404'd. A page that named its parent's stylesheet lost its own.
+    //
+    // `..` clamps at the origin rather than being refused, because that is what a
+    // browser does with it, and the bytes are still bounded by the root check above.
+    const urlPath = clampedUrlPath(relative(base, abs));
+    if (!urlPath) return;
+    const target = join(dir, urlPath);
     if (!target.startsWith(dir + "/") || written.has(target)) return;
     written.add(target);
     queue.push({ ref: clean, from: abs });
@@ -467,7 +512,7 @@ export async function stageAssets(
     let bytes: Buffer;
     try { bytes = Buffer.from(await Bun.file(from).arrayBuffer()); } catch { continue; }
     if (!bytes.length) continue;
-    const target = join(dir, normalize(from).slice(root.length + 1));
+    const target = join(dir, clampedUrlPath(relative(base, from)));
     try { await Bun.write(target, bytes); } catch { continue; }
     // Stylesheets and scripts only: those are the two kinds that name further files by a
     // path that is knowable without running them. Re-reading an image as text finds
@@ -851,7 +896,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       });
       tab.on("Network.loadingFailed", (p) => {
         if (p.type === "Document" && !netError && !p.blockedReason) netError = p.errorText;
-        else if (!p.blockedReason) {
+        else if (!p.blockedReason && !isTeardownAbort(p.errorText)) {
           // Images are included. A missing image still "renders": Chromium draws
           // its own broken-image placeholder and the pdf carries that glyph
           // instead of the picture, which is worse than an obvious failure
@@ -1152,7 +1197,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           message: `blocked a remote request to ${url}. Pass --allow-network to permit it, or inline the asset.`,
         });
       }
-      if (outsideRoot.length && !req.root) {
+      if (outsideRoot.length) {
         // Name the flag and the directory. A count sends the reader to the document to
         // hunt for the cause, which is the work this finding exists to save them.
         const listed = outsideRoot
@@ -1163,8 +1208,10 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           severity: "warn",
           url: outsideRoot[0].abs,
           message:
-            `${outsideRoot.length} referenced ${outsideRoot.length === 1 ? "file is" : "files are"} outside the document's own directory and ${outsideRoot.length === 1 ? "exists" : "exist"} on disk:\n${listed}\n` +
-            `they were not read, because doing so would mean reading outside the directory the document names. ` +
+            `${outsideRoot.length} referenced ${outsideRoot.length === 1 ? "file is" : "files are"} outside ` +
+            `${req.root ? `the root you named (${absRoot(req.root)})` : "the document's own directory"} ` +
+            `and ${outsideRoot.length === 1 ? "exists" : "exist"} on disk:\n${listed}\n` +
+            `they were not read, because doing so would mean reading outside that boundary. ` +
             `pass --root ${dirname(outsideRoot[0].abs)} to allow it.`,
         });
       }

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createServer } from "node:http";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { Browser } from "../src/browser.ts";
 import { render, stageAssets } from "../src/render.ts";
 import { pdfFonts, pdfImages, pdfInfo, pdfText } from "./poppler.ts";
@@ -183,6 +183,19 @@ test("concurrent renders all succeed and agree on page count", async () => {
  * Their paths resolve against the importing stylesheet's directory, not the document's.
  * ------------------------------------------------------------------ */
 
+/** Every staged file under `dir`, as sorted paths relative to it. */
+const staged = async (dir: string): Promise<string[]> => {
+  const out: string[] = [];
+  const walk = async (d: string, prefix: string) => {
+    for (const e of await readdir(d, { withFileTypes: true })) {
+      if (e.isDirectory()) await walk(join(d, e.name), `${prefix}${e.name}/`);
+      else out.push(`${prefix}${e.name}`);
+    }
+  };
+  await walk(dir, "");
+  return out.sort();
+};
+
 describe("stageAssets", () => {
   /** A small site on disk, plus an empty work directory to stage into. */
   async function site(): Promise<{ root: string; work: string }> {
@@ -200,18 +213,6 @@ describe("stageAssets", () => {
     ].join("\n"));
     return { root, work };
   }
-
-  const staged = async (dir: string): Promise<string[]> => {
-    const out: string[] = [];
-    const walk = async (d: string, prefix: string) => {
-      for (const e of await readdir(d, { withFileTypes: true })) {
-        if (e.isDirectory()) await walk(join(d, e.name), `${prefix}${e.name}/`);
-        else out.push(`${prefix}${e.name}`);
-      }
-    };
-    await walk(dir, "");
-    return out.sort();
-  };
 
   test("follows a stylesheet's own imports and url() targets", async () => {
     const { root, work } = await site();
@@ -365,6 +366,77 @@ describe("the asset root", () => {
       expect(await has(work, "assets")).toBe(false);
     } finally {
       for (const d of [root, work]) await rm(d, { recursive: true, force: true });
+    }
+  });
+  test("a sibling of the document still loads when --root is given", async () => {
+    // Found by an audit subagent, not by a test. Staging was filesystem-root-relative
+    // while the document is served at `<origin>/input.html`, so relative paths resolve
+    // against `/` and not against the document's directory. The `../assets` half of the
+    // original fix happened to work -- `..` clamps to the same string either way -- and
+    // `sibling.css`, the common case, was staged where nothing asked for it.
+    const root = await mkdtemp(join(tmpdir(), "lp-sib-"));
+    const work = await mkdtemp(join(tmpdir(), "lp-sibw-"));
+    try {
+      await mkdir(join(root, "assets"), { recursive: true });
+      await mkdir(join(root, "lessons"), { recursive: true });
+      await writeFile(join(root, "assets", "styles.css"), "body { color: #123 }\n");
+      await writeFile(join(root, "lessons", "sibling.css"), "body { color: #456 }\n");
+      const page = join(root, "lessons", "x.html");
+      await writeFile(page, [
+        '<link rel="stylesheet" href="../assets/styles.css">',
+        '<link rel="stylesheet" href="sibling.css">',
+      ].join("\n"));
+
+      const html = await Bun.file(page).text();
+      await stageAssets(html, page, work, root);
+      // Both land where the browser, resolving from `/`, will ask for them.
+      expect(await staged(work)).toEqual(["assets/styles.css", "sibling.css"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(work, { recursive: true, force: true });
+    }
+  });
+
+  test("a reference climbing above the origin clamps there, as a browser's does", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lp-clamp-"));
+    const work = await mkdtemp(join(tmpdir(), "lp-clampw-"));
+    try {
+      // Three levels below the root, so `../../../` reaches it exactly. Two levels
+      // climbed past it, and the containment check refused -- correctly, and a reminder
+      // that the boundary is the filesystem's and not the URL's.
+      await mkdir(join(root, "a", "b", "c"), { recursive: true });
+      await writeFile(join(root, "a.css"), "a{}\n");
+      const page = join(root, "a", "b", "c", "x.html");
+      await writeFile(page, "");
+      // Three levels up from deep/deeper, clamped at the origin: the browser asks for
+      // /a.css. Needs a named root to get that far -- without one the reference is
+      // outside the document's own directory and is refused outright.
+      await stageAssets('<link rel="stylesheet" href="../../../a.css">', page, work, root);
+      expect(await staged(work)).toEqual(["a.css"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(work, { recursive: true, force: true });
+    }
+  });
+
+  test("a reference still outside the named root is reported, not swallowed", async () => {
+    // The finding used to be gated on `!req.root`, so passing the flag the finding asks
+    // for was exactly what silenced it.
+    const root = await mkdtemp(join(tmpdir(), "lp-rep-"));
+    const work = await mkdtemp(join(tmpdir(), "lp-repw-"));
+    const outside = await mkdtemp(join(tmpdir(), "lp-repo-"));
+    try {
+      await mkdir(join(root, "assets"), { recursive: true });
+      await writeFile(join(root, "assets", "s.css"), "body{color:#123}\n");
+      await writeFile(join(outside, "far.css"), "body{color:#456}\n");
+      const page = join(root, "x.html");
+      const html = `<link rel="stylesheet" href="assets/s.css"><link rel="stylesheet" href="../${basename(outside)}/far.css">`;
+      const refused = await stageAssets(html, page, work, root);
+      expect(await staged(work)).toEqual(["assets/s.css"]);
+      expect(refused).toHaveLength(1);
+      expect(refused[0]!.abs).toBe(join(outside, "far.css"));
+    } finally {
+      for (const d of [root, work, outside]) await rm(d, { recursive: true, force: true });
     }
   });
 });

@@ -7,14 +7,16 @@ Nothing in this document is an estimate presented as a result.
 The question asked was whether the architecture meets the use case, and whether
 performance, output quality, reliability or design are being left on the table.
 The short answer: performance is not the problem, and the design is sound in its
-central decision. The problem is that the repair layer has no verification, and
-that is why defects keep shipping through it.
+central decision. The problem was that the repair layer had no verification, and
+that is why defects kept shipping through it. That gap is now closed -- see F1 --
+and the rest of this document is a record of what the assessment found, kept as
+it was written rather than tidied afterwards.
 
 ## 1. Current state
 
 The product renders HTML to PDF through Chromium's own print engine, with a
-shell, a loopback render server, a template filler and a CLI. Roughly 4,000 lines
-of source and 5,900 of tests, no runtime dependencies, Bun 1.4 only.
+shell, a loopback render server, a template filler and a CLI. Roughly 5,300 lines
+of source and 6,900 of tests, no runtime dependencies, Bun 1.4 only.
 
 ### The pipeline
 
@@ -157,6 +159,16 @@ correctness-surface argument, not a performance one.
 ## 5. Findings, by impact
 
 ### F1 — The repair layer has no verification gate. Confidence: high, measured.
+
+**Status: closed.** `src/verify.ts` now gates every repair. A repair is kept only if the
+file stays structurally whole *and* every page's content stream is byte-identical to
+Chromium's own; otherwise Chromium's bytes are shipped unchanged and a `repair-rejected`
+finding says so. Its own proof is a test that injects corruption into a rendered PDF and
+asserts the shipped file is the unrepaired one. Six defects have been found and fixed
+*through* the gate since it was written, including four in the parsers it depends on --
+see "Closed since this section was written" in §9 and §11.
+
+The evidence below is what was true when the assessment was made.
 
 **Evidence.** 200 garbage bytes injected into a content stream of a shipped PDF
 pass xref resolution, reference resolution and `/Length` matching. Nothing in the

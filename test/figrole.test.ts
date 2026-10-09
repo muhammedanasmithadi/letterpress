@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Browser } from "../src/browser.ts";
 import { render } from "../src/render.ts";
 import { fixRedundantFigures, redundantFigureCount, redundantFigures } from "../src/figrole.ts";
-import { dictOf, structElementsInOrder, trySplit } from "../src/pdfparts.ts";
+import { dictOf, structElementsInOrder, trySplit, join as joinParts, LATIN1 } from "../src/pdfparts.ts";
 import { verify } from "../src/verify.ts";
 
 /**
@@ -185,4 +185,103 @@ describe("fixRedundantFigures", () => {
     // chromium's own output is what names the container.
     expect(redundantFigures(parts)).toEqual([]);
   }, 90_000);
+});
+
+/* ------------------------------------------------------------------ *
+ * A structure tree that is a graph rather than a tree
+ *
+ * Built directly rather than through a render, because no browser produces a cyclic
+ * structure tree and Chromium cannot be asked for one. The walk carries a guard set
+ * that is cleared between top-level elements, so a cycle spanning two sibling subtrees
+ * is the case worth checking: a node reached from the first subtree is already marked
+ * when the second walk starts, and the two answers could differ.
+ * ------------------------------------------------------------------ */
+
+/** A PDF whose structure tree is the given element bodies, keyed by object number. */
+function tree(bodies: Record<number, string>, rootK: string): Buffer {
+  const parts: string[] = ["%PDF-1.4\n"];
+  const offsets: number[] = [];
+  let at = parts[0]!.length;
+  const add = (body: string) => {
+    offsets.push(at);
+    at += body.length;
+    parts.push(body);
+  };
+  add("1 0 obj\n<< /Type /Catalog /StructTreeRoot 2 0 R /MarkInfo << /Marked true >> >>\nendobj\n");
+  add(`2 0 obj\n<< /Type /StructTreeRoot /K ${rootK} >>\nendobj\n`);
+  for (const [num, body] of Object.entries(bodies)) add(`${num} 0 obj\n${body}\nendobj\n`);
+  const xrefAt = at;
+  const n = offsets.length + 1;
+  let table = `xref\n0 ${n}\n0000000000 65535 f \n`;
+  for (const off of offsets) table += `${String(off).padStart(10, "0")} 00000 n \n`;
+  parts.push(`trailer\n<< /Size ${n} /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`);
+  return Buffer.from(parts.join(""), LATIN1);
+}
+
+describe("redundantFigures on a structure tree that is a graph", () => {
+  test("a self-referencing figure terminates", () => {
+    // 3 names itself as its own child. A walk without a guard does not return.
+    const pdf = tree({ 3: "<</Type /StructElem /S /Document /K [3 0 R]>>" }, "3 0 R");
+    expect(redundantFigureCount(pdf)).toBe(0);
+  });
+
+  test("a cycle between two figures terminates", () => {
+    const pdf = tree({
+      3: "<</Type /StructElem /S /Document /K [4 0 R 5 0 R]>>",
+      4: "<</Type /StructElem /S /Figure /K [5 0 R]>>",
+      5: "<</Type /StructElem /S /Figure /K [4 0 R]>>",
+    }, "3 0 R");
+    // Neither is described, so neither qualifies -- and the answer arrives.
+    expect(redundantFigures(trySplit(pdf)!)).toEqual([]);
+  });
+
+  test("a cycle that reaches a described figure is found from either entry point", () => {
+    // 4 and 5 point at each other; 6 is described and hangs off 5. The guard is cleared
+    // between top-level figures, so 4 and 5 are each judged on a fresh walk and must
+    // agree. Before the guard was scoped this way a shared node could be marked by the
+    // first walk and read as already-visited by the second, which would make the answer
+    // depend on the order the tree happened to be written in.
+    const pdf = tree({
+      3: "<</Type /StructElem /S /Document /K [4 0 R 5 0 R]>>",
+      4: "<</Type /StructElem /S /Figure /K [5 0 R]>>",
+      5: "<</Type /StructElem /S /Figure /K [4 0 R 6 0 R]>>",
+      6: `<</Type /StructElem /S /Figure /Alt (described)>>`,
+    }, "3 0 R");
+    const named = redundantFigures(trySplit(pdf)!);
+    expect(named.sort()).toEqual([4, 5]);
+  });
+
+  test("a cycle with nothing described in it re-tags nothing", () => {
+    const pdf = tree({
+      3: "<</Type /StructElem /S /Document /K [4 0 R]>>",
+      4: "<</Type /StructElem /S /Figure /K [3 0 R 4 0 R]>>",
+    }, "3 0 R");
+    const before = Buffer.from(pdf);
+    expect(Buffer.from(fixRedundantFigures(pdf)).equals(before)).toBe(true);
+  });
+
+  test("an /Alt on the element itself disqualifies it whatever is below", () => {
+    const pdf = tree({
+      3: "<</Type /StructElem /S /Document /K [4 0 R]>>",
+      4: `<</Type /StructElem /S /Figure /Alt (its own) /K [5 0 R]>>`,
+      5: `<</Type /StructElem /S /Figure /Alt (also its own)>>`,
+    }, "3 0 R");
+    expect(redundantFigures(trySplit(pdf)!)).toEqual([]);
+  });
+
+  test("a Figure whose only child is a page object is not re-tagged", () => {
+    // The regression kidsOf's fix addressed. A Link's /K holds an object reference
+    // dictionary naming /Obj and /Pg; if /Pg leaked out as a child, the walk would land
+    // on a page and stop, and a real descendant could be missed. Here the Figure has an
+    // inline dictionary with a page and nothing else.
+    const pdf = tree({
+      3: "<</Type /StructElem /S /Document /K [4 0 R]>>",
+      4: "<</Type /StructElem /S /Figure /K [5 0 R <</Type /OBJR /Obj 6 0 R /Pg 7 0 R>>]>>",
+      5: "<</Type /StructElem /S /Caption /K [8 0 R]>>",
+      8: "<</Type /StructElem /S /Figure /Alt (deep)>>",
+    }, "3 0 R");
+    // 8 is a descendant through 5, so 4 qualifies: the walk reached past the inline
+    // dictionary instead of stopping at the page it names.
+    expect(redundantFigures(trySplit(pdf)!)).toEqual([4]);
+  });
 });

@@ -149,11 +149,32 @@ escaped and printed.
 ## Development
 
 ```bash
-bun test          # 41 tests, verified against poppler
+bun test          # 404 tests across 18 files
 bun run bench     # cold start, concurrency and footprint, cross-runtime
+bun run typecheck
 ```
 
-Poppler (`pdfinfo`, `pdftotext`, `pdffonts`, `pdfimages`, `pdftoppm`) is an
-independent PDF implementation, so tests assert with it rather than with the
-renderer's own parser. See `docs/measurements.md` for the numbers and for two
-Chromium lifecycle traps this codebase works around.
+Tests assert against independent implementations rather than against this
+renderer's own parser, because every real defect found so far came from one of
+them and none from a test written here.
+
+| tool | what it is for |
+|---|---|
+| poppler — `pdfinfo` `pdftotext` `pdffonts` `pdfimages` `pdftoppm` | the assertions in the test suite |
+| ghostscript | an independent parser that disagrees usefully |
+| [veraPDF](https://software.verapdf.org/releases/) 1.30.3 | PDF/UA-1 and PDF/A conformance, via `bun tools/pdfua.ts` |
+
+veraPDF is not vendored — 33MB of Java with a bundled JRE — so `tools/pdfua.ts`
+reads `VERA_PDF` and points at an install. It is **not pinned by this repository**:
+the conformance numbers recorded in `docs/architecture-assessment.md` were measured
+with 1.30.3, and a different version can move them.
+
+`tools/structure-tree.ts <file.pdf>` prints a tagged document's structure tree and
+the MCID census behind it, which is the fastest way to see what a change to the
+repair layer actually did.
+
+Several tests resolve a font family and depend on which face it lands on, so CI
+installs the families they name — `fonts-dejavu-core`, `fonts-liberation2`,
+`fonts-noto-core` — and prints what the runner actually resolved. See
+`docs/measurements.md` for the numbers and for two Chromium lifecycle traps this
+codebase works around.

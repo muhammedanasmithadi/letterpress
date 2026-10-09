@@ -380,12 +380,15 @@ export async function startServer(opts: ServerOptions = {}) {
           // environment. The viewer sends html and has no use for a path.
           return badRequest("send html as a string");
         }
-        if (body.html.length > MAX_BODY_BYTES) {
-          return Response.json({
-            ok: false,
-            error: `document is ${(body.html.length / 1048576).toFixed(1)}MB, over the ${MAX_BODY_BYTES / 1048576}MB limit`,
-          }, { status: 413 });
-        }
+        // No second size check on `body.html` itself. readCapped above already bounded
+        // the request to MAX_BODY_BYTES bytes, and a UTF-16 string can never be longer
+        // than the bytes that produced it, so a length comparison here could not fire.
+        //
+        // It used to, and it was wrong in units as well as unreachable: `length` counts
+        // UTF-16 code units and MAX_BODY_BYTES is bytes, so it would have accepted a
+        // document three times the limit for CJK text. Measured with the byte cap in
+        // place -- 9MB of ascii and 5M multi-byte characters both refused at the cap,
+        // with the byte count in the message and no second check reached.
         // Object.hasOwn, not `in`: "toString" satisfies `in` on the prototype
         // chain and would reach the renderer as a valid format.
         // Present but not a string is a mistake worth naming. Silently dropping

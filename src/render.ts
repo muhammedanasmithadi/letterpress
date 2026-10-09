@@ -405,6 +405,22 @@ function isTeardownAbort(errorText: string | undefined): boolean {
 const SERVED_DOCUMENT = "input.html";
 const OVERRIDE_DOCUMENT = "override.html";
 
+/**
+ * Whether a work-directory request stays inside that directory.
+ *
+ * The separator matters and the omission is silent: a prefix check without it accepts a
+ * *sibling* whose name begins with the work directory's, so `/tmp/letterpress-1-0` passes
+ * for `/tmp/letterpress-1`. WHATWG URL normalisation leaves `..%2f` as `..%2f` rather
+ * than decoding it, so such a path reaches this function intact.
+ *
+ * Exported to be tested. The server binds a random loopback port and only Chromium talks
+ * to it, so there is no live reproducer from a test -- which is exactly why the property
+ * is worth asserting directly rather than by reading the line.
+ */
+export function confinedTo(dir: string, name: string): boolean {
+  return join(dir, name).startsWith(dir + "/");
+}
+
 /** Why a reference the document made was not staged. */
 export type RefusalReason = "outside-root" | "document";
 
@@ -702,8 +718,12 @@ async function serveWorkDir(dir: string): Promise<{ origin: string; stop: () => 
       const path = new URL(request.url).pathname;
       const name = path === "/" ? SERVED_DOCUMENT : decodeURIComponent(path.slice(1));
       // Confine to the work directory: a request must not be able to walk out.
+      // The separator matters. A prefix check without it accepts a *sibling* whose name
+      // begins with the work directory's -- `/tmp/letterpress-1-0` for `/tmp/letterpress-1`
+      // -- and the escape survives because WHATWG URL normalisation leaves `..%2f` as
+      // `..%2f` rather than decoding it, so it reaches `name` intact.
       const resolved = join(dir, name);
-      if (!resolved.startsWith(dir)) return new Response("forbidden", { status: 403 });
+      if (!confinedTo(dir, name)) return new Response("forbidden", { status: 403 });
       const file = Bun.file(resolved);
       if (!(await file.exists())) return new Response("not found", { status: 404 });
       return new Response(file);

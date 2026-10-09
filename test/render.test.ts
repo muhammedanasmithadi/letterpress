@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { Browser } from "../src/browser.ts";
-import { render, stageAssets } from "../src/render.ts";
+import { confinedTo, render, stageAssets } from "../src/render.ts";
 import { pdfFonts, pdfImages, pdfInfo, pdfText } from "./poppler.ts";
 
 let browser: Browser;
@@ -595,4 +595,39 @@ describe("the asset root", () => {
       await rm(work, { recursive: true, force: true });
     }
   }, 30_000);
+});
+
+
+/* The work server binds a random loopback port and only Chromium talks to it, so there is
+ * no way to reach this from a test as an attack. The property is asserted directly. */
+
+describe("the work directory boundary", () => {
+  const DIR = "/tmp/letterpress-1";
+
+  test("a name that walks out is refused", () => {
+    expect(confinedTo(DIR, "../letterpress-1-0/input.html")).toBe(false);
+    expect(confinedTo(DIR, "../../etc/passwd")).toBe(false);
+    expect(confinedTo(DIR, "..")).toBe(false);
+  });
+
+  test("a sibling whose name merely begins with the directory's is refused", () => {
+    // The one a plain prefix check gets wrong, and the reason for the separator: the two
+    // strings share every character, and only the trailing slash tells them apart.
+    const sibling = DIR + "-0";
+    expect(sibling.startsWith(DIR)).toBe(true);
+    expect(sibling.startsWith(DIR + "/")).toBe(false);
+    expect(confinedTo(DIR, `../${sibling.split("/").pop()}`)).toBe(false);
+  });
+
+  test("a percent-encoded separator is a literal filename, not an escape", () => {
+    // Worth pinning because it looks like an attack: `join` treats `..%2f` as one path
+    // segment, so the result is a file named that, inside the directory. Permitting it is
+    // correct, and a test asserting otherwise would be asserting a wrong expectation.
+    expect(confinedTo(DIR, "..%2fletterpress-1-0%2finput.html")).toBe(true);
+  });
+
+  test("an ordinary asset is allowed", () => {
+    expect(confinedTo(DIR, "assets/styles.css")).toBe(true);
+    expect(confinedTo(DIR, "input.html")).toBe(true);
+  });
 });

@@ -254,11 +254,15 @@ describe("the shell renders end to end", () => {
     expect(body.ok).toBe(true);
     expect(body.pages).toBe(1);
     expect(body.bytes).toBeGreaterThan(1000);
-    // The starter document leans on a system font, so Chromium emits a Type 3
-    // fallback whose descriptor has no font program behind it. Warned, not
-    // corrected, and never an error.
+    // Warned, never an error. The specific list of codes is not asserted: the starter
+    // document leans on whatever font the machine resolves, so on a box with a fuller
+    // font set there is no Type 3 fallback and no font-metrics finding at all. The
+    // first CI run failed here on exactly that, with a document that was entirely
+    // correct. The claim worth keeping is that nothing is an error.
     expect(body.findings.filter((f) => f.severity === "error")).toEqual([]);
-    expect(body.findings.map((f) => f.code)).toEqual(["font-metrics"]);
+    for (const f of body.findings as Array<{ severity: string }>) {
+      expect(f.severity).not.toBe("error");
+    }
     const bytes = Buffer.from(body.pdf, "base64");
     expect(bytes.subarray(0, 5).toString()).toBe("%PDF-");
   }, 90_000);

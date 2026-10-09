@@ -408,8 +408,17 @@ describe("rendered output", () => {
     await rm(profile, { recursive: true, force: true }).catch(() => {});
   });
 
+  // Noto Sans, named rather than generic, because the claim is that cap heights are
+  // read per font and that needs a family whose bold genuinely differs from its regular:
+  // measured 536 against 546.
+  //
+  // This said "DejaVu Sans", which named nothing. DejaVu is not installed on every
+  // machine -- fc-match resolved it to Noto Sans here -- and where it is installed its
+  // bold shares the regular's cap height, because DejaVu derives one from the other. So
+  // the fixture produced two distinct cap heights on one machine and one on another, and
+  // the first CI run failed on the machine where it produced one.
   const threeFaces = `<!doctype html><meta charset="utf-8">
-    <style>@page{size:A4;margin:10mm}body{font-family:"DejaVu Sans",sans-serif}</style>
+    <style>@page{size:A4;margin:10mm}body{font-family:"Noto Sans",sans-serif}</style>
     <p style="font-weight:400">Regular face text</p>
     <p style="font-weight:700">Bold face text</p>
     <p style="font-style:italic">Italic face text</p>`;
@@ -434,9 +443,8 @@ describe("rendered output", () => {
   });
 
   test("an italic face is marked italic and an upright one is not", async () => {
-    // DejaVu Sans has no italic on this machine, so Chromium synthesises one and
-    // emits it as a Type 3 font with no embedded face. The default family has a
-    // real italic, which is what this needs to see.
+    // A synthesised italic arrives as a Type 3 font with no embedded face, so this
+    // deliberately does not name a family: the default one has a real italic.
     const r = await render(browser, {
       html: `<!doctype html><p>upright</p><p><i>italic text</i></p>`,
     });

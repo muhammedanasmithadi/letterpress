@@ -200,11 +200,16 @@ test("a no-break space is reported as a real space, not as an invisible format c
 }, 30_000);
 
 test("a character covered by the font fallback chain is not reported", async () => {
-  // 度量 is absent from Noto Naskh Arabic but present in the system CJK fonts,
-  // so it prints correctly and must stay silent.
+  // Привет is absent from Noto Naskh Arabic but covered by another installed family, so
+  // fontconfig reaches it, it prints correctly, and nothing may be reported.
+  //
+  // This probe was 度量, which needs a CJK font. That put a fonts-noto-cjk dependency
+  // into the suite without declaring it, and the first CI run failed here because the
+  // runner had no CJK font -- so missing-glyph was correct there and the test was wrong.
+  // Cyrillic proves the same claim from fonts-noto-core.
   const html = `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
 @page{size:A4;margin:15mm} body{direction:rtl;font-family:'Noto Naskh Arabic',serif}
-</style></head><body><p>القياس 度量</p></body></html>`;
+</style></head><body><p>القياس Привет</p></body></html>`;
   const r = await render(browser, { html });
   expect(codes(r.findings)).not.toContain("missing-glyph");
 }, 30_000);

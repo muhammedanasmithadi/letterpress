@@ -64,6 +64,17 @@ jobs:
           for _ in $(seq 1 20); do [ -e /tmp/.X11-unix/X99 ] && break; sleep 0.5; done
           echo "DISPLAY=:99" >> "$GITHUB_ENV"
 
+      - name: record what the font set actually is
+        run: |
+          # Several tests resolve a family and depend on which face it lands on, so a
+          # failure in one of them is uninterpretable without this. It is the first thing
+          # to paste into an issue.
+          echo "families: $(fc-list --format '%{family[0]}\n' | sort -u | wc -l)"
+          for f in "DejaVu Sans" "DejaVu Sans:bold" "DejaVu Sans:italic" \
+                   "DejaVu Serif" "Noto Naskh Arabic" "Noto Kufi Arabic" sans-serif serif; do
+            echo "  fc-match '$f' -> $(fc-match "$f" --format '%{family}|%{style}|%{file}\n')"
+          done
+
       - name: install dependencies
         run: bun install --frozen-lockfile
 

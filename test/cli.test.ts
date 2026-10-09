@@ -61,7 +61,9 @@ test("renders a file and reports where it went", async () => {
   // Checked against the document rather than written down. The claim under test is that
   // the cli reports the truth; a hardcoded number is an assertion about the font set,
   // and came out 2 here and 1 on CI for exactly that reason.
-  expect(r.stdout).toMatch(new RegExp(`one\\.pdf\\s+${info.pages} pages\\s+[\\d.]+ KB\\s+\\d+ms`));
+  // The plural is optional: the cli prints "1 page" and "2 pages", and the first
+  // attempt at this required "pages" always -- failing on every one-page fixture.
+  expect(r.stdout).toMatch(new RegExp(`one\\.pdf\\s+${info.pages} pages?\\s+[\\d.]+ KB\\s+\\d+ms`));
   expect(info.pages).toBeGreaterThan(0);
   expect(info.pageSize).toContain("594.96");
   // Any findings the render did produce must be warnings, not errors: a warning is
@@ -100,7 +102,10 @@ test("json output is machine readable", async () => {
   const parsed = JSON.parse(r.stdout);
   expect(parsed.ok).toBe(true);
   expect(parsed.path).toBe(out);
-  expect(parsed.pages).toBe(2);
+  // Derived from the document, for the same reason as above: this fixture's page count
+  // came out 2 on the machine that wrote it and 1 on a CI runner with a different font
+  // set, so writing the number down was an assertion about fonts.
+  expect(parsed.pages).toBe((await pdfInfo(new Uint8Array(await Bun.file(out).arrayBuffer()))).pages);
   expect(parsed.bytes).toBeGreaterThan(1000);
   expect(typeof parsed.ms).toBe("number");
   expect(parsed.imageObjects).toBe(0);

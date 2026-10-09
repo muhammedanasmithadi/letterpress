@@ -170,10 +170,16 @@ export function fixFontDescriptors(pdf: Uint8Array): Uint8Array {
 
   const byNum = new Map(parts.objs.map((o) => [o.num, o]));
   // CIDFontType2 and simple TrueType fonts both name a descriptor and a face.
+  //
+  // Type 3 is included, and Chromium is the reason: it gives a Type 3 fallback a
+  // /FontDescriptor, which the specification does not ask for -- a Type 3 font's glyphs
+  // are drawing procedures -- and that descriptor carries a negative CapHeight. Measured
+  // on a corpus of real documents: 7 of 8 had one, referenced by the Type 3 font rather
+  // than orphaned. Excluding Type 3 here is why the fix below never saw them.
   const descriptorNums = new Set<number>();
   for (const o of parts.objs) {
     const text = o.bytes.toString(LATIN1);
-    if (!/\/Subtype\s*\/(?:CIDFontType2|TrueType)\b/.test(text)) continue;
+    if (!/\/Subtype\s*\/(?:CIDFontType2|TrueType|Type3)\b/.test(text)) continue;
     const d = text.match(/\/FontDescriptor\s+(\d+) 0 R/);
     if (d) descriptorNums.add(Number(d[1]));
   }
@@ -186,7 +192,31 @@ export function fixFontDescriptors(pdf: Uint8Array): Uint8Array {
     if (!desc) continue;
     const text = desc.bytes.toString(LATIN1);
     const fileRef = text.match(/\/FontFile2\s+(\d+) 0 R/);
-    if (!fileRef) continue; // CFF or Type 1: nothing to read, so nothing to do.
+    if (!fileRef) {
+      // No font program: a Type 3 fallback, or CFF or Type 1. There is no OS/2 table
+      // to read, so the metric cannot be derived from the face.
+      //
+      // It can still be derived from the producer. Chromium writes this field negated:
+      // measured against the installed fonts it names, Noto Sans carries a real sCapHeight
+      // of 714 and arrives as -714, IBM Plex Sans 698 and arrives as -698. Two fonts with
+      // different values, so this is the metric rather than a sentinel -- a sentinel
+      // would be the same number twice.
+      //
+      // Guarded on the descriptor's own XHeight, because a cap height is taller than an
+      // x-height by definition: 714 against 536, 698 against 516. A value that does not
+      // clear it was not this pattern and is left alone.
+      //
+      // Scoped to Chromium on purpose. This repair only ever runs on bytes Chromium has
+      // just produced, so the rule is about one producer's behaviour rather than about
+      // PDF in general. Another producer's negative CapHeight is not assumed to mean
+      // this.
+      const cap = Number(text.match(/\/CapHeight\s+(-?\d+)/)?.[1] ?? NaN);
+      const xHeight = Number(text.match(/\/XHeight\s+(-?\d+)/)?.[1] ?? NaN);
+      if (Number.isFinite(cap) && cap < 0 && Number.isFinite(xHeight) && -cap > xHeight) {
+        wanted.set(num, { flags: Number(text.match(/\/Flags\s+(\d+)/)?.[1] ?? 0), capHeight: -cap });
+      }
+      continue;
+    }
     const face = byNum.get(Number(fileRef[1]));
     if (!face) continue;
     const font = embeddedFont(face);

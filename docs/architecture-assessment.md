@@ -335,15 +335,39 @@ The body cap binds before the page cap for text, which is worth knowing: raising
 
 ## 9. Still open
 
-1. **Headful parity** is one test behind a `DISPLAY` gate.
-2. **The three fixes are tested on the documents that motivated them**, not a
-   corpus. Generalisation is argued from the mechanism and is unverified.
-3. **`stampPdf` truncates a title that exceeds its slot.** By design and
-   documented, but it means a long document title is silently clipped.
-4. **The base64 transfer path is untested at this size.** A 28.6 MB PDF becomes
-   38.1 MB of JSON in one string. `transfer: "stream"` exists for the API and the
-   server does not expose it, so a large render through the server pays the
-   allocation for nothing.
+1. **The repairs are tested on the documents that motivated them**, not a corpus.
+   Generalisation is argued from the mechanism and is only partly verified. What has
+   changed is that CI runs on a different font set from the machine the repairs were
+   written on, and it caught nine tests that had been passing by accident. That is a
+   sample of one environment, not of one document.
+2. **Chromium's own tagging gaps.** A `<dl>` produces no semantic role, and
+   `section`/`nav`/`main`/`header`/`footer` produce none. Upstream, and recorded as
+   tests in `test/tags.test.ts` rather than papered over: faking the roles would be
+   fabricating semantics the document does not have.
+3. **An `img` with an absolute local path does not load.** Staging one would mean
+   reading outside the document's own directory, which the code deliberately refuses. It
+   is reported as `subresource-failed` rather than passing silently, so this is a
+   limitation rather than a defect, but it is one.
+4. **The default render deadline is 30 seconds.** A representative document measured
+   555ms on two cores, so the headroom is large; a very large document on a cold shared
+   machine is where it would bite.
+
+### Closed since this section was written
+
+Three of the four items above are no longer open, and a list that still claims they are
+is worse than no list.
+
+- **Headful parity** -- `03668e6`. Seven dimensions compared, all matching, including the
+  structure-tree role histogram and decoded pixels. It runs in CI under Xvfb now rather
+  than sitting behind a `DISPLAY` gate.
+- **The base64 transfer path** -- `eb5fd69`. The server streams inbound and can return
+  `application/pdf` outbound: 804MB against 663MB of peak RSS at 2,000 pages, and 26%
+  smaller on the wire.
+- **`stampPdf` truncating a long title** -- `4223054`. It wrote into whatever slot
+  Chromium left, which is however long `about:blank` is, so a 61-character filename came
+  out as `Quarterly-R`. The title is set through the gated chain now, which has no such
+  limit.
+
 
 ## 10. How success would be verified
 

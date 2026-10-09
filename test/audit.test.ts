@@ -2,8 +2,58 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { deflateSync } from "node:zlib";
 import { Browser } from "../src/browser.ts";
 import { render } from "../src/render.ts";
+
+/**
+ * A PNG of the given size, filled with a deterministic gradient.
+ *
+ * A gradient rather than a flat colour because a flat one compresses to almost nothing
+ * and the downsampling test needs a file that actually shrinks. Deterministic so two
+ * runs produce the same bytes and a size comparison means what it says.
+ */
+function widePng(width: number, height: number): Buffer {
+  const raw = Buffer.alloc(height * (1 + width * 3));
+  for (let y = 0; y < height; y++) {
+    const row = y * (1 + width * 3);
+    raw[row] = 0; // filter: none
+    for (let x = 0; x < width; x++) {
+      raw[row + 1 + x * 3] = (x * 255 / width) | 0;
+      raw[row + 2 + x * 3] = (y * 255 / height) | 0;
+      raw[row + 3 + x * 3] = ((x ^ y) * 7) & 0xff;
+    }
+  }
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc32 = (buf: Buffer): number => {
+    let c = 0xffffffff;
+    for (const byte of buf) c = crcTable[(c ^ byte) & 0xff]! ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type: string, body: Buffer): Buffer => {
+    const head = Buffer.alloc(8);
+    head.writeUInt32BE(body.length, 0);
+    head.write(type, 4, "latin1");
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(Buffer.concat([head.subarray(4), body])), 0);
+    return Buffer.concat([head, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;  // bit depth
+  ihdr[9] = 2;  // colour type: truecolour
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", deflateSync(raw, { level: 6 })),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
 
 let browser: Browser;
 let profile: string;
@@ -331,9 +381,15 @@ test("images are downsampled to the cap, and reported", async () => {
   const dir = await mkdtemp(join(tmpdir(), "letterpress-img-"));
   try {
     // 1200px wide at 180mm is 169ppi, so 120ppi must reduce it.
-    const photo = join(dir, "photo.jpg");
-    await Bun.write(photo, Bun.file("/tmp/small.jpg"));
-    const doc = `<!doctype html><style>@page{size:A4;margin:10mm} img{width:180mm}</style><img src="photo.jpg">`;
+    //
+    // Built here rather than read from /tmp. An earlier version read
+    // /tmp/small.jpg, which is outside the repository: the test passed on the machine
+    // that wrote it and failed on every other one, and here it failed the moment that
+    // file was cleaned up. A test that depends on state it does not create is not a
+    // test.
+    const photo = join(dir, "photo.png");
+    await Bun.write(photo, widePng(1200, 900));
+    const doc = `<!doctype html><style>@page{size:A4;margin:10mm} img{width:180mm}</style><img src="photo.png">`;
     await Bun.write(join(dir, "doc.html"), doc);
 
     const capped = await render(browser, { path: join(dir, "doc.html"), maxImagePpi: 120 });

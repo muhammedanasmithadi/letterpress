@@ -355,3 +355,79 @@ The body cap binds before the page cap for text, which is worth knowing: raising
   succeed, with a bounded wait.
 - The audit: re-run all twelve findings' reproductions against the fixed build
   and record which are fixed, retracted, or still open.
+## 11. Conformance, measured against an independent implementation
+
+Everything above reasons from mechanism. veraPDF is an independent implementation of
+ISO 14289-1 — the same relationship to this renderer that poppler and ghostscript
+already are — and its PDF/UA-1 profile encodes 106 machine-evaluated rules, so a claim
+about tagging or alternate text can be a verdict rather than an argument. `tools/pdfua.ts`
+runs it; `tools/structure-tree.ts` prints the tree and the MCID census behind a result.
+
+### The calibration that matters
+
+| document | rules failed, of 106 |
+|---|---|
+| text, heading, list, table, blockquote | 1 |
+| link | 1 |
+| figure | 2 |
+| the full sample | 2 |
+| **ISO 32000-2 spec, 1,023 pages** | **16** |
+
+The ISO's own publication fails every one of the 16 rules it evaluates, across 12
+clauses and at least 666 objects, and 10 of those failures are fonts it does not embed.
+We fail a strict subset of the clauses it fails. Conformance to PDF/UA-1 is therefore
+not a quality measure on its own, and the one clause every clean document fails — 5,
+the identification schema — is failed deliberately: writing `pdfuaid:part` asserts
+conformance this output does not have.
+
+### What was fixed, and what each one was
+
+- **7.18.1, 7.18.5 — link descriptions.** Chromium writes every link annotation with no
+  `/Contents`. The pairing is the hard part: a Link structure element and its annotation
+  are unrelated object numbers, and counting disagrees (one Link element named two
+  annotations for a link wrapping an image; two elements and one annotation for an
+  external plus an internal link). Chromium fills in the key PDF provides — an inline
+  `/Obj` inside the element's object-reference dictionary — so the annotation is found
+  by following a reference.
+- **7.3 — figure descriptions.** See the retraction below. The repair is a no-op in the
+  ordinary case.
+- **Headful parity.** One test, seven dimensions, all matching including the role
+  histogram. `--headless=new` had to be omitted rather than overridden, since Chromium
+  takes the last occurrence of a switch.
+
+### Retracted: Chromium discards an image's `alt`
+
+The figure repair was justified by ten measured forms, and every one used a hand-written
+base64 string that was not valid base64 — 193 characters, not a multiple of four.
+Chromium rejected the image, drew its broken-image placeholder, and painted the `alt` as
+untagged glyphs. What was measured was the placeholder.
+
+With an image that loads, Chromium tags the image as a Figure element nested inside the
+one its `<figure>` produced, and carries the `alt` itself. An `aria-label` overrides the
+`alt`; an `img` with no `alt` yields a Figure with no `/Alt`, which is correct.
+
+The retraction dissolved the next piece of work as well. Clause 7.1 was reported at 61
+unmarked content items, which were the placeholder's own alt text plus its two draws.
+With a loadable image there is no 7.1 failure, so **no content-stream surgery is needed**
+and `verify()` keeps its byte-identity guarantee rather than being weakened to
+"text operators in the same order".
+
+### The one remaining failure
+
+```
+39 Figure   no /Alt                <- the <figure> element
+  40 Figure  Alt=(a description)   <- the <img>, tagged by Chromium
+```
+
+Chromium makes both the `<figure>` and the `<img>` a Figure. A nested Figure whose outer
+element is a pure grouping is a modelling artefact, and 7.3 fails on it. Re-tagging the
+outer element `Div` when it has a child Figure carrying an `/Alt` would close it with one
+key on one dictionary, inventing no text and announcing nothing twice.
+
+### The lesson
+
+Eight findings this session were wrong, and five survived into code or a commit message
+before being caught. Every one was caught by something other than the author's own
+reading: a toggled property, a second reader disagreeing with the first, poppler or
+ghostscript or veraPDF returning something unexpected, or a fixture asserted to be
+loadable. None was caught by writing the code carefully.

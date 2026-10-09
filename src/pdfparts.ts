@@ -425,12 +425,6 @@ export function streamRange(bytes: Uint8Array): { start: number; end: number } |
   return { start, end };
 }
 
-/** The raw, still-encoded payload of a stream object. */
-export function rawStream(o: Obj): Buffer | undefined {
-  const range = streamRange(o.bytes);
-  return range ? o.bytes.subarray(range.start, range.end) : undefined;
-}
-
 /** Decompressed payload of a FlateDecode stream object, if that is what it is. */
 export function inflatedStream(o: Obj, inflate: (b: Buffer) => Buffer): Buffer | undefined {
   const range = streamRange(o.bytes);

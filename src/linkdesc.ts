@@ -121,7 +121,12 @@ export function fixLinkDescs(pdf: Uint8Array, descs: string[]): Uint8Array {
       const text = obj.bytes.toString(LATIN1);
       if (/\/Subtype\s*\/Link\b/.test(text) === false) continue;
       if (/\/Contents\b/.test(dictCode(obj))) continue;
-      obj.bytes = Buffer.from(insertIntoDict(text, `/Contents ${pdfValue(desc)}`), LATIN1);
+      const next = Buffer.from(insertIntoDict(text, `/Contents ${pdfValue(desc)}`), LATIN1);
+      // insertIntoDict returns its input untouched when it cannot find the dictionary's
+      // closing `>>`. Counting that as a write reported descriptions that were never
+      // written, which is the same failure as the one this repair exists to prevent.
+      if (next.equals(obj.bytes)) continue;
+      obj.bytes = next;
       changed++;
     }
   });

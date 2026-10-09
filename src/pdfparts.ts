@@ -235,6 +235,22 @@ export function maskStrings(text: string): string {
   let i = 0;
   while (i < text.length) {
     const ch = text[i]!;
+    // A comment runs to the end of the line and is not code. ISO 32000-1 §7.2.4.
+    //
+    // Skipping it matters because a comment is arbitrary text too, and the one thing it
+    // must not contain is an unbalanced `(`: that opens a string which never closes, and
+    // every byte after it is blanked. Measured on `<< /A % a comment ( unbalanced` --
+    // entirely legal -- the /Length two lines down became invisible and insertIntoDict
+    // returned its input unchanged, silently.
+    //
+    // A `%` inside a literal string is not a comment, and never reaches here: the string
+    // branch below consumes the whole string.
+    if (ch === "%") {
+      out += "%";
+      i++;
+      while (i < text.length && text[i] !== "\n" && text[i] !== "\r") { out += " "; i++; }
+      continue;
+    }
     if (ch !== "(") { out += ch; i++; continue; }
     // Copy the delimiters so a caller matching on "(" or ")" still sees the string's
     // extent; blank only what is between them.

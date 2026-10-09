@@ -490,3 +490,48 @@ describe("split when a non-stream object carries the keyword", () => {
     expect(verify(pdf).ok).toBe(true);
   });
 });
+
+/* ------------------------------------------------------------------ *
+ * A comment is arbitrary text too
+ *
+ * ISO 32000-1 §7.2.4: a comment runs to end of line and is not code. maskStrings knew
+ * about literal strings and nothing else, so an unbalanced `(` inside a comment opened a
+ * string that never closed and every byte after it was blanked.
+ *
+ * Measured on `<< /A % a comment ( unbalanced` -- entirely legal: the /Length two lines
+ * down became invisible to the verification gate, and insertIntoDict returned its input
+ * unchanged while reporting that it had written a key.
+ * ------------------------------------------------------------------ */
+
+describe("maskStrings and comments", () => {
+  test("an unbalanced parenthesis inside a comment does not swallow the rest", () => {
+    const body = "<< /A % a comment ( unbalanced\n/Length 140 >> carrying";
+    const masked = maskStrings(body);
+    expect(masked.length).toBe(body.length);
+    // The comment's own text is gone, and what follows it is intact.
+    expect(masked).not.toContain("comment");
+    expect(/\/Length\s+(\d+)/.exec(masked)?.[1]).toBe("140");
+  });
+
+  test("a comment holding a closing parenthesis does not close a real string early", () => {
+    const body = "<< /Alt (real) % ) \n/Next 1 0 R >>";
+    expect(maskStrings(body)).toContain("/Next 1 0 R");
+  });
+
+  test("a percent sign inside a literal string is not a comment", () => {
+    // Otherwise the string's own contents would stop being masked.
+    const masked = maskStrings("<< /Alt (100% (secret)) /Next 1 0 R >>");
+    expect(masked).not.toContain("secret");
+    expect(masked).toContain("/Next 1 0 R");
+  });
+
+  test("a carriage return ends a comment too", () => {
+    const masked = maskStrings("<< /A % ( unbalanced\r/Length 140 >>");
+    expect(/\/Length\s+(\d+)/.exec(masked)?.[1]).toBe("140");
+  });
+
+  test("insertIntoDict still finds the dictionary past a comment", () => {
+    const out = insertIntoDict("<< /A % ( unbalanced\n/B 1 >>", "/Contents (x)");
+    expect(out).toContain("/Contents (x)");
+  });
+});

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { deflateSync } from "node:zlib";
-import { dictOf, kidsOf, streamRange, structElementsInOrder, trySplit, join as joinParts, LATIN1 } from "../src/pdfparts.ts";
+import { dictCode, dictOf, insertIntoDict, kidsOf, maskStrings, streamDict, streamRange, structElementsInOrder, trySplit, join as joinParts, LATIN1, type Obj } from "../src/pdfparts.ts";
 import { verify } from "../src/verify.ts";
 
 /**
@@ -217,5 +217,107 @@ describe("insertIntoDict", () => {
     const at = out.indexOf("/Contents (hello)");
     expect(at).toBeGreaterThan(nestedClose);
     expect(at).toBeLessThan(out.lastIndexOf(">>"));
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * A literal string is arbitrary text sitting inside a dictionary
+ *
+ * Every one of these found a real defect, and all of them had the same cause: something
+ * searching a dictionary for structure found the structure in a string value instead.
+ *
+ * Measured before the fix:
+ *   - alt text reading "see object 999 0 R" made the gate's reference scan find a
+ *     reference to an object that does not exist, so every gated repair was rejected and
+ *     the document shipped with no author and no XMP packet;
+ *   - alt text reading "a stream of monthly revenue" cut the Figure element's dictionary
+ *     at the word inside it, so it looked undescribed and the repair silently did nothing;
+ *   - a link whose URL contained "stream" was cut before its /Contents, so the
+ *     idempotence guard missed and a second pass wrote a duplicate key.
+ *
+ * Each test below fails with maskStrings neutered. That was checked, not assumed.
+ * ------------------------------------------------------------------ */
+
+describe("maskStrings", () => {
+  const O = (bytes: string) => ({ num: 1, bytes: Buffer.from(bytes, LATIN1) }) as Obj;
+
+  test("blanks the contents and preserves every offset and length", () => {
+    const src = "<< /Alt (hello) /K [1 0 R] >>";
+    const masked = maskStrings(src);
+    expect(masked).not.toContain("hello");
+    expect(masked.length).toBe(src.length);
+    // An offset found in the masked text must index into the original.
+    const at = masked.indexOf("/K");
+    expect(src.slice(at)).toBe(masked.slice(at));
+  });
+
+  test("keeps the delimiters, so a caller's own match on a parenthesis still works", () => {
+    expect(maskStrings("(abc)")).toBe("(   )");
+  });
+
+  test("an escaped close parenthesis does not end the string", () => {
+    // The classic failure: `\)` closes the string early, so everything after it is read
+    // as code -- and here what follows is a real reference, so it must survive as code
+    // while the string's own contents do not.
+    const masked = maskStrings(String.raw`<</A (a \) b) /K [9 0 R]>>`);
+    expect(masked).toContain(String.raw`\)`);   // the escape is left verbatim
+    expect(masked).not.toContain(" b)");        // the rest of the string is blanked
+    expect(masked).toContain("/K [9 0 R]");     // and the dictionary after it is intact
+  });
+
+  test("an escaped open parenthesis is not an open", () => {
+    expect(maskStrings(String.raw`<< /A (a \( b) /K [9 0 R]>>`)).not.toContain("( b");
+  });
+
+  test("an unterminated string does not throw", () => {
+    expect(() => maskStrings("<< /A (unterminated")).not.toThrow();
+    expect(maskStrings("<< /A (unterminated")).not.toContain("unterminated");
+  });
+
+  test("a hex string is left alone, because a caller may need to read it", () => {
+    // /Alt is written as UTF-16BE hex by some producers. Masking it would stop the value
+    // being read, which is the opposite of what this function is for.
+    expect(maskStrings("<</Alt <00480065006C006C006F> /K [1 0 R]>>")).toContain("<00480065006C006C006F>");
+  });
+
+  test("dictOf reads values; dictCode hides them", () => {
+    // The distinction the whole fix rests on: one reads, one searches.
+    const o = O("<< /URI (https://x.example/stream/) /Contents (a) >>");
+    expect(dictOf(o)).toContain("https://x.example/stream/");
+    expect(dictCode(o)).not.toContain("https://x.example/stream/");
+    expect(dictCode(o)).toContain("/Contents");
+  });
+
+  test("dictCode does not stop at the word stream inside a string", () => {
+    const o = O("<< /Alt (a stream of revenue) /K [15 0 R] >>");
+    expect(dictCode(o)).toContain("/K [15 0 R]");
+  });
+
+  test("streamDict does not stop at a string carrying the keyword and a newline", () => {
+    // `(upstream)` alone does not fool streamDict, which needs a newline after the
+    // keyword. `(foo stream\nbar)` does, and only masking catches that one.
+    const o = O("<< /Alt (foo stream\nbar) /Length 99 >> stream\nxxxx\nendstream");
+    expect(/\/Length\s+(\d+)/.exec(streamDict(o))?.[1]).toBe("99");
+  });
+
+  test("kidsOf does not read a reference out of an /Alt", () => {
+    expect(kidsOf("<</S /Figure /Alt (/K 99 0 R) /K [15 0 R]>>")).toEqual([15]);
+  });
+
+  test("insertIntoDict is not derailed by an unbalanced << inside a string", () => {
+    // An unbalanced `<<` drove the depth negative, `close` stayed -1, and the function
+    // returned the body unchanged -- so the caller believed it had written a key and had
+    // not. Chromium percent-encodes `<<` to `%3C%3C`, so this was reachable only through
+    // a document whose own text carried the characters.
+    expect(insertIntoDict("<< /URI (a << b) >>", "/Contents (x)")).toContain("/Contents (x)");
+    // And the entry lands inside the dictionary, not after it.
+    expect(insertIntoDict("<< /URI (a << b) >>", "/Contents (x)")).toBe("<< /URI (a << b) /Contents (x)\n>>");
+  });
+});
+
+describe("streamDict", () => {
+  test("cuts at the keyword, leaving the payload out", () => {
+    const o = { num: 1, bytes: Buffer.from("<< /Length 5 >> stream\nhello\nendstream", LATIN1) } as Obj;
+    expect(streamDict(o).trim()).toBe("<< /Length 5 >>");
   });
 });

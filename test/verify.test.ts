@@ -143,6 +143,69 @@ describe("verify", () => {
     const r = verify(Buffer.from("not a pdf at all"));
     expect(r.ok).toBe(false);
   });
+
+  /* ---------------------------------------------------------------- *
+   * A reference-shaped string is not a reference
+   *
+   * This check is what rejects a repair, so a false reading of it does not merely miss a
+   * defect -- it throws away the repair. Measured, with the check reading raw bytes:
+   *
+   *   alt text reading "see object 999 0 R"   -> every gated repair rejected, the
+   *                                              document shipped with no author and no
+   *                                              XMP packet at all
+   *   title reading "object 999 0 R"          -> the title is written into the XMP
+   *                                              packet, which is a stream payload, and
+   *                                              the packet then fails the same check
+   *
+   * The second needed more than masking literal strings: a payload is data whatever
+   * shape it is, so the scan now reads each object's dictionary and the trailer and
+   * nothing else.
+   * ---------------------------------------------------------------- */
+
+  test("a reference inside a literal string is not a reference", () => {
+    const text = Buffer.from(fixture()).toString(LATIN1);
+    const withAlt = Buffer.from(text.replace(
+      "/Contents 6 0 R", "/Alt (see object 999 0 R) /Contents 6 0 R"), LATIN1);
+    // The edit makes the file longer, so every offset after it is wrong and the
+    // cross-reference checks fire too. What matters here is that the *reference* check
+    // stays silent, and the control below shows that file is otherwise clean.
+    expect(verify(withAlt).failures.join(" ")).not.toMatch(/does not exist/);
+    expect(verify(Buffer.from(fixture())).failures).toEqual([]);
+  });
+
+  test("a reference inside a stream payload is not a reference", () => {
+    // The XMP packet is XML in a stream, and a document title is written into it. If the
+    // scan reads payloads it finds this and rejects the very repair that wrote it.
+    const payload = Buffer.from("<x>see object 999 0 R</x>", LATIN1);
+    const text = Buffer.from(fixture()).toString(LATIN1);
+    const added =
+      `9 0 obj
+<< /Length ${payload.length} >>
+stream
+${payload.toString(LATIN1)}
+endstream
+endobj
+`;
+    const r = verify(Buffer.from(text.replace("trailer", added + "trailer"), LATIN1));
+    expect(r.failures.join(" ")).not.toMatch(/does not exist/);
+  });
+
+  test("a genuine dangling reference is still refused with the scan narrowed", () => {
+    // The narrowing must not cost the check its teeth: this is the same failure it
+    // exists to catch, written where the scan does look.
+    const text = Buffer.from(fixture()).toString(LATIN1);
+    const broken = Buffer.from(text.replace("/Contents 6 0 R", "/Contents 99 0 R"), LATIN1);
+    expect(verify(broken).ok).toBe(false);
+  });
+
+  test("/Length is read past a string carrying the word stream", () => {
+    // The length check used to cut the dictionary at the first *substring* "stream",
+    // anywhere. `/Producer (upstream)` before the /Length hid it, and /Length is the
+    // check that would catch a repair that resized a payload.
+    const text = Buffer.from(fixture()).toString(LATIN1);
+    const hidden = Buffer.from(text.replace("/Length 39", "/Producer (upstream) /Length 39"), LATIN1);
+    expect(verify(hidden).ok).toBe(false); // now seen: the offset moved, so /Length lies
+  });
 });
 
 /* ------------------------------------------------------------------ *

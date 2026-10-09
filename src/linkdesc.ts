@@ -22,7 +22,7 @@
  * checked against the annotation; 7.18.1 accepts either the annotation's /Contents or
  * an /Alt on the enclosing element.
  */
-import { dictOf, insertIntoDict, join, LATIN1, structElementsInOrder, trySplit, type Obj, type Parts } from "./pdfparts.ts";
+import { dictCode, insertIntoDict, join, LATIN1, structElementsInOrder, trySplit, type Obj, type Parts } from "./pdfparts.ts";
 import { pdfValue } from "./meta.ts";
 
 /**
@@ -83,7 +83,7 @@ export function linkAnnotations(parts: Parts, linkNum: number): number[] {
   const byNum = new Map<number, Obj>(parts.objs.map((o) => [o.num, o]));
   const link = byNum.get(linkNum);
   if (!link) return [];
-  const text = dictOf(link);
+  const text = dictCode(link);
   const out: number[] = [];
   for (const m of text.matchAll(/<<([\s\S]*?)>>/g)) {
     const body = m[1]!;
@@ -120,7 +120,7 @@ export function fixLinkDescs(pdf: Uint8Array, descs: string[]): Uint8Array {
       if (!obj) continue;
       const text = obj.bytes.toString(LATIN1);
       if (/\/Subtype\s*\/Link\b/.test(text) === false) continue;
-      if (/\/Contents\b/.test(dictOf(obj))) continue;
+      if (/\/Contents\b/.test(dictCode(obj))) continue;
       obj.bytes = Buffer.from(insertIntoDict(text, `/Contents ${pdfValue(desc)}`), LATIN1);
       changed++;
     }

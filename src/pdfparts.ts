@@ -128,10 +128,16 @@ export function trySplit(pdf: Uint8Array): Parts | undefined {
  * dictionaries of different shapes and the counting is the part that must not drift.
  */
 export function insertIntoDict(body: string, entry: string): string {
+  // Masked before counting. An unbalanced `<<` inside a literal string drove the depth
+  // negative, `close` stayed -1, and the function returned the body unchanged -- so the
+  // caller believed it had written a key and had not. Chromium percent-encodes `<<` to
+  // `%3C%3C`, so this was not reachable through a render; it was reachable through a
+  // document whose alt text carried the characters.
+  const code = maskStrings(body);
   let depth = 0;
   let close = -1;
-  for (let i = 0; i < body.length - 1; i++) {
-    const pair = body.slice(i, i + 2);
+  for (let i = 0; i < code.length - 1; i++) {
+    const pair = code.slice(i, i + 2);
     if (pair === "<<") {
       depth++;
       i++;
@@ -148,11 +154,91 @@ export function insertIntoDict(body: string, entry: string): string {
   return body.slice(0, close) + entry + "\n" + body.slice(close);
 }
 
-/** An object's dictionary with any stream payload removed, trimmed. */
+/**
+ * The same text with the contents of every literal string blanked out.
+ *
+ * Every parser in this file reads a dictionary as text and matches against it, and a
+ * literal string is arbitrary text that happens to sit inside that dictionary. So
+ * `alt="see object 999 0 R"` makes a scan for indirect references find one, and
+ * `alt="a stream of monthly revenue"` makes a scan for the `stream` keyword find one.
+ * Both were measured doing real damage:
+ *
+ *   - a document whose alt text read "see object 999 0 R" had every gated repair
+ *     rejected, so it shipped with no author and no XMP packet at all;
+ *   - `dictOf` cut a Figure element's dictionary at the word inside the alt, so the
+ *     repair decided the figure was undescribed and silently did nothing;
+ *   - a link whose URL contained "stream" was cut before its /Contents, so the
+ *     idempotence guard missed and a second pass wrote a duplicate key.
+ *
+ * The contents are replaced with spaces rather than removed, so every offset, length and
+ * slice in the caller still refers to the same place. That is the whole reason this is a
+ * function and not a regex.
+ *
+ * Only literal strings are masked. A hex string is a run of hex digits, so it cannot
+ * contain the delimiters being searched for, and masking it would stop callers reading
+ * values they legitimately need -- an /Alt written as UTF-16BE, for one.
+ *
+ * Escapes are honoured, so a `\)` does not end the string and `\(` inside it is not
+ * mistaken for the opening of a nested one.
+ */
+export function maskStrings(text: string): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i]!;
+    if (ch !== "(") { out += ch; i++; continue; }
+    // Copy the delimiters so a caller matching on "(" or ")" still sees the string's
+    // extent; blank only what is between them.
+    out += "(";
+    i++;
+    let body = "";
+    for (;;) {
+      if (i >= text.length) { out += body; break; }
+      const c = text[i]!;
+      if (c === "\\") {
+        // Keep the pair, blanking neither, so a `\)` does not look like a close and a
+        // `\(` does not look like an open.
+        out += text.slice(i, i + 2);
+        i += 2;
+        continue;
+      }
+      if (c === ")") { out += body + ")"; i++; break; }
+      body += c === "\n" ? "\n" : " ";
+      i++;
+    }
+  }
+  return out;
+}
+
+/**
+ * An object's dictionary with any stream payload removed, trimmed. Values are intact.
+ *
+ * Use this to read a value -- `/Alt (a logo)`, `/URI (https://x.example/)`. For finding
+ * *structure* inside a dictionary use dictCode, which blanks string contents first.
+ */
 export function dictOf(o: Obj): string {
   const text = o.bytes.toString(LATIN1);
-  const at = text.search(/\bstream\b/);
+  // The keyword is found in the masked copy and applied to the original. Searching the
+  // original truncated the dictionary at the word "stream" inside a value -- a link whose
+  // URL contained it lost everything after the URL, including the /Contents the repair
+  // needed to look for.
+  const at = maskStrings(text).search(/\bstream\b/);
   return (at === -1 ? text : text.slice(0, at)).trim();
+}
+
+/**
+ * An object's dictionary with string contents blanked, for searching rather than reading.
+ *
+ * A literal string is arbitrary text sitting inside a dictionary, so anything searched
+ * for in code can be found in one by accident. Measured: `/Alt (a stream of monthly
+ * revenue)` made the figure look undescribed and the repair silently did nothing;
+ * `/URI (https://x.example/stream/)` cut the annotation before its /Contents, so the
+ * idempotence guard missed and a second pass wrote a duplicate key.
+ *
+ * Lengths are preserved, so offsets found here index into dictOf's output.
+ */
+export function dictCode(o: Obj): string {
+  return maskStrings(dictOf(o));
 }
 
 /**
@@ -186,7 +272,10 @@ export function dictOf(o: Obj): string {
  * reported as missing. Skipping a `<<` group therefore means skipping it to its *matching*
  * `>>`, counting rather than searching, because these dictionaries nest.
  */
-export function kidsOf(text: string): number[] {
+export function kidsOf(rawText: string): number[] {
+  // Masked: /Alt (/K 99 0 R) would otherwise read as a child reference, and a document
+  // that said so had every gated repair rejected.
+  const text = maskStrings(rawText);
   const kids = /\/K\s*(?:\[([\s\S]*?)\]|(\d+) 0 R)/.exec(text);
   if (!kids) return [];
   if (kids[2]) return [Number(kids[2])];
@@ -210,7 +299,7 @@ export function kidsOf(text: string): number[] {
 
 export function structElementsInOrder(parts: Parts, role: string): number[] {
   const byNum = new Map<number, string>();
-  for (const o of parts.objs) byNum.set(o.num, dictOf(o));
+  for (const o of parts.objs) byNum.set(o.num, dictCode(o));
 
   // The catalog holds /StructTreeRoot N 0 R. Found by scanning, because the
   // StructTreeRoot object itself does not name its own number.
@@ -283,9 +372,14 @@ export function inflatedStream(o: Obj, inflate: (b: Buffer) => Buffer): Buffer |
   }
 }
 
-/** The dictionary half of a stream object, up to the `stream` keyword. */
+/**
+ * The dictionary half of a stream object, up to the `stream` keyword.
+ *
+ * Masked, for the same reason as dictOf: a dictionary carrying `/Producer (upstream)`
+ * ends at the word inside the string, and every key after it becomes invisible.
+ */
 export function streamDict(o: Obj): string {
-  const text = o.bytes.toString(LATIN1);
+  const text = maskStrings(o.bytes.toString(LATIN1));
   const marker = text.match(/stream\r?\n/);
   return text.slice(0, marker?.index ?? text.length);
 }

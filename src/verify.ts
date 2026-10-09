@@ -28,7 +28,7 @@
  * wrong.
  */
 
-import { streamRange, trySplit, type Obj } from "./pdfparts.ts";
+import { dictCode, maskStrings, streamDict, streamRange, trySplit, type Obj } from "./pdfparts.ts";
 
 const LATIN1 = "latin1" as BufferEncoding;
 
@@ -121,22 +121,45 @@ export function verify(pdf: Uint8Array, original?: Uint8Array): Verification {
   }
 
   // 3. Every indirect reference resolves.
+  //
+  // Scanned against the file with literal strings masked out. A literal string is
+  // arbitrary text sitting inside a dictionary, so a document whose alt text read "see
+  // object 999 0 R" produced a reference to an object that does not exist -- and since
+  // this check is what rejects a repair, every gated repair was discarded and the
+  // document shipped with no author and no XMP packet. Measured before the masking.
+  //
+  // Scanned over the code only -- each object's dictionary and the trailer, with literal
+  // strings masked and stream payloads left out entirely. A payload is data, so a
+  // reference-shaped string inside one is not a reference: the XMP packet is XML, and a
+  // document titled "object 999 0 R" had the title written into the packet and then
+  // rejected for naming an object that does not exist. Masking literals alone was not
+  // enough for that one.
+  const parts = trySplit(pdf);
   const defined = index(pdf);
   for (const m of text.matchAll(/(?:^|[^0-9])(\d+) \d+ obj\b/g)) defined.set(Number(m[1]), "");
-  for (const m of text.matchAll(/(?:^|[^0-9])(\d+) 0 R\b/g)) {
-    if (!defined.has(Number(m[1]))) {
-      failures.push(`a reference to object ${m[1]} that does not exist`);
-      break;
+  const codeRegions: string[] = parts
+    ? [...parts.objs.map((o) => dictCode(o)), maskStrings(parts.trailer.toString(LATIN1))]
+    : [maskStrings(text)];
+  for (const region of codeRegions) {
+    for (const m of region.matchAll(/(?:^|[^0-9])(\d+) 0 R\b/g)) {
+      if (!defined.has(Number(m[1]))) {
+        failures.push(`a reference to object ${m[1]} that does not exist`);
+        break;
+      }
     }
+    if (failures.some((f) => f.startsWith("a reference to"))) break;
   }
 
   // Every stream's declared length must match what follows it, or a reader stops
   // at the wrong offset and the rest of the file is noise.
-  for (const o of trySplit(pdf)?.objs ?? []) {
-    const body = o.bytes.toString(LATIN1);
-    const len = body.split("stream")[0]!.match(/\/Length\s+(\d+)/);
-    const at = body.match(/stream\r?\n/);
-    if (!len || !at || at.index === undefined) continue;
+  for (const o of parts?.objs ?? []) {
+    // The dictionary half, taken by masking rather than by splitting on the substring
+    // "stream". A dictionary carrying `/Producer (upstream)` before its /Length was cut
+    // there, so the length check was skipped entirely and a payload of the wrong size
+    // passed -- and /Length is the check that would catch a repair that resized one.
+    const body = maskStrings(o.bytes.toString(LATIN1));
+    const len = streamDict(o).match(/\/Length\s+(\d+)/);
+    if (!len) continue;
     const range = streamRange(o.bytes);
     if (!range) {
       failures.push(`object ${o.num} has a stream with no endstream`);

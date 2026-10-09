@@ -32,7 +32,7 @@
  * because stripping a Figure role from something that has no described child would
  * remove semantics rather than correct them.
  */
-import { dictOf, join, kidsOf, LATIN1, structElementsInOrder, trySplit, type Obj, type Parts } from "./pdfparts.ts";
+import { dictCode, join, kidsOf, LATIN1, structElementsInOrder, trySplit, type Obj, type Parts } from "./pdfparts.ts";
 
 /** A structure element's description, if it has one. */
 function hasDescription(text: string): boolean {
@@ -51,7 +51,7 @@ function rolePattern(role: string): RegExp {
  * caller can report what changed.
  */
 export function redundantFigures(parts: Parts): number[] {
-  const byNum = new Map<number, string>(parts.objs.map((o) => [o.num, dictOf(o)]));
+  const byNum = new Map<number, string>(parts.objs.map((o) => [o.num, dictCode(o)]));
   const figures = structElementsInOrder(parts, "Figure");
   if (figures.length === 0) return [];
 

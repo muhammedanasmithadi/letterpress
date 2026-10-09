@@ -247,4 +247,27 @@ describe("link descriptions", () => {
       await tab.close();
     }
   }, 60_000);
+  /* ---------------------------------------------------------------- *
+   * The word "stream" in the link's own text
+   *
+   * The idempotence guard looks for an existing /Contents, and it reads the annotation's
+   * dictionary. A URL containing "stream" used to end that dictionary at the word, so the
+   * guard could not see a key that was already there, and a second pass wrote a second
+   * one -- a duplicate key in a file that still passed verify.
+   *
+   * Not reachable through render, which runs the repair once. Latent, and the module
+   * claims idempotence.
+   * ---------------------------------------------------------------- */
+
+  test("a URL containing the word stream is described once, not twice", async () => {
+    const r = await render(browser, {
+      html: DOC(`<p><a href="https://example.com/stream/latest">x</a></p>`),
+      author: "t",
+    });
+    expect(readAnnots(r.pdf)).toEqual([["https://example.com/stream/latest", "x"]]);
+    // Drive a second pass directly, with the description count the repair needs.
+    const again = fixLinkDescs(r.pdf, ["x"]);
+    expect(readAnnots(again)).toEqual(readAnnots(r.pdf));
+    expect(verify(again).ok).toBe(true);
+  }, 90_000);
 });

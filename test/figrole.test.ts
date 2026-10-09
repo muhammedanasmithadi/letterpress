@@ -284,4 +284,41 @@ describe("redundantFigures on a structure tree that is a graph", () => {
     // dictionary instead of stopping at the page it names.
     expect(redundantFigures(trySplit(pdf)!)).toEqual([4]);
   });
+  /* ---------------------------------------------------------------- *
+   * The word "stream" inside an /Alt
+   *
+   * hasDescription reads the element's dictionary to see whether it carries an /Alt.
+   * Alt text reading "a stream of monthly revenue" used to end that dictionary at the
+   * word, leaving "/Alt (a" with no closing parenthesis -- so the figure looked
+   * undescribed, the container above it stopped qualifying for re-tagging, and the
+   * repair did nothing at all while reporting nothing wrong.
+   *
+   * Measured both ways on the fixture below: redundantFigures returns [4] with the fix
+   * and [] without it.
+   *
+   * clause 7.3 keeps failing in that case, silently.
+   * ---------------------------------------------------------------- */
+
+});
+
+describe("redundantFigures when the alt text carries the word stream", () => {
+  test("a figure whose /Alt contains the word stream still counts as described", () => {
+    const pdf = tree({
+      3: "<</Type /StructElem /S /Document /K [4 0 R]>>",
+      4: "<</Type /StructElem /S /Figure /K [5 0 R]>>",
+      5: "<</Type /StructElem /S /Figure /Alt (a stream of monthly revenue)>>",
+    }, "3 0 R");
+    // 4 has no /Alt of its own and 5 below it does, so 4 qualifies and is re-tagged.
+    expect(redundantFigures(trySplit(pdf)!)).toEqual([4]);
+    expect(Buffer.from(fixRedundantFigures(pdf)).toString(LATIN1))
+      .toContain("4 0 obj\n<</Type /StructElem /S /Div");
+  });
+
+  test("a lone described figure mentioning stream has no container and re-tags nothing", () => {
+    const pdf = tree({
+      3: "<</Type /StructElem /S /Document /K [4 0 R]>>",
+      4: "<</Type /StructElem /S /Figure /Alt (a stream of monthly revenue)>>",
+    }, "3 0 R");
+    expect(Buffer.from(fixRedundantFigures(pdf)).equals(pdf)).toBe(true);
+  });
 });

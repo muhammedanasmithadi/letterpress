@@ -81,6 +81,27 @@ To make this work the document and its images are served together over loopback
 rather than opened as files. A `file://` image taints the canvas, so it cannot
 be read back for resizing at all.
 
+### Assets beside the document
+
+A document may only read files inside its own directory. That is the safe
+default: an HTML file that references `../../etc/passwd` must not become a way
+to read outside it.
+
+It is narrower than most sites need. A page at `site/lessons/x.html`
+referencing `../assets/styles.css` is ordinary layout, and it is refused. Name
+the site root and it is allowed:
+
+```
+bun src/cli.ts --root site site/lessons/x.html -o lesson.pdf
+```
+
+`--root` bounds where a resolved path may land; it does not change what a
+relative path means, so a document that says `assets/styles.css` still resolves
+against its own directory. A stylesheet's `@import`s and a module script's
+`import`s are followed to the same boundary. A reference that lands outside it
+and names a file that exists is reported as `asset-outside-root`, with the flag
+and the directory to pass.
+
 ## Findings
 
 `--json` returns a `findings` array. Warnings and errors also go to stderr, and
@@ -99,6 +120,8 @@ of the summary.
 | `unfilled-placeholder` | the document still contains `{{token}}` |
 | `json-rendered` | a data file was printed as a document |
 | `network-blocked` | a remote request was blocked, with its URL |
+| `subresource-failed` | a referenced asset did not load, so the pdf will not look like the source |
+| `asset-outside-root` | the document references a file that exists but sits outside its own directory; pass `--root` |
 
 ## Right-to-left text
 
@@ -149,7 +172,7 @@ escaped and printed.
 ## Development
 
 ```bash
-bun test          # 404 tests across 18 files
+bun test          # 461 tests across 19 files
 bun run bench     # cold start, concurrency and footprint, cross-runtime
 bun run typecheck
 ```

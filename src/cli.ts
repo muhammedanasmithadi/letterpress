@@ -28,6 +28,10 @@ options
       --margin <length>   CSS length such as 15mm; needs --format, and is
                           ignored if the document declares @page margin
       --allow-network     permit remote http(s) requests instead of blocking
+      --root <dir>        directory the document's assets may be read from
+                          (default: the document's own directory). Needed when the
+                          document sits in a subdirectory and references ../assets --
+                          as most sites do
       --no-background     omit background graphics
       --max-image-ppi <n>  downsample images above this resolution (default
                           300, the print convention; 0 disables)
@@ -62,6 +66,7 @@ type Options = {
   landscape: boolean;
   margin?: string;
   allowNetwork: boolean;
+  root?: string;
   background: boolean;
   settleMs: number;
   timeoutMs: number;
@@ -116,6 +121,11 @@ export function parseArgs(argv: string[]): ParseResult {
         break;
       }
       case "--allow-network": opts.allowNetwork = true; break;
+      case "--root": {
+        const v = need(i, a); i++;
+        opts.root = v;
+        break;
+      }
       case "--no-background": opts.background = false; break;
       case "--settle": {
         const v = need(i, a); i++;
@@ -375,6 +385,7 @@ export async function main(argv: string[]): Promise<number> {
       settleMs: opts.settleMs,
       timeoutMs: opts.timeoutMs,
       maxImagePpi: opts.maxImagePpi || undefined,
+      root: opts.root,
       author: opts.author,
       subject: opts.subject,
       keywords: opts.keywords,

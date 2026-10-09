@@ -243,6 +243,33 @@ describe("stageAssets", () => {
     }
   });
 
+  test("follows a script's own module imports", async () => {
+    // The renderer already stages <script src>, so it has decided scripts affect the
+    // printed page. A script that pulls in a sibling was being lost silently.
+    const { root, work } = await site();
+    try {
+      await writeFile(join(root, "assets", "site.js"), "export const x = 1;\n");
+      await writeFile(join(root, "assets", "widget.js"), "import './site.js';\n");
+      await stageAssets('<script type="module" src="assets/widget.js"></script>', join(root, "index.html"), work);
+      expect(await staged(work)).toEqual(["assets/site.js", "assets/widget.js"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(work, { recursive: true, force: true });
+    }
+  });
+
+  test("a computed specifier is left alone rather than guessed at", async () => {
+    const { root, work } = await site();
+    try {
+      await writeFile(join(root, "assets", "dyn.js"), 'const n = "site"; import(`./${n}.js`);\n');
+      await stageAssets('<script type="module" src="assets/dyn.js"></script>', join(root, "index.html"), work);
+      expect(await staged(work)).toEqual(["assets/dyn.js"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(work, { recursive: true, force: true });
+    }
+  });
+
   test("a stylesheet cannot walk out of the document's own directory", async () => {
     // The containment rule is unchanged by following imports: paths resolve against the
     // importing file's directory, and a target outside the root is still refused.
@@ -255,6 +282,89 @@ describe("stageAssets", () => {
       expect(await staged(work)).toEqual(["assets/evil.css"]);
     } finally {
       for (const d of [root, work, outside]) await rm(d, { recursive: true, force: true });
+    }
+  });
+});
+
+
+/* ------------------------------------------------------------------ *
+ * A document in a subdirectory referencing ../assets
+ *
+ * The staging sandbox allowed a file only under the document's own directory, so
+ * `site/lessons/x.html` referencing `../assets/styles.css` -- ordinary layout, and how
+ * most sites are laid out -- was refused. Measured on a real ten-page site: eight pages
+ * rendered with no stylesheet at all, and the only symptom was a failed subresource
+ * naming a stylesheet that had loaded perfectly well.
+ *
+ * Widening is the caller's decision, because guessing wrong either loses a document's
+ * assets or opens a filesystem boundary. The default is unchanged.
+ * ------------------------------------------------------------------ */
+
+describe("the asset root", () => {
+  /** A site with the page in a subdirectory and its assets in the parent. */
+  async function site(): Promise<{ root: string; work: string }> {
+    const root = await mkdtemp(join(tmpdir(), "lp-root-site-"));
+    const work = await mkdtemp(join(tmpdir(), "lp-root-work-"));
+    await mkdir(join(root, "assets"), { recursive: true });
+    await mkdir(join(root, "lessons"), { recursive: true });
+    await writeFile(join(root, "assets", "styles.css"), "body { color: #123 }\n");
+    return { root, work };
+  }
+
+  const has = async (dir: string, rel: string) => {
+    try { await readdir(join(dir, rel)); return true; } catch { return false; }
+  };
+
+  test("by default a ../ reference is refused and reported, not silently dropped", async () => {
+    const { root, work } = await site();
+    const page = join(root, "lessons", "x.html");
+    try {
+      await writeFile(page, '<link rel="stylesheet" href="../assets/styles.css">');
+      const html = await Bun.file(page).text();
+      const refused = await stageAssets(html, page, work);
+      expect(await has(work, "assets")).toBe(false);
+      // And the caller is told which file and which flag, not just that something failed.
+      expect(refused).toEqual([{ ref: "../assets/styles.css", abs: join(root, "assets", "styles.css") }]);
+    } finally {
+      for (const d of [root, work]) await rm(d, { recursive: true, force: true });
+    }
+  });
+
+  test("a named root allows it, and only within that root", async () => {
+    const { root, work } = await site();
+    const page = join(root, "lessons", "x.html");
+    const outside = await mkdtemp(join(tmpdir(), "lp-root-out-"));
+    try {
+      await writeFile(page, [
+        '<link rel="stylesheet" href="../assets/styles.css">',
+        // One level further than the root reaches: still refused, because the root is a
+        // boundary and not a suggestion.
+        '<img src="../../secret.png">',
+      ].join("\n"));
+      await writeFile(join(outside, "secret.png"), "not really a png");
+      const html = await Bun.file(page).text();
+      const refused = await stageAssets(html, page, work, root);
+      expect(await has(work, "assets")).toBe(true);
+      expect(refused.every((r) => !r.ref.includes("secret"))).toBe(true);
+    } finally {
+      for (const d of [root, work, outside]) await rm(d, { recursive: true, force: true });
+    }
+  });
+
+  test("the root does not change what a relative path means", async () => {
+    // It bounds where a resolved path may land. Two documents in different directories
+    // both say `assets/styles.css`, and with one root each still resolves against itself.
+    const { root, work } = await site();
+    const page = join(root, "lessons", "x.html");
+    try {
+      await writeFile(page, '<link rel="stylesheet" href="assets/styles.css">');
+      const html = await Bun.file(page).text();
+      // Relative to the document, that is lessons/assets/styles.css -- which does not
+      // exist -- so naming the parent root must not paper over it.
+      await stageAssets(html, page, work, root);
+      expect(await has(work, "assets")).toBe(false);
+    } finally {
+      for (const d of [root, work]) await rm(d, { recursive: true, force: true });
     }
   });
 });

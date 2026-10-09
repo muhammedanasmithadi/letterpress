@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pdfInfo, pdfText } from "./poppler.ts";
@@ -178,4 +178,23 @@ test("help exits 0 and documents the formats", async () => {
   const r = await run(["--help"]);
   expect(r.code).toBe(0);
   expect(r.stdout).toContain("a3 a4 a5 legal letter tabloid");
+  expect(r.stdout).toContain("--root");
 }, 30_000);
+
+test("--root lets a document in a subdirectory reach its assets", async () => {
+  // The default refuses a ../ reference and says so; naming the root fixes it. Both halves
+  // are asserted, because a finding that does not name the flag is a count, not a diagnosis.
+  await mkdir(join(dir, "sub"), { recursive: true });
+  await mkdir(join(dir, "assets"), { recursive: true });
+  await writeFile(join(dir, "assets", "print.css"), "@page { size: A5; margin: 5mm }");
+  const page = join(dir, "sub", "page.html");
+  await writeFile(page, '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="../assets/print.css"><p>page</p>');
+
+  const without = await run(["--json", "--out", join(dir, "a.pdf"), page]);
+  expect(without.stdout).toContain("asset-outside-root");
+  expect(without.stdout).toContain("--root");
+
+  const withRoot = await run(["--json", "--root", dir, "--out", join(dir, "b.pdf"), page]);
+  expect(withRoot.stdout).not.toContain("asset-outside-root");
+  expect(withRoot.stdout).not.toContain("subresource-failed");
+}, 60_000);

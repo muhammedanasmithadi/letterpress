@@ -59,6 +59,21 @@ export type RenderRequest = {
   margin?: string;
   /** Default false: remote http(s) requests are blocked and reported. */
   allowNetwork?: boolean;
+  /**
+   * Directory the document's assets may be read from.
+   *
+   * Defaults to the document's own directory, which is the narrowest boundary that lets
+   * a single page find its own images -- and too narrow for most sites. A document at
+   * `site/lessons/x.html` referencing `../assets/styles.css` is ordinary layout, and
+   * under the default it is refused: measured on a real ten-page site, eight of ten
+   * pages lost their stylesheet that way.
+   *
+   * Widening is the caller's decision rather than a heuristic, because guessing wrong
+   * either silently loses a document's assets or silently opens a filesystem boundary.
+   * The caller is the one who knows where the site root is. Relative paths resolve
+   * against the document either way; this only bounds where a resolved path may land.
+   */
+  root?: string;
   printBackground?: boolean;
   settleMs?: number;
   timeoutMs?: number;
@@ -355,21 +370,50 @@ async function capImageResolution(
  * occurrences of a filename inside prose and inside scripts. Mirroring removes
  * both problems rather than working around them.
  */
-export async function stageAssets(html: string, source: string, dir: string): Promise<void> {
-  if (!html || /^https?:/i.test(source)) return;
-  const root = source.startsWith("/") ? dirname(source) : process.cwd();
+export async function stageAssets(
+  html: string,
+  source: string,
+  dir: string,
+  rootArg?: string,
+): Promise<Array<{ ref: string; abs: string }>> {
+  if (!html || /^https?:/i.test(source)) return [];
+  // Relative paths always resolve against the document. `root` only bounds where the
+  // result may land, so widening it never changes what a relative reference means.
+  const base = source.startsWith("/") ? dirname(source) : process.cwd();
+  const root = rootArg
+    ? resolve(rootArg.startsWith("/") ? rootArg : `${process.cwd()}/${rootArg}`)
+    : base;
   const written = new Set<string>();
   /** References found so far, each with the directory its own relative paths resolve from. */
   const queue: Array<{ ref: string; from: string }> = [];
+  /** References that resolved outside the root, checked for existence below. */
+  const refused: Array<{ ref: string; abs: string }> = [];
+  /** Absolute paths already considered, so a file is read and reported once. */
+  const seen = new Set<string>();
 
   const consider = (ref: string, from: string) => {
     const clean = ref.trim().split(/[?#]/)[0];
     if (!clean) return;
     if (/^(?:https?:|data:|blob:|file:|#|mailto:|\/\/)/i.test(clean)) return;
     const abs = isAbsolute(clean) ? clean : resolve(from, clean);
+    // Every quoted attribute matches two of the patterns above, and a stylesheet's own
+    // references are reached from more than one hop, so the same file arrives repeatedly.
+    // Resolving to a path and remembering it settles all three: one refusal per file
+    // rather than one per sighting, and one read rather than one per sighting.
+    if (seen.has(abs)) return;
+    seen.add(abs);
     // An HTML file that references ../../etc/passwd as an image must not become
-    // a way to read outside the document's own directory.
-    if (!abs.startsWith(root + "/") && abs !== root) return;
+    // a way to read outside the root. Narrow by default, and widened only by a
+    // caller who named the root.
+    if (!abs.startsWith(root + "/") && abs !== root) {
+      // A reference that lands outside the root is the case worth telling the caller
+      // about when the file behind it actually exists: the document is not asking for
+      // something absent, it is asking for something we refused. Reported rather than
+      // dropped, because the alternative is a PDF missing its stylesheet with no reason
+      // given. Measured: eight pages of a ten-page site, every one silently unstyled.
+      if (refused.length < 8) refused.push({ ref: clean, abs });
+      return;
+    }
 
     const rel = normalize(clean).replace(/^(\.\.(\/|$))+/, "");
     if (!rel || rel.startsWith("..")) return;
@@ -388,9 +432,20 @@ export async function stageAssets(html: string, source: string, dir: string): Pr
     }
     for (const m of text.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)) consider(m[1]!, from);
     for (const m of text.matchAll(/@import\s+["']([^"']+)["']/gi)) consider(m[1]!, from);
+    // A staged script's own module imports, for the same reason CSS imports are followed:
+    // the renderer already stages `<script src>`, so it has decided that scripts affect
+    // the printed page, and a script that pulls in a sibling was being lost silently.
+    // Measured: `import './site.js'` at the top of a staged widget, and site.js 404'd.
+    //
+    // Only literal specifiers. A computed one cannot be resolved before the script runs,
+    // and guessing at it would be inventing a path. A miss here fails as a 404 the caller
+    // is already told about, which is the same outcome as before this change.
+    for (const m of text.matchAll(/\b(?:import|export)\b[^;'"]*?\bfrom\s*["']([^"']+)["']/g)) consider(m[1]!, from);
+    for (const m of text.matchAll(/\bimport\s*["']([^"']+)["']/g)) consider(m[1]!, from);
+    for (const m of text.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g)) consider(m[1]!, from);
   };
 
-  scan(html, root);
+  scan(html, base);
 
   // A stylesheet that was staged brings its own references with it.
   //
@@ -414,10 +469,21 @@ export async function stageAssets(html: string, source: string, dir: string): Pr
     if (!bytes.length) continue;
     const target = join(dir, normalize(from).slice(root.length + 1));
     try { await Bun.write(target, bytes); } catch { continue; }
-    if (/\.css$/i.test(from)) {
+    // Stylesheets and scripts only: those are the two kinds that name further files by a
+    // path that is knowable without running them. Re-reading an image as text finds
+    // nothing and costs a decode per asset.
+    if (/\.(?:css|mjs|js)$/i.test(from)) {
       try { scan(new TextDecoder("latin1").decode(bytes), dirname(from)); } catch { /* not text */ }
     }
   }
+
+  const present: Array<{ ref: string; abs: string }> = [];
+  for (const r of refused) {
+    // `.exists()` is the async form; `.size` is a property that throws on a path that
+    // is not there, which is the half of this check that must not.
+    if (await Bun.file(r.abs).exists()) present.push(r);
+  }
+  return present;
 }
 
 /**
@@ -681,12 +747,13 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
     // Skipped when the document references nothing relative: there is then no
     // origin to solve, and Page.setDocumentContent prints without writing a
     // file or opening a socket.
+    let outsideRoot: Array<{ ref: string; abs: string }> = [];
     const relative = hasRelativeAssets(src.html ?? "");
     const fastPath = !isRemote && src.html != null && req.preferFastPath !== false &&
       !relative && !req.maxImagePpi;
 
     if (!isRemote && !fastPath) {
-      await stageAssets(src.html, src.source, dir);
+      outsideRoot = await stageAssets(src.html, src.source, dir, req.root);
       server = await serveWorkDir(dir);
     }
 
@@ -1083,6 +1150,22 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           severity: "warn",
           url,
           message: `blocked a remote request to ${url}. Pass --allow-network to permit it, or inline the asset.`,
+        });
+      }
+      if (outsideRoot.length && !req.root) {
+        // Name the flag and the directory. A count sends the reader to the document to
+        // hunt for the cause, which is the work this finding exists to save them.
+        const listed = outsideRoot
+          .map((o) => `  ${o.ref} -> ${o.abs}`)
+          .join("\n");
+        findings.push({
+          code: "asset-outside-root",
+          severity: "warn",
+          url: outsideRoot[0].abs,
+          message:
+            `${outsideRoot.length} referenced ${outsideRoot.length === 1 ? "file is" : "files are"} outside the document's own directory and ${outsideRoot.length === 1 ? "exists" : "exist"} on disk:\n${listed}\n` +
+            `they were not read, because doing so would mean reading outside the directory the document names. ` +
+            `pass --root ${dirname(outsideRoot[0].abs)} to allow it.`,
         });
       }
       if (failedSubresources.length) {

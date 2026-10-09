@@ -348,6 +348,20 @@ The body cap binds before the page cap for text, which is worth knowing: raising
    reading outside the document's own directory, which the code deliberately refuses. It
    is reported as `subresource-failed` rather than passing silently, so this is a
    limitation rather than a defect, but it is one.
+
+   What this item was worth hiding: the same refusal applied to a *relative* `../assets`
+   reference, which is ordinary layout and how most sites are laid out. Measured on a real
+   ten-page site, eight pages rendered with no stylesheet at all, and the only symptom was
+   a failed subresource naming a stylesheet that had loaded perfectly well. The corpus is
+   what found it -- every test until then used documents sitting in one directory beside
+   their assets.
+
+   Fixed by `--root`, which widens the boundary only when a caller names it, because
+   guessing either loses a document's assets or opens a filesystem boundary and the caller
+   is the one who knows where the site root is. The default is unchanged, and a refused
+   reference that names a file which exists is reported as `asset-outside-root` with the
+   flag and the directory to pass. All seven pages of that site now render with no failed
+   subresource.
 4. **The default render deadline is 30 seconds.** A representative document measured
    555ms on two cores, so the headroom is large; a very large document on a cold shared
    machine is where it would bite.

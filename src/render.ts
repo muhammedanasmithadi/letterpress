@@ -422,9 +422,12 @@ export async function stageAssets(
   // root may itself be reached through a link.
   const rootReal = await realpath(root).catch(() => root);
   const insideRoot = (p: string) => p === rootReal || p.startsWith(rootReal + "/");
+  // Compared against the root as written rather than as resolved. This decides only what
+  // gets *reported*, never what may be read -- see the loop below for that.
+  const lexicallyInside = (p: string) => p === root || p.startsWith(root + "/");
   const written = new Set<string>();
   /** References found so far, each with the directory its own relative paths resolve from. */
-  const queue: Array<{ ref: string; from: string }> = [];
+  const queue: Array<{ ref: string; from: string; outside: boolean }> = [];
   /** References that resolved outside the root, checked for existence below. */
   const refused: Array<{ ref: string; abs: string }> = [];
   /** Absolute paths already considered, so a file is read and reported once. */
@@ -441,24 +444,6 @@ export async function stageAssets(
     // rather than one per sighting, and one read rather than one per sighting.
     if (seen.has(abs)) return;
     seen.add(abs);
-    // An HTML file that references ../../etc/passwd as an image must not become
-    // a way to read outside the root. Narrow by default, and widened only by a
-    // caller who named the root.
-    if (!insideRoot(abs)) {
-      // Reported rather than dropped, because the alternative is a PDF missing its
-      // stylesheet with no reason given. Measured: eight pages of a ten-page site, every
-      // one silently unstyled.
-      //
-      // Every refusal is reported, with no check for whether the file is there. An
-      // existence check made this a yes/no oracle over arbitrary paths -- POST a document
-      // naming /etc/passwd and get a finding; name /etc/definitely-not-here and get none
-      // -- and `server.ts` hands findings to whoever made the request. The canonical path
-      // came back too. The content was refused either way, so what leaked was existence,
-      // which is not worth a diagnostic; the accompanying `subresource-failed` already
-      // names the URL that 404'd.
-      if (refused.length < 8) refused.push({ ref: clean, abs });
-      return;
-    }
 
     // Where the browser will look for it. Not the filesystem-root-relative path: the
     // document is served at `<origin>/input.html`, so a relative reference resolves
@@ -467,15 +452,18 @@ export async function stageAssets(
     // either way, and `sibling.css` -- a file sitting beside the document, the common
     // case -- was staged at `lessons/sibling.css` and requested as `/sibling.css`, so it
     // 404'd. A page that named its parent's stylesheet lost its own.
-    //
-    // `..` clamps at the origin rather than being refused, because that is what a
-    // browser does with it, and the bytes are still bounded by the root check above.
     const urlPath = clampedUrlPath(relative(base, abs));
     if (!urlPath) return;
     const target = join(dir, urlPath);
     if (!target.startsWith(dir + "/") || written.has(target)) return;
     written.add(target);
-    queue.push({ ref: clean, from: abs });
+    // The boundary is *not* checked here. It is checked once, below, against the path
+    // the filesystem resolves to -- and checking it here as well is what broke a document
+    // reached through a symlink: `rootReal` was resolved and `abs` was not, so a sibling
+    // beside the document compared against a different spelling of the same directory and
+    // was refused. A page under `.../aslink/lessons/` lost its stylesheet and was told to
+    // pass `--root` for a path already inside the directory it had named.
+    queue.push({ ref: clean, from: abs, outside: !lexicallyInside(abs) });
   };
 
   /** Every reference a document or stylesheet makes. */
@@ -518,7 +506,7 @@ export async function stageAssets(
   // Only stylesheets are re-scanned. `written` is marked before the file is queued, so
   // two stylesheets importing each other enqueue each other once and stop.
   while (queue.length) {
-    const { ref, from } = queue.shift()!;
+    const { ref, from, outside } = queue.shift()!;
     // The lexical check in `consider` reads the path as written. A symlink does not care:
     // `site/assets/link.png` can point at `/tmp/elsewhere/secret`, the prefix test passes,
     // and the file is read. Measured -- a symlink inside the document's own directory
@@ -528,9 +516,25 @@ export async function stageAssets(
     // answered what it actually points at. The root is resolved too, since a root that
     // is itself reached through a link would otherwise never match its own contents.
     const real = await realpath(from).catch(() => null);
-    if (!real) continue; // gone, or a broken link: nothing to stage
-    if (!insideRoot(real)) {
+    // The boundary, checked once and against the resolved path. An HTML file that
+    // references ../../etc/passwd as an image must not become a way to read outside the
+    // root: narrow by default, and widened only by a caller who named it.
+    if (real && !insideRoot(real)) {
       if (refused.length < 8 && !refused.some((r) => r.abs === real)) refused.push({ ref, abs: real });
+      continue;
+    }
+    if (!real) {
+      // Nothing there: a broken link, or a name with no file. Reported only when the
+      // name was outside the root to begin with -- a document naming an image that is
+      // missing from inside its own directory is not a boundary problem, and
+      // `subresource-failed` already says so.
+      //
+      // Reporting on existence rather than on refusal would be the oracle this avoids:
+      // POST a document naming /etc/passwd and get a finding, name a path that is not
+      // there and get none. `server.ts` hands findings to whoever asked.
+      if (outside && refused.length < 8 && !refused.some((r) => r.abs === from)) {
+        refused.push({ ref, abs: from });
+      }
       continue;
     }
 

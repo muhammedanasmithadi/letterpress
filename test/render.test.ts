@@ -514,4 +514,46 @@ describe("the asset root", () => {
       await rm(work, { recursive: true, force: true });
     }
   }, 30_000);
+  test("a document reached through a symlink to its site still finds its assets", async () => {
+    // A regression from 1e1bf89, found by an audit subagent. The boundary was checked in
+    // two places: once on the resolved root and once on the path as written. Comparing a
+    // resolved root against an unresolved path refuses a sibling that is not actually
+    // outside anything, so a page served under a link to its site lost its stylesheet and
+    // was told to pass --root for a path already inside the directory it had named.
+    const parent = await mkdtemp(join(tmpdir(), "lp-symlinkdoc-"));
+    const work = await mkdtemp(join(tmpdir(), "lp-symlinkdocw-"));
+    try {
+      await mkdir(join(parent, "site", "lessons"), { recursive: true });
+      await writeFile(join(parent, "site", "lessons", "sibling.css"), "body{color:#123}\n");
+      await writeFile(join(parent, "site", "lessons", "p.html"), '<link rel="stylesheet" href="sibling.css">');
+      await symlink(join(parent, "site"), join(parent, "aslink"));
+
+      const page = join(parent, "aslink", "lessons", "p.html");
+      const refused = await stageAssets(await Bun.file(page).text(), page, work);
+      expect(refused).toEqual([]);
+      expect(await staged(work)).toEqual(["sibling.css"]);
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+      await rm(work, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("the same document under --root named through the link behaves identically", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "lp-symlinkroot-"));
+    const work = await mkdtemp(join(tmpdir(), "lp-symlinkrootw-"));
+    try {
+      await mkdir(join(parent, "site", "lessons"), { recursive: true });
+      await writeFile(join(parent, "site", "lessons", "sibling.css"), "body{color:#123}\n");
+      await writeFile(join(parent, "site", "lessons", "p.html"), '<link rel="stylesheet" href="sibling.css">');
+      await symlink(join(parent, "site"), join(parent, "aslink"));
+
+      const page = join(parent, "aslink", "lessons", "p.html");
+      const refused = await stageAssets(await Bun.file(page).text(), page, work, join(parent, "aslink"));
+      expect(refused).toEqual([]);
+      expect(await staged(work)).toEqual(["sibling.css"]);
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+      await rm(work, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

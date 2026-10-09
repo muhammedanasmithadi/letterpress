@@ -45,12 +45,40 @@ export function split(raw: Buffer): Parts {
   const objs: Obj[] = [];
   for (let i = 0; i < starts.length; i++) {
     const from = starts[i].at;
-    // An object ends at its own `endobj`, not at the next header: a stream
-    // payload may contain bytes that look like one.
-    const endObj = text.indexOf("endobj", from);
     const next = i + 1 < starts.length ? starts[i + 1].at : trailerAt;
-    const to = endObj !== -1 && endObj + 6 <= next ? endObj + 6 : next;
-    objs.push({ num: starts[i].num, bytes: raw.subarray(from, to) });
+    // An object ends at its own `endobj` -- unless it is a stream object, whose payload
+    // is delimited by `stream` and `endstream` and may hold anything at all.
+    //
+    // Searching for the first `endobj` got that wrong in both directions. Measured: a
+    // stream whose dictionary carried `/Producer (endobj)` came back as 28 bytes with no
+    // range at all, and one whose *payload* began with those bytes as 38. Either way the
+    // object lost its stream, so a repair touching it would write back a truncated object
+    // and destroy the payload -- and the verification gate would see no payload on either
+    // side to compare, so it passed. The gate's whole job is to catch that.
+    //
+    // The keyword is found in the masked window, so a string carrying the word does not
+    // promote a plain dictionary into a stream object.
+    const window = text.slice(from, next);
+    const marker = maskStrings(window).match(/stream\r?\n/);
+    let to: number;
+    if (marker && marker.index !== undefined) {
+      // Last occurrence within this object, which is the documented convention: a
+      // payload may contain the bytes but cannot contain the keyword's own line ending
+      // before its own terminator without being ambiguous by construction.
+      const endKw = window.lastIndexOf("\nendstream");
+      if (endKw !== -1) {
+        let end = endKw + "\nendstream".length;
+        const tail = /^\s*endobj/.exec(window.slice(end));
+        if (tail) end += tail[0].length;
+        to = from + end;
+      } else {
+        to = next; // no terminator: fall through to the next header rather than guess
+      }
+    } else {
+      const endObj = text.indexOf("endobj", from);
+      to = endObj !== -1 && endObj + 6 <= next ? endObj + 6 : next;
+    }
+    objs.push({ num: starts[i].num, bytes: raw.subarray(from, Math.min(to, next)) });
   }
   // The trailer stops at the file's own `startxref`, not at `%%EOF`. Slicing to
   // `%%EOF` carries the old pointer along, and appending a fresh one then
@@ -271,30 +299,72 @@ export function dictCode(o: Obj): string {
  * as a structure element and stops descending, so an element's descendants can be
  * reported as missing. Skipping a `<<` group therefore means skipping it to its *matching*
  * `>>`, counting rather than searching, because these dictionaries nest.
+ *
+ * Arrays nest too. `/K [[1 0 R] [2 0 R]]` used to yield [1] and lose 2, because the array
+ * was extracted with a non-greedy `\[([\s\S]*?)\]` that stopped at the first `]`. The
+ * same counting finds the real end, and a nested array is descended into rather than
+ * skipped -- unlike an inline dictionary, it holds references and nothing else.
  */
+
+/** The text between `at`'s bracket pair and its match, or undefined when unbalanced. */
+function bracketed(text: string, at: number, open: string, close: string): string | undefined {
+  // Compared with startsWith rather than a two-character slice, because these delimiters
+  // are not all two characters: `text.slice(i, i + 2)` is never "[" except in the last
+  // byte of the string, so the single-character case silently matched nothing.
+  const width = open.length;
+  let depth = 0;
+  for (let i = at; i + width <= text.length; i += width) {
+    if (text.startsWith(open, i)) { depth++; continue; }
+    if (text.startsWith(close, i)) {
+      depth--;
+      if (depth === 0) return text.slice(at + width, i);
+    }
+  }
+  return undefined;
+}
+
+/** References named at the top level of `body`, descending into nested arrays. */
+function refsIn(body: string, depth: number): number[] {
+  // A bound independent of the bracket matching, so a file that opens more brackets than
+  // it closes cannot spin here.
+  if (depth > 32) return [];
+  const out: number[] = [];
+  let i = 0;
+  while (i < body.length) {
+    if (body.startsWith("<<", i)) {
+      const inner = bracketed(body, i, "<<", ">>");
+      if (inner === undefined) break;
+      i += inner.length + 4;
+      continue;
+    }
+    if (body[i] === "[") {
+      const inner = bracketed(body, i, "[", "]");
+      if (inner === undefined) break;
+      out.push(...refsIn(inner, depth + 1));
+      i += inner.length + 2;
+      continue;
+    }
+    const m = /^\s*(\d+) 0 R/.exec(body.slice(i));
+    if (m) { out.push(Number(m[1])); i += m[0].length; continue; }
+    i++;
+  }
+  return out;
+}
+
 export function kidsOf(rawText: string): number[] {
   // Masked: /Alt (/K 99 0 R) would otherwise read as a child reference, and a document
   // that said so had every gated repair rejected.
   const text = maskStrings(rawText);
-  const kids = /\/K\s*(?:\[([\s\S]*?)\]|(\d+) 0 R)/.exec(text);
-  if (!kids) return [];
-  if (kids[2]) return [Number(kids[2])];
-
-  const array = kids[1] ?? "";
-  const out: number[] = [];
-  let depth = 0;
-  let i = 0;
-  while (i < array.length - 1) {
-    const pair = array.slice(i, i + 2);
-    if (pair === "<<") { depth++; i += 2; continue; }
-    if (pair === ">>") { depth--; i += 2; continue; }
-    if (depth === 0) {
-      const m = /^\s*(\d+) 0 R/.exec(array.slice(i));
-      if (m) { out.push(Number(m[1])); i += m[0].length; continue; }
-    }
-    i++;
+  const at = /\/K\s*/.exec(text);
+  if (!at) return [];
+  let i = at.index + at[0].length;
+  while (i < text.length && /\s/.test(text[i]!)) i++;
+  if (text[i] === "[") {
+    const body = bracketed(text, i, "[", "]");
+    return body === undefined ? [] : refsIn(body, 0);
   }
-  return out;
+  const m = /^(\d+) 0 R/.exec(text.slice(i));
+  return m ? [Number(m[1])] : [];
 }
 
 export function structElementsInOrder(parts: Parts, role: string): number[] {

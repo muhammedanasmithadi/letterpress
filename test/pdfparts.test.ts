@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { deflateSync } from "node:zlib";
 import { dictCode, dictOf, insertIntoDict, kidsOf, maskStrings, streamDict, streamRange, structElementsInOrder, trySplit, join as joinParts, LATIN1, type Obj } from "../src/pdfparts.ts";
-import { verify } from "../src/verify.ts";
+import { contentPayloads, verify } from "../src/verify.ts";
 
 /**
  * The whole-file helpers, tested against the inputs that make each one look wrong.
@@ -141,6 +141,50 @@ describe("kidsOf", () => {
 
   test("no /K at all", () => {
     expect(kidsOf("<</Type /StructElem>>")).toEqual([]);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * Arrays nest, and a nested array is descended into
+   *
+   * The array used to be extracted with a non-greedy `\[([\s\S]*?)\]`, which stops
+   * at the first `]`. Measured on these inputs:
+   *
+   *   /K [[1 0 R] [2 0 R]]   ->  [1]     2 lost
+   *   /K [1 0 R [2 0 R] 3 0 R] -> [1, 2] 3 lost
+   *
+   * A lost child is a missed descendant, which is the same failure the inline-dictionary
+   * case above was written for: the walk stops short and the repair decides the figure
+   * below is undescribed.
+   *
+   * Chromium emits no nested arrays -- checked against its own output -- so this is
+   * robustness rather than a live defect. A nested array is descended into rather than
+   * skipped, because unlike an inline dictionary it holds references and nothing else.
+   * ---------------------------------------------------------------- */
+
+  test("a nested array is descended into, not cut at its first bracket", () => {
+    expect(kidsOf("<</K [[1 0 R] [2 0 R]]>>")).toEqual([1, 2]);
+    expect(kidsOf("<</K [1 0 R [2 0 R] 3 0 R]>>")).toEqual([1, 2, 3]);
+    expect(kidsOf("<</K [[[3 0 R]]]>>")).toEqual([3]);
+  });
+
+  test("an inline dictionary inside a nested array is still skipped", () => {
+    // Nested array holding a child, an object reference dictionary, then a sibling.
+    expect(kidsOf("<</K [[1 0 R <</Type /OBJR /Obj 7 0 R /Pg 2 0 R>>] [3 0 R]]>>")).toEqual([1, 3]);
+  });
+
+  test("unbalanced brackets yield nothing rather than a partial answer", () => {
+    expect(kidsOf("<</K [1 0 R [2 0 R>>")).toEqual([]);
+    expect(kidsOf("<</K [[[[1 0 R]>>")).toEqual([]);
+    expect(kidsOf("<</K [1 0 R")).toEqual([]);
+  });
+
+  test("nesting deeper than the bound terminates and returns nothing", () => {
+    // Bounded on purpose: the recursion carries its own limit so a file that opens more
+    // brackets than it closes cannot spin. Returning nothing is the safe answer -- it
+    // stops the walk short, which under-reports rather than inventing a descendant.
+    expect(kidsOf("<</K " + "[".repeat(200) + "1 0 R" + "]".repeat(200) + ">>")).toEqual([]);
+    // And the bound is far above anything a producer emits, so real nesting is unaffected.
+    expect(kidsOf("<</K " + "[".repeat(16) + "1 0 R" + "]".repeat(16) + ">>")).toEqual([1]);
   });
 });
 
@@ -319,5 +363,77 @@ describe("streamDict", () => {
   test("cuts at the keyword, leaving the payload out", () => {
     const o = { num: 1, bytes: Buffer.from("<< /Length 5 >> stream\nhello\nendstream", LATIN1) } as Obj;
     expect(streamDict(o).trim()).toBe("<< /Length 5 >>");
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * An object ends at its own `endobj` -- unless it is a stream
+ *
+ * `split()` used to search for the first `endobj` after an object's header, which is
+ * wrong twice over: the dictionary may carry those bytes as a value, and the payload may
+ * start with them. Either way the object came back truncated with no stream at all.
+ *
+ * The consequence was not just a missed check. The repair layer operates on the bytes
+ * `split()` returns and `join()` writes them back, so a repair touching such an object
+ * would have written a truncated object and destroyed the payload. And the verification
+ * gate, whose whole job is to catch that, saw no payload on either side and compared
+ * `[]` to `[]`.
+ *
+ * Measured on the fixtures below: the gate reports 1 content payload with this fixed and
+ * 0 without it, for both the dictionary and the payload case.
+ * ------------------------------------------------------------------ */
+
+/** A linear PDF whose object 4 is exactly `body`, everything else boilerplate. */
+function fileWithObject4(body: string): Buffer {
+  const bodies = [
+    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>\nendobj\n",
+    `4 0 obj\n${body}\nendobj\n`,
+    "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+  ];
+  const head = Buffer.from("%PDF-1.4\n", LATIN1);
+  const chunks: Buffer[] = [head];
+  const offsets: number[] = [];
+  let at = head.length;
+  for (const b of bodies) { offsets.push(at); at += b.length; chunks.push(Buffer.from(b, LATIN1)); }
+  let table = `xref\n0 ${bodies.length + 1}\n0000000000 65535 f \n`;
+  for (const off of offsets) table += `${String(off).padStart(10, "0")} 00000 n \n`;
+  chunks.push(Buffer.from(table, LATIN1));
+  chunks.push(Buffer.from(`trailer\n<< /Size ${bodies.length + 1} /Root 1 0 R >>\nstartxref\n${at}\n%%EOF\n`, LATIN1));
+  return Buffer.concat(chunks);
+}
+
+describe("split keeps a stream object whole", () => {
+  const CONTENT = "BT /F1 12 Tf (page one) Tj ET";
+  const cases: Array<[string, string, string]> = [
+    ["plain", `<< /Length ${CONTENT.length} >>\nstream\n${CONTENT}\nendstream`, CONTENT],
+    ["endobj in the dictionary", `<< /Producer (endobj) /Length ${CONTENT.length} >>\nstream\n${CONTENT}\nendstream`, CONTENT],
+    ["endobj in the payload", `<< /Length ${7 + CONTENT.length} >>\nstream\nendobj ${CONTENT}\nendstream`, `endobj ${CONTENT}`],
+  ];
+
+  for (const [name, body, payload] of cases) {
+    test(name, () => {
+      const pdf = fileWithObject4(body);
+      const o = trySplit(pdf)!.objs.find((x) => x.num === 4)!;
+      const range = streamRange(o.bytes);
+      expect(range).toBeDefined();
+      // The payload is recovered exactly, and it is the payload the page names.
+      expect(o.bytes.subarray(range!.start, range!.end).toString(LATIN1)).toBe(payload);
+      // And the object ends at its own endobj, not one further along.
+      expect(o.bytes.toString(LATIN1).endsWith("\nendstream\nendobj")).toBe(true);
+      expect(contentPayloads(pdf)).toEqual([payload]);
+      expect(verify(pdf).ok).toBe(true);
+    });
+  }
+
+  test("a string carrying the keyword does not make a plain object a stream", () => {
+    // The keyword is searched for in the masked window. Unmasked, the newline inside the
+    // /Alt would match `stream\r?\n` and the object would be measured as a stream with no
+    // payload, ending at some other object's endobj.
+    const pdf = fileWithObject4("<< /Alt (a stream\nof text) >>");
+    const o = trySplit(pdf)!.objs.find((x) => x.num === 4)!;
+    expect(streamRange(o.bytes)).toBeUndefined();
+    expect(o.bytes.toString(LATIN1)).toBe("4 0 obj\n<< /Alt (a stream\nof text) >>\nendobj");
   });
 });

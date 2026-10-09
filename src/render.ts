@@ -357,37 +357,67 @@ async function capImageResolution(
  */
 export async function stageAssets(html: string, source: string, dir: string): Promise<void> {
   if (!html || /^https?:/i.test(source)) return;
-  const base = source.startsWith("/") ? dirname(source) : process.cwd();
+  const root = source.startsWith("/") ? dirname(source) : process.cwd();
   const written = new Set<string>();
+  /** References found so far, each with the directory its own relative paths resolve from. */
+  const queue: Array<{ ref: string; from: string }> = [];
 
-  const consider = async (ref: string) => {
+  const consider = (ref: string, from: string) => {
     const clean = ref.trim().split(/[?#]/)[0];
     if (!clean) return;
     if (/^(?:https?:|data:|blob:|file:|#|mailto:|\/\/)/i.test(clean)) return;
-    const from = isAbsolute(clean) ? clean : resolve(base, clean);
+    const abs = isAbsolute(clean) ? clean : resolve(from, clean);
     // An HTML file that references ../../etc/passwd as an image must not become
     // a way to read outside the document's own directory.
-    if (!from.startsWith(base + "/") && from !== base) return;
+    if (!abs.startsWith(root + "/") && abs !== root) return;
 
     const rel = normalize(clean).replace(/^(\.\.(\/|$))+/, "");
     if (!rel || rel.startsWith("..")) return;
     const target = join(dir, rel);
     if (!target.startsWith(dir + "/") || written.has(target)) return;
-
-    let bytes: Buffer;
-    try { bytes = Buffer.from(await Bun.file(from).arrayBuffer()); } catch { return; }
-    if (!bytes.length) return;
-    await Bun.write(target, bytes);
     written.add(target);
+    queue.push({ ref: clean, from: abs });
   };
 
-  for (const m of html.matchAll(/(?:src|href)\s*=\s*["']([^"']+)["']/gi)) await consider(m[1]);
-  for (const m of html.matchAll(/(?:src|href)\s*=\s*([^\s>]+)/gi)) await consider(m[1].replace(/["']/g, ""));
-  for (const m of html.matchAll(/\bsrcset\s*=\s*["']([^"']+)["']/gi)) {
-    for (const candidate of m[1].split(",")) await consider(candidate.trim().split(/\s+/)[0]);
+  /** Every reference a document or stylesheet makes. */
+  const scan = (text: string, from: string) => {
+    for (const m of text.matchAll(/(?:src|href)\s*=\s*["']([^"']+)["']/gi)) consider(m[1]!, from);
+    for (const m of text.matchAll(/(?:src|href)\s*=\s*([^\s>]+)/gi)) consider(m[1]!.replace(/["']/g, ""), from);
+    for (const m of text.matchAll(/\bsrcset\s*=\s*["']([^"']+)["']/gi)) {
+      for (const candidate of m[1]!.split(",")) consider(candidate.trim().split(/\s+/)[0]!, from);
+    }
+    for (const m of text.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)) consider(m[1]!, from);
+    for (const m of text.matchAll(/@import\s+["']([^"']+)["']/gi)) consider(m[1]!, from);
+  };
+
+  scan(html, root);
+
+  // A stylesheet that was staged brings its own references with it.
+  //
+  // Staging used to read the document and nothing else, so a document whose own CSS
+  // imported further CSS lost everything past the first hop. Measured on a site whose
+  // stylesheet begins with sixteen `@import` lines: exactly one file was staged, the
+  // sixteen it imports were not, and the render reported one failed subresource for each.
+  // `print.css` among them, which for a renderer whose entire job is printing is the
+  // worst one to be missing.
+  //
+  // Their paths resolve against the *importing stylesheet's* directory, not the
+  // document's -- which is the same directory the file came from, so the containment
+  // rule above keeps holding unchanged.
+  //
+  // Only stylesheets are re-scanned. `written` is marked before the file is queued, so
+  // two stylesheets importing each other enqueue each other once and stop.
+  while (queue.length) {
+    const { from } = queue.shift()!;
+    let bytes: Buffer;
+    try { bytes = Buffer.from(await Bun.file(from).arrayBuffer()); } catch { continue; }
+    if (!bytes.length) continue;
+    const target = join(dir, normalize(from).slice(root.length + 1));
+    try { await Bun.write(target, bytes); } catch { continue; }
+    if (/\.css$/i.test(from)) {
+      try { scan(new TextDecoder("latin1").decode(bytes), dirname(from)); } catch { /* not text */ }
+    }
   }
-  for (const m of html.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)) await consider(m[1]);
-  for (const m of html.matchAll(/@import\s+["']([^"']+)["']/gi)) await consider(m[1]);
 }
 
 /**

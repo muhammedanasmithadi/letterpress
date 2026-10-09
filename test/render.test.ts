@@ -1,10 +1,10 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createServer } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Browser } from "../src/browser.ts";
-import { render } from "../src/render.ts";
+import { render, stageAssets } from "../src/render.ts";
 import { pdfFonts, pdfImages, pdfInfo, pdfText } from "./poppler.ts";
 
 let browser: Browser;
@@ -170,3 +170,91 @@ test("concurrent renders all succeed and agree on page count", async () => {
   for (const r of results) expect(r.info.pages).toBeGreaterThan(0);
   expect(new Set(results.map((r) => r.info.pages)).size).toBe(1);
 }, 60_000);
+
+/* ------------------------------------------------------------------ *
+ * A stylesheet brings its own references with it
+ *
+ * Staging read the document and nothing else, so a document whose CSS imported further
+ * CSS lost everything past the first hop. Measured on a real site whose stylesheet opens
+ * with sixteen `@import` lines: one file staged, sixteen missing, and the render reported
+ * one failed subresource for each -- among them print.css, which for a renderer whose
+ * whole job is printing is the worst file to be missing.
+ *
+ * Their paths resolve against the importing stylesheet's directory, not the document's.
+ * ------------------------------------------------------------------ */
+
+describe("stageAssets", () => {
+  /** A small site on disk, plus an empty work directory to stage into. */
+  async function site(): Promise<{ root: string; work: string }> {
+    const root = await mkdtemp(join(tmpdir(), "lp-site-"));
+    const work = await mkdtemp(join(tmpdir(), "lp-work-"));
+    await mkdir(join(root, "assets"), { recursive: true });
+    await mkdir(join(root, "fonts"), { recursive: true });
+    await writeFile(join(root, "assets", "tokens.css"), ":root { --ink: #123 }\n");
+    await writeFile(join(root, "assets", "print.css"), "@page { size: A4 }\n");
+    await writeFile(join(root, "fonts", "body.woff2"), "not really a font");
+    await writeFile(join(root, "assets", "main.css"), [
+      '@import url("tokens.css");',
+      '@import url("print.css");',
+      '@font-face { src: url("../fonts/body.woff2"); }',
+    ].join("\n"));
+    return { root, work };
+  }
+
+  const staged = async (dir: string): Promise<string[]> => {
+    const out: string[] = [];
+    const walk = async (d: string, prefix: string) => {
+      for (const e of await readdir(d, { withFileTypes: true })) {
+        if (e.isDirectory()) await walk(join(d, e.name), `${prefix}${e.name}/`);
+        else out.push(`${prefix}${e.name}`);
+      }
+    };
+    await walk(dir, "");
+    return out.sort();
+  };
+
+  test("follows a stylesheet's own imports and url() targets", async () => {
+    const { root, work } = await site();
+    try {
+      await stageAssets('<link rel="stylesheet" href="assets/main.css">', join(root, "index.html"), work);
+      expect(await staged(work)).toEqual([
+        "assets/main.css",
+        "assets/print.css",
+        "assets/tokens.css",
+        // A url() resolving up out of assets/ but staying inside the document's tree.
+        "fonts/body.woff2",
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(work, { recursive: true, force: true });
+    }
+  });
+
+  test("two stylesheets importing each other terminate", async () => {
+    const { root, work } = await site();
+    try {
+      await writeFile(join(root, "assets", "a.css"), '@import url("b.css");\n');
+      await writeFile(join(root, "assets", "b.css"), '@import url("a.css");\n');
+      await stageAssets('<link rel="stylesheet" href="assets/a.css">', join(root, "index.html"), work);
+      expect(await staged(work)).toEqual(["assets/a.css", "assets/b.css"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(work, { recursive: true, force: true });
+    }
+  });
+
+  test("a stylesheet cannot walk out of the document's own directory", async () => {
+    // The containment rule is unchanged by following imports: paths resolve against the
+    // importing file's directory, and a target outside the root is still refused.
+    const { root, work } = await site();
+    const outside = await mkdtemp(join(tmpdir(), "lp-outside-"));
+    try {
+      await writeFile(join(outside, "secret.css"), "body { color: red }\n");
+      await writeFile(join(root, "assets", "evil.css"), '@import url("../../../../../../etc/hostname");\n');
+      await stageAssets('<link rel="stylesheet" href="assets/evil.css">', join(root, "index.html"), work);
+      expect(await staged(work)).toEqual(["assets/evil.css"]);
+    } finally {
+      for (const d of [root, work, outside]) await rm(d, { recursive: true, force: true });
+    }
+  });
+});

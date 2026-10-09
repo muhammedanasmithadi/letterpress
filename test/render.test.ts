@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { Browser } from "../src/browser.ts";
@@ -467,4 +467,51 @@ describe("the asset root", () => {
       await rm(work, { recursive: true, force: true });
     }
   });
+  test("a symlink cannot pull a file in from outside the root", async () => {
+    // The prefix test reads the path as written, and a symlink does not care. Measured:
+    // `site/assets/link.txt` -> /tmp/elsewhere/secret.txt passed the check, was read, and
+    // was served over loopback. The boundary is checked against the resolved path instead,
+    // with the root resolved too so a root reached through a link still matches its own
+    // contents.
+    const root = await mkdtemp(join(tmpdir(), "lp-sym-"));
+    const work = await mkdtemp(join(tmpdir(), "lp-symw-"));
+    const outside = await mkdtemp(join(tmpdir(), "lp-symout-"));
+    try {
+      await mkdir(join(root, "assets"), { recursive: true });
+      await writeFile(join(root, "assets", "ok.css"), "body{color:#123}\n");
+      await writeFile(join(outside, "secret.txt"), "SECRET-OUTSIDE-ROOT");
+      await symlink(join(outside, "secret.txt"), join(root, "assets", "link.txt"));
+      const page = join(root, "x.html");
+      await writeFile(page, '<link rel="stylesheet" href="assets/link.txt">');
+      const refused = await stageAssets(await Bun.file(page).text(), page, work);
+
+      expect(await staged(work)).toEqual([]);
+      expect(refused.map((r) => r.abs)).toEqual([join(outside, "secret.txt")]);
+    } finally {
+      for (const d of [root, work, outside]) await rm(d, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 30_000);
+
+  test("a symlink that stays inside the root still works", async () => {
+    // Sites use them constantly; refusing all of them would be a worse bug than the one
+    // being fixed.
+    const root = await mkdtemp(join(tmpdir(), "lp-sym2-"));
+    const work = await mkdtemp(join(tmpdir(), "lp-sym2w-"));
+    try {
+      await mkdir(join(root, "assets"), { recursive: true });
+      await mkdir(join(root, "shared"), { recursive: true });
+      await writeFile(join(root, "shared", "real.css"), "body{color:#123}\n");
+      await symlink(join(root, "shared", "real.css"), join(root, "assets", "alias.css"));
+      const page = join(root, "x.html");
+      await writeFile(page, '<link rel="stylesheet" href="assets/alias.css">');
+      const refused = await stageAssets(await Bun.file(page).text(), page, work);
+
+      expect(await staged(work)).toEqual(["assets/alias.css"]);
+      expect(refused).toEqual([]);
+      expect(await Bun.file(join(work, "assets", "alias.css")).text()).toBe("body{color:#123}\n");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(work, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

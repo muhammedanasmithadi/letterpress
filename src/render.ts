@@ -1,5 +1,5 @@
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { rm } from "node:fs/promises";
+import { realpath, rm } from "node:fs/promises";
 import { Browser, type Tab } from "./browser.ts";
 import { fixFontDescriptors, unresolvedFontMetrics } from "./fontdesc.ts";
 import { addMetadata, isVolatileTitle, readDocInfo, setDocTitle } from "./meta.ts";
@@ -418,6 +418,10 @@ export async function stageAssets(
   // result may land, so widening it never changes what a relative reference means.
   const base = source.startsWith("/") ? dirname(source) : process.cwd();
   const root = rootArg ? absRoot(rootArg) : base;
+  // Both sides resolved, because the comparison below is between resolved paths and the
+  // root may itself be reached through a link.
+  const rootReal = await realpath(root).catch(() => root);
+  const insideRoot = (p: string) => p === rootReal || p.startsWith(rootReal + "/");
   const written = new Set<string>();
   /** References found so far, each with the directory its own relative paths resolve from. */
   const queue: Array<{ ref: string; from: string }> = [];
@@ -440,7 +444,7 @@ export async function stageAssets(
     // An HTML file that references ../../etc/passwd as an image must not become
     // a way to read outside the root. Narrow by default, and widened only by a
     // caller who named the root.
-    if (!abs.startsWith(root + "/") && abs !== root) {
+    if (!insideRoot(abs)) {
       // Reported rather than dropped, because the alternative is a PDF missing its
       // stylesheet with no reason given. Measured: eight pages of a ten-page site, every
       // one silently unstyled.
@@ -514,17 +518,32 @@ export async function stageAssets(
   // Only stylesheets are re-scanned. `written` is marked before the file is queued, so
   // two stylesheets importing each other enqueue each other once and stop.
   while (queue.length) {
-    const { from } = queue.shift()!;
+    const { ref, from } = queue.shift()!;
+    // The lexical check in `consider` reads the path as written. A symlink does not care:
+    // `site/assets/link.png` can point at `/tmp/elsewhere/secret`, the prefix test passes,
+    // and the file is read. Measured -- a symlink inside the document's own directory
+    // staged a file from outside the root and served its contents over loopback.
+    //
+    // So the boundary is checked against the resolved path, once the filesystem has
+    // answered what it actually points at. The root is resolved too, since a root that
+    // is itself reached through a link would otherwise never match its own contents.
+    const real = await realpath(from).catch(() => null);
+    if (!real) continue; // gone, or a broken link: nothing to stage
+    if (!insideRoot(real)) {
+      if (refused.length < 8 && !refused.some((r) => r.abs === real)) refused.push({ ref, abs: real });
+      continue;
+    }
+
     let bytes: Buffer;
-    try { bytes = Buffer.from(await Bun.file(from).arrayBuffer()); } catch { continue; }
+    try { bytes = Buffer.from(await Bun.file(real).arrayBuffer()); } catch { continue; }
     if (!bytes.length) continue;
     const target = join(dir, clampedUrlPath(relative(base, from)));
     try { await Bun.write(target, bytes); } catch { continue; }
     // Stylesheets and scripts only: those are the two kinds that name further files by a
-    // path that is knowable without running them. Re-reading an image as text finds
-    // nothing and costs a decode per asset.
+    // path that is knowable before they run. Re-reading an image as text finds nothing
+    // and costs a decode per asset.
     if (/\.(?:css|mjs|js)$/i.test(from)) {
-      try { scan(new TextDecoder("latin1").decode(bytes), dirname(from)); } catch { /* not text */ }
+      try { scan(new TextDecoder("latin1").decode(bytes), dirname(real)); } catch { /* not text */ }
     }
   }
 

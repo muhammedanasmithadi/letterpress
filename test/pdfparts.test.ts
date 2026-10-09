@@ -535,3 +535,50 @@ describe("maskStrings and comments", () => {
     expect(out).toContain("/Contents (x)");
   });
 });
+
+/* ------------------------------------------------------------------ *
+ * A literal string that spells an object header
+ *
+ * `alt="2 0 obj"` put `/Alt (2 0 obj)` into a Figure's dictionary, and split() read the
+ * two characters `2 0` as the start of an object. The dictionary was cut there, `/P`,
+ * `/Pg` and `/K` went with it, and the render shipped: verify() ok, no findings, and
+ * poppler printing `Syntax Error: Illegal character ')'`.
+ *
+ * Headers must now begin a line. Masking the file before scanning was the obvious fix and
+ * it is wrong -- maskStrings reads the text as syntax, and a stream payload is not syntax.
+ * An unbalanced `(` in binary data blanks every header after it and objects merge. That
+ * was measured too: a plain one-image document reported `/Length 293 but carries 860`.
+ *
+ * The scan is on the raw text with a line anchor, which has no payload problem.
+ * ------------------------------------------------------------------ */
+
+describe("split when a dictionary spells an object header", () => {
+  test("a string naming a header does not invent an object", () => {
+    const pdf = fileWithObject4("<< /Alt (2 0 obj) /P 9 0 R >>");
+    const parts = trySplit(pdf)!;
+    expect(parts.objs.map((o) => o.num)).toEqual([1, 2, 3, 4, 5]);
+    const o = parts.objs.find((x) => x.num === 4)!;
+    // Whole: the reference after the string is still in it, and check 3 can see it.
+    expect(o.bytes.toString(LATIN1)).toBe("4 0 obj\n<< /Alt (2 0 obj) /P 9 0 R >>\nendobj");
+    expect(verify(pdf).ok).toBe(false); // 9 0 R genuinely dangles
+  });
+
+  test("a real header still found at the start of a line", () => {
+    const pdf = fileWithObject4("<< /A 1 >>");
+    expect(trySplit(pdf)!.objs.find((x) => x.num === 4)!.bytes.toString(LATIN1))
+      .toBe("4 0 obj\n<< /A 1 >>\nendobj");
+    expect(verify(pdf).ok).toBe(true);
+  });
+
+  test("a header after a stream payload is found, which a masked scan would miss", () => {
+    // The reason the scan is not masked: the payload below contains an unbalanced "(",
+    // which a syntax-aware mask reads as opening a string and blanks for 800 bytes.
+    const payload = "x".repeat(400) + "(not a paren";
+    const pdf = fileWithObject4(`<< /Length ${payload.length} >>\nstream\n${payload}\nendstream`);
+    const parts = trySplit(pdf)!;
+    expect(parts.objs.map((o) => o.num)).toEqual([1, 2, 3, 4, 5]);
+    const o = parts.objs.find((x) => x.num === 4)!;
+    expect(streamRange(o.bytes)!.end - streamRange(o.bytes)!.start).toBe(payload.length);
+    expect(verify(pdf).ok).toBe(true);
+  });
+});

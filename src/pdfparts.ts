@@ -36,8 +36,28 @@ export function asBuffer(pdf: Uint8Array): Buffer {
  */
 export function split(raw: Buffer): Parts {
   const text = raw.toString(LATIN1);
+  // Object headers must begin a line. Both this code and Chromium write them there, and
+  // it is what separates a header from a literal string that happens to spell one:
+  //
+  //   <img alt="2 0 obj">   ->   /Alt (2 0 obj)
+  //
+  // Measured on a real render: the phantom header split the Figure's dictionary, `/P`,
+  // `/Pg` and `/K` went with it, and poppler printed `Syntax Error: Illegal character
+  // ')'` -- with verify() reporting ok and no findings, the same signature as the `endobj`
+  // case it shares a cause with.
+  //
+  // Masking the file first was the obvious fix and it is wrong: maskStrings reads the
+  // whole text as syntax, and a stream payload is not syntax. An unbalanced `(` in binary
+  // data blanks everything after it, real headers stop being found, and objects merge.
+  // Measured: with the masked scan, a plain one-image document reported `/Length 293 but
+  // carries 860 bytes`. The scan is therefore on the raw text with a line anchor, which
+  // has no payload problem.
+  //
+  // The residual: a literal string containing a newline and then a header-shaped line
+  // would still be read as one. Nothing this code writes can produce that, and the
+  // round-trip test in test/verify.test.ts is what would catch it if it started to.
   const starts: Array<{ num: number; at: number }> = [];
-  for (const m of text.matchAll(/(?:^|[^0-9])(\d+) \d+ obj\b/g)) {
+  for (const m of text.matchAll(/(?:^|\n)(\d+) \d+ obj\b/g)) {
     starts.push({ num: Number(m[1]), at: m.index + (m.index > 0 && m[0][0] !== "0" ? 1 : 0) });
   }
   const trailerAt = text.indexOf("\ntrailer\n");

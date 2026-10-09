@@ -30,7 +30,13 @@ import { readFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
 import { dictOf, inflatedStream, trySplit } from "../src/pdfparts.ts";
 
-/** `/K` as a bare integer, as a child reference, or as an array of either. */
+/**
+ * `/K` as a bare integer, as a child reference, or as an array of either.
+ *
+ * Deliberately wider than the renderer's `kidsOf`, because this is a reader rather than
+ * a repair: it has to show the MCID forms too, since an MCID the tree names but the
+ * stream lacks is exactly what a reader is looking for.
+ */
 const K_FORMS = /\/K\s*(\[[\s\S]*?\]|\d+\s+0\s+R|\d+)(?![\d.])/g;
 
 export function structureTree(pdf: Uint8Array): string[] {

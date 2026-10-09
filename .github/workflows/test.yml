@@ -1,0 +1,80 @@
+name: test
+
+# The suite runs a real browser and two independent PDF readers, so it is the only
+# thing standing between a change and a silently broken renderer. It has until now
+# only ever run on one machine, which is how a test reading its fixture from /tmp
+# survived: it passed there and would have failed anywhere else.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  # A new push supersedes an in-flight run rather than queueing behind it.
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suite:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+
+      # Chromium is not on the runner and cannot be apt-installed usefully: on Ubuntu
+      # that package is a snap wrapper, which does not work in a container. This action
+      # places a known build on PATH, which resolveChromium() finds by name.
+      - name: install chromium
+        uses: browser-actions/setup-chromium@v1
+        with:
+          chromium-version: 1406777
+
+      # poppler and ghostscript are the independent readers. Every real defect this
+      # project has found came from one of them or from veraPDF, never from this
+      # repository's own tests, so a run without them proves much less than it looks
+      # like it does.
+      - name: install the pdf readers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends poppler-utils ghostscript fonts-dejavu-core
+
+      # The headful parity test needs a display and skips without one. Skipping is
+      # better than failing, but running it is the point of having it, so the whole
+      # suite runs under a virtual framebuffer and the test executes for real.
+      - name: install a display
+        run: sudo apt-get install -y --no-install-recommends xvfb
+
+      - name: install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: typecheck
+        run: bun run typecheck
+
+      - name: test
+        run: xvfb-run -a bun test
+
+      # A rendered sample, so the run proves the whole path works rather than only that
+      # assertions pass: a browser that fails to launch fails every render test anyway,
+      # but this also catches a CLI that cannot write a file. The output path is
+      # --out; a second positional argument is a usage error, which is how this step
+      # first got written wrong.
+      - name: render from the cli
+        run: |
+          printf '<!doctype html><meta charset="utf-8"><title>ci</title><h1>Hello</h1><p>one two three</p>' > /tmp/ci.html
+          bun run render --out /tmp/ci.pdf /tmp/ci.html
+          test -s /tmp/ci.pdf
+          head -c 5 /tmp/ci.pdf | grep -q '%PDF-'
+          pdftotext /tmp/ci.pdf - | grep -q 'Hello'
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: rendered-pdf-on-failure
+          path: /tmp/ci.pdf
+          if-no-files-found: ignore

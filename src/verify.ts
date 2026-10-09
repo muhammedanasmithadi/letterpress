@@ -28,7 +28,7 @@
  * wrong.
  */
 
-import { trySplit, type Obj } from "./pdfparts.ts";
+import { streamRange, trySplit, type Obj } from "./pdfparts.ts";
 
 const LATIN1 = "latin1" as BufferEncoding;
 
@@ -62,12 +62,9 @@ export function contentPayloads(pdf: Uint8Array): string[] {
       for (const n of nums) {
         const target = byNum.get(n);
         if (!target) continue;
-        const text = target.bytes.toString(LATIN1);
-        const at = text.match(/stream\r?\n/);
-        if (!at || at.index === undefined) continue;
-        const end = text.lastIndexOf("\nendstream");
-        if (end <= at.index) continue;
-        out.push(text.slice(at.index + at[0].length, end));
+        const range = streamRange(target.bytes);
+        if (!range) continue;
+        out.push(target.bytes.toString(LATIN1).slice(range.start, range.end));
       }
     }
   }
@@ -140,12 +137,12 @@ export function verify(pdf: Uint8Array, original?: Uint8Array): Verification {
     const len = body.split("stream")[0]!.match(/\/Length\s+(\d+)/);
     const at = body.match(/stream\r?\n/);
     if (!len || !at || at.index === undefined) continue;
-    const end = body.lastIndexOf("\nendstream");
-    if (end <= at.index) {
+    const range = streamRange(o.bytes);
+    if (!range) {
       failures.push(`object ${o.num} has a stream with no endstream`);
       continue;
     }
-    const payload = o.bytes.subarray(at.index + at[0].length, end).length;
+    const payload = range.end - range.start;
     if (payload !== Number(len[1])) {
       failures.push(`object ${o.num} declares /Length ${len[1]} but carries ${payload} bytes`);
       break;

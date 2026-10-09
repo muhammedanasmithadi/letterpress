@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Browser } from "/home/anas/Projects/html2pdf/src/browser.ts";
 import { render } from "/home/anas/Projects/html2pdf/src/render.ts";
-import { trySplit } from "/home/anas/Projects/html2pdf/src/pdfparts.ts";
+import { streamRange, trySplit } from "/home/anas/Projects/html2pdf/src/pdfparts.ts";
 
 function xrefOk(pdf: Uint8Array): { ok: boolean; why: string } {
   const parts = trySplit(pdf);
@@ -40,15 +40,27 @@ function refsResolve(pdf: Uint8Array): boolean {
   return [...text.matchAll(/(?:^|[^0-9])(\d+) 0 R\b/g)].every((m) => d.has(Number(m[1])));
 }
 
+/**
+ * The check is written out rather than imported from `src/verify.ts`, which is the
+ * point of this file: a gate that is asked whether it can tell a repair from a
+ * corruption cannot ask the gate itself. Importing it would make the answer true by
+ * construction.
+ *
+ * The stream-extent primitive *is* shared, though. "Which bytes are the payload" is a
+ * parsing fact rather than a policy, and this file previously disagreed with verify.ts
+ * about it at the boundary -- one compared `end` against the start of the payload, the
+ * other against the start of the keyword. A disagreement there produces a false verdict
+ * in either direction, which would make this tool's answer meaningless.
+ */
 function lengthsMatch(pdf: Uint8Array): boolean {
   const text = Buffer.from(pdf).toString("latin1");
   for (const m of text.matchAll(/(?:^|[^0-9])(\d+) 0 obj\b([\s\S]*?)\bendobj/g)) {
     const body = m[2]!;
     const len = body.split("stream")[0]!.match(/\/Length (\d+)/);
-    const at = body.match(/stream\r?\n/);
-    if (!len || !at || at.index === undefined) continue;
-    const end = body.lastIndexOf("\nendstream");
-    if (Buffer.from(body, "latin1").subarray(at.index + at[0].length, end).length !== Number(len[1])) return false;
+    if (!len) continue;
+    const range = streamRange(Buffer.from(body, "latin1"));
+    if (!range) continue;
+    if (range.end - range.start !== Number(len[1])) return false;
   }
   return true;
 }

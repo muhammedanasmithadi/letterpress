@@ -5,6 +5,7 @@ import { fixFontDescriptors, unresolvedFontMetrics } from "./fontdesc.ts";
 import { addMetadata } from "./meta.ts";
 import { fixToUnicode } from "./tounicode.ts";
 import { LINK_DESC_JS, fixLinkDescs, parseLinkDescs } from "./linkdesc.ts";
+import { fixRedundantFigures, redundantFigureCount } from "./figrole.ts";
 import { repairOrKeep } from "./verify.ts";
 import { audit } from "./lint.ts";
 import { declaredPageMargin, declaredPageSize, inspect, pageRules, type PdfInfo } from "./pdf.ts";
@@ -169,11 +170,6 @@ export function toInches(len: string): number {
     );
   }
   return value / ABSOLUTE_UNITS[unit];
-}
-
-export function fileUrl(path: string): string {
-  const abs = path.startsWith("/") ? path : `${process.cwd()}/${path}`;
-  return "file://" + abs.split("/").map(encodeURIComponent).join("/");
 }
 
 const close = (a: number, b: number) => Math.abs(a - b) < 0.05;
@@ -991,6 +987,37 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       described = gated(described, "font descriptor", fixFontDescriptors);
       if (linkDescs) {
         described = gated(described, "link description", (p) => fixLinkDescs(p, linkDescs!));
+      }
+
+      // Chromium tags a <figure> element and the <img> inside it as two nested Figure
+      // structure elements, and describes only the inner one. Clause 7.3 of PDF/UA-1
+      // requires every Figure to carry a description, so the container fails it while
+      // being nothing but a grouping. Re-tagging it Div is the fix that does not
+      // invent a description or repeat one.
+      //
+      // Reported rather than done quietly, because it changes what a screen reader
+      // walks and a caller reading the findings should know it happened.
+      const redundant = redundantFigureCount(described);
+      if (redundant > 0) {
+        const attempt = repairOrKeep(described, fixRedundantFigures);
+        if (attempt.failures.length) {
+          findings.push({
+            code: "repair-rejected",
+            severity: "warn",
+            message: `the figure-role fix was discarded because it did not leave a valid pdf: ` +
+              `${attempt.failures.join("; ")}. the file is chromium's own output, unmodified.`,
+          });
+        } else {
+          described = attempt.pdf;
+          findings.push({
+            code: "figure-role-corrected",
+            severity: "info",
+            message: `${redundant} figure ${redundant === 1 ? "element" : "elements"} ` +
+              `tagged as a grouping rather than a figure, because chromium tags both the ` +
+              `figure element and the image inside it as a figure and describes only the ` +
+              `image. each image keeps its own description.`,
+          });
+        }
       }
       described = gated(described, "metadata", (p) => addMetadata(p, {
         author,

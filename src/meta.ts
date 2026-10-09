@@ -27,7 +27,7 @@
  * or a fact the caller supplies; when neither does, none is written.
  */
 
-import { insertIntoDict, join, LATIN1, trySplit, type Obj } from "./pdfparts.ts";
+import { insertIntoDict, join, LATIN1, streamRange, trySplit, type Obj } from "./pdfparts.ts";
 
 /* ------------------------------------------------------------------ *
  * Escaping
@@ -372,15 +372,12 @@ export function readXmp(pdf: Uint8Array): { present: boolean; creator?: string }
   if (!ref) return { present: false };
   const stream = byNum.get(Number(ref[1]));
   if (!stream) return { present: false };
-  const text = stream.bytes.toString(LATIN1);
-  const at = text.match(/stream\r?\n/);
-  if (!at || at.index === undefined) return { present: false };
-  const end = text.lastIndexOf("\nendstream");
-  if (end <= at.index) return { present: false };
+  const range = streamRange(stream.bytes);
+  if (!range) return { present: false };
   // Decoded as UTF-8, since that is what the packet is written in. Read as
   // latin1 the same bytes are three characters per code point and the creator
   // name comes back mangled.
-  const payload = Buffer.from(text.slice(at.index + at[0].length, end), LATIN1).toString("utf8");
+  const payload = Buffer.from(stream.bytes.subarray(range.start, range.end)).toString("utf8");
   const creator = payload.match(/<dc:creator>[\s\S]*?<rdf:li(?:\s[^>]*)?>([\s\S]*?)<\/rdf:li>/)?.[1];
   return { present: true, creator: creator ? unescapeXml(creator) : undefined };
 }

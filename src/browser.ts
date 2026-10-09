@@ -252,4 +252,3 @@ export async function readDevToolsPort(proc: Subprocess, timeoutMs: number): Pro
   throw new Error(`chromium exposed no DevTools endpoint in ${timeoutMs}ms:\n${buf.slice(0, 400)}`);
 }
 
-export { CHROMIUM };

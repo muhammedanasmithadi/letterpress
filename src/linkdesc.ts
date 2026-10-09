@@ -128,10 +128,3 @@ export function fixLinkDescs(pdf: Uint8Array, descs: string[]): Uint8Array {
   if (changed === 0) return pdf;
   return new Uint8Array(join(parts.head, parts.objs, parts.trailer));
 }
-
-/** How many links went undescribed, for a finding. */
-export function undescribedLinks(pdf: Uint8Array, descs: string[]): number {
-  const parts = trySplit(pdf);
-  if (!parts) return 0;
-  return linkOrder(parts).filter((_, i) => !(descs[i] ?? "").trim()).length;
-}

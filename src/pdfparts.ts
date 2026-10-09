@@ -166,6 +166,21 @@ export function dictOf(o: Obj): string {
  * Lives here rather than in a repair, because matching a document node to the structure
  * element it produced needs it and the walk is the same either way.
  */
+/**
+ * Child object numbers of a structure element.
+ *
+ * `/K` has three shapes and only two of them name children: a bare reference, and an
+ * array mixing references with MCIDs. A bare integer is an MCID resolved against the
+ * element's `/Pg`, so treating it as a reference would walk to whichever unrelated
+ * object happened to share that number.
+ */
+export function kidsOf(text: string): number[] {
+  const kids = /\/K\s*(?:\[([\s\S]*?)\]|(\d+) 0 R)/.exec(text);
+  if (!kids) return [];
+  if (kids[2]) return [Number(kids[2])];
+  return [...(kids[1] ?? "").matchAll(/(\d+) 0 R/g)].map((m) => Number(m[1]));
+}
+
 export function structElementsInOrder(parts: Parts, role: string): number[] {
   const byNum = new Map<number, string>();
   for (const o of parts.objs) byNum.set(o.num, dictOf(o));
@@ -193,25 +208,49 @@ export function structElementsInOrder(parts: Parts, role: string): number[] {
     const text = byNum.get(num);
     if (text === undefined) return;
     if (/\/Type\s*\/StructElem/.test(text) && want.test(text)) order.push(num);
-    const kids = /\/K\s*(?:\[([\s\S]*?)\]|(\d+) 0 R)/.exec(text);
-    if (!kids) return;
-    const refs = kids[2] ? [Number(kids[2])] : [...(kids[1] ?? "").matchAll(/(\d+) 0 R/g)].map((x) => Number(x[1]));
-    for (const ref of refs) walk(ref, depth + 1);
+    for (const ref of kidsOf(text)) walk(ref, depth + 1);
   };
   walk(start, 0);
   return order;
 }
 
-/** Decompressed payload of a FlateDecode stream object, if that is what it is. */
-export function inflatedStream(o: Obj, inflate: (b: Buffer) => Buffer): Buffer | undefined {
-  const text = o.bytes.toString(LATIN1);
+/**
+ * The byte range of a stream object's payload.
+ *
+ * Written once because five call sites had the same four lines, in two variants that
+ * disagreed at the boundary: two compared `end <= startOfPayload` and two compared
+ * `end <= startOfKeyword`. Those differ by the length of the `stream\r?\n` marker, so a
+ * stream with a short payload was accepted by one and rejected by another. The rule for
+ * what a payload is has to be the same everywhere, and the verification gate is the
+ * worst place for it to differ.
+ */
+export function streamRange(bytes: Uint8Array): { start: number; end: number } | undefined {
+  const text = Buffer.isBuffer(bytes)
+    ? bytes.toString(LATIN1)
+    : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString(LATIN1);
   const marker = text.match(/stream\r?\n/);
   if (!marker || marker.index === undefined) return undefined;
-  const at = marker.index + marker[0].length;
+  const start = marker.index + marker[0].length;
   const end = text.lastIndexOf("\nendstream");
-  if (end <= at) return undefined;
+  // No endstream, or one at or before the payload began, means this is not a stream we
+  // can measure rather than an empty one. A zero-length payload is legal and yields
+  // start === end.
+  if (end < start) return undefined;
+  return { start, end };
+}
+
+/** The raw, still-encoded payload of a stream object. */
+export function rawStream(o: Obj): Buffer | undefined {
+  const range = streamRange(o.bytes);
+  return range ? o.bytes.subarray(range.start, range.end) : undefined;
+}
+
+/** Decompressed payload of a FlateDecode stream object, if that is what it is. */
+export function inflatedStream(o: Obj, inflate: (b: Buffer) => Buffer): Buffer | undefined {
+  const range = streamRange(o.bytes);
+  if (!range) return undefined;
   try {
-    return inflate(o.bytes.subarray(at, end));
+    return inflate(o.bytes.subarray(range.start, range.end));
   } catch {
     return undefined;
   }

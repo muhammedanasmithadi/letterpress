@@ -80,22 +80,29 @@ export function inspect(pdf: Uint8Array): PdfInfo {
   };
 }
 
-/** True when the PDF declares a page size in CSS via an @page size rule. */
-export function declaredPageSize(html: string): string | null {
+/**
+ * A declaration from the first `@page` rule that carries it.
+ *
+ * One function rather than one per property, because the two callers were the same
+ * loop over `pageRules` differing only in the property name, and the normalisation at
+ * the end is the part that has to agree.
+ */
+function declaredPageProp(html: string, prop: string): string | null {
   for (const rule of pageRules(html)) {
-    const m = rule.match(/\bsize\s*:\s*([^;}]+)/i);
-    if (m) return m[1].trim().replace(/\s+/g, " ").toLowerCase();
+    const m = new RegExp(`\\b${prop}\\s*:\\s*([^;}]+)`, "i").exec(rule);
+    if (m) return m[1]!.trim().replace(/\s+/g, " ").toLowerCase();
   }
   return null;
 }
 
+/** True when the PDF declares a page size in CSS via an @page size rule. */
+export function declaredPageSize(html: string): string | null {
+  return declaredPageProp(html, "size");
+}
+
 /** The declared @page margin, if any. */
 export function declaredPageMargin(html: string): string | null {
-  for (const rule of pageRules(html)) {
-    const m = rule.match(/\bmargin\s*:\s*([^;}]+)/i);
-    if (m) return m[1].trim().replace(/\s+/g, " ").toLowerCase();
-  }
-  return null;
+  return declaredPageProp(html, "margin");
 }
 
 /**

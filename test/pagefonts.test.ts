@@ -12,10 +12,10 @@
  * second page reuses the name `/F1` or binds its own `/F2`. Anything the two disagree about
  * is the name collision, not the document.
  */
-import { describe, expect, test } from "bun:test";
-import { join, trySplit, streamRange } from "../src/pdfparts.ts";
-import { inflateSync } from "node:zlib";
-import { textFlow } from "../src/selection.ts";
+import { describe, expect, test } from 'bun:test';
+import { join, trySplit, streamRange } from '../src/pdfparts.ts';
+import { inflateSync } from 'node:zlib';
+import { textFlow } from '../src/selection.ts';
 
 const BODY = (font: string): string =>
   `BT\n/${font} 10 Tf\n1 0 0 1 10 700 Tm\n<0001> Tj\n90 0 Td <0001> Tj\nET`;
@@ -23,7 +23,7 @@ const BODY = (font: string): string =>
 function file(sharedName: boolean): Uint8Array {
   const dict = (num: number, body: string) => ({
     num,
-    bytes: Buffer.from(`${num} 0 obj\n${body}\nendobj\n`, "latin1"),
+    bytes: Buffer.from(`${num} 0 obj\n${body}\nendobj\n`, 'latin1'),
   });
   const stream = (num: number, font: string) => {
     const text = BODY(font);
@@ -31,31 +31,31 @@ function file(sharedName: boolean): Uint8Array {
       num,
       bytes: Buffer.from(
         `${num} 0 obj\n<< /Length ${text.length} >>\nstream\n${text}\nendstream\nendobj\n`,
-        "latin1",
+        'latin1',
       ),
     };
   };
   // Page one binds /F1, page two binds /F1 again or /F2. Same font object either way.
-  const page2Font = sharedName ? "/F1 6 0 R" : "/F2 6 0 R";
+  const page2Font = sharedName ? '/F1 6 0 R' : '/F2 6 0 R';
   return join(
-    Buffer.from("%PDF-1.4\n", "latin1"),
+    Buffer.from('%PDF-1.4\n', 'latin1'),
     [
-      dict(1, "<< /Type /Catalog /Pages 2 0 R >>"),
-      dict(2, "<< /Type /Pages /Kids [3 0 R 7 0 R] /Count 2 >>"),
+      dict(1, '<< /Type /Catalog /Pages 2 0 R >>'),
+      dict(2, '<< /Type /Pages /Kids [3 0 R 7 0 R] /Count 2 >>'),
       dict(
         3,
-        "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        '<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
       ),
-      dict(4, "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /A /DW 500 /W [1 [100]] >>"),
-      stream(5, "F1"),
-      dict(6, "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /B /DW 500 /W [1 [1000]] >>"),
+      dict(4, '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /A /DW 500 /W [1 [100]] >>'),
+      stream(5, 'F1'),
+      dict(6, '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /B /DW 500 /W [1 [1000]] >>'),
       dict(
         7,
         `<< /Type /Page /Parent 2 0 R /Resources << /Font << ${page2Font} >> >> /Contents 8 0 R >>`,
       ),
-      stream(8, sharedName ? "F1" : "F2"),
+      stream(8, sharedName ? 'F1' : 'F2'),
     ],
-    Buffer.from("trailer\n<< /Root 1 0 R /Size 9 >>\n", "latin1"),
+    Buffer.from('trailer\n<< /Root 1 0 R /Size 9 >>\n', 'latin1'),
   );
 }
 
@@ -64,25 +64,24 @@ function streamText(pdf: Uint8Array, num: number): string {
   const o = trySplit(pdf)!.objs.find((x) => x.num === num)!;
   const range = streamRange(o.bytes)!;
   const raw = o.bytes.subarray(range.start, range.end);
-  return (/FlateDecode/.test(o.bytes.toString("latin1", 0, 120))
-    ? inflateSync(raw)
-    : raw
-  ).toString("latin1");
+  return (/FlateDecode/.test(o.bytes.toString('latin1', 0, 120)) ? inflateSync(raw) : raw).toString(
+    'latin1',
+  );
 }
 
-describe("font resources are page-local", () => {
-  test("the fixture differs only in whether the name collides", () => {
+describe('font resources are page-local', () => {
+  test('the fixture differs only in whether the name collides', () => {
     const shared = file(true);
     const distinct = file(false);
     // Each page names the resource it binds. A stream that names a font its page does not
     // bind cannot be read at all, which looks identical to a name collision and is not one.
-    expect(streamText(shared, 5)).toContain("/F1 10 Tf");
-    expect(streamText(shared, 8)).toContain("/F1 10 Tf");
-    expect(streamText(distinct, 5)).toContain("/F1 10 Tf");
-    expect(streamText(distinct, 8)).toContain("/F2 10 Tf");
+    expect(streamText(shared, 5)).toContain('/F1 10 Tf');
+    expect(streamText(shared, 8)).toContain('/F1 10 Tf');
+    expect(streamText(distinct, 5)).toContain('/F1 10 Tf');
+    expect(streamText(distinct, 8)).toContain('/F2 10 Tf');
   });
 
-  test("the two pages are measured the same however the font is named", () => {
+  test('the two pages are measured the same however the font is named', () => {
     const shared = textFlow(file(true));
     const distinct = textFlow(file(false));
     expect(shared).not.toBeNull();

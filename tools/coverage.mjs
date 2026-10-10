@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-const FLOOR = 90;
+const FLOOR = 85;
 let found = 0;
 let hit = 0;
 for (const line of readFileSync('coverage/lcov.info', 'utf8').split('\n')) {

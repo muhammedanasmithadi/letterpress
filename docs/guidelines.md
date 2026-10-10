@@ -5,7 +5,7 @@ Baseline 2026-10-10, Bun + TypeScript 7.0.2 codebase (18 src files, 23 test file
 ## Adopted, enforced in CI (`gates` job)
 
 - Format: Prettier 3.9.9 (`bunx prettier --check`). One-time normalization applied.
-- Lint: ESLint core recommended + `no-warning-comments` + `no-empty` (allowEmptyCatch for best-effort kills).
+- Lint: ESLint core recommended + `no-warning-comments` + `no-empty` (allowEmptyCatch for best-effort kills). Covers `tools/` (`.mjs`); `.ts` is covered by `tsc --noEmit` — type-aware lint is blocked until typescript-eslint supports TS 7.
 - Types: `tsc --noEmit`, clean.
 - Spelling: cspell 10 on `README.md` + `docs/*.md` (en-GB + 40 domain words in `cspell.yaml`).
 - Complexity ratchet: `tools/ratchet.mjs` fails on any NEW CC>15/L>200 function. 14 known breaches baselined in `waivers/baseline.lizard.txt`.

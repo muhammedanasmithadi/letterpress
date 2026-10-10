@@ -9,7 +9,7 @@
     "render": "bun src/cli.ts",
     "typecheck": "tsc --noEmit",
     "serve": "bun src/server.ts",
-    "lint": "eslint src test tools --max-warnings=0",
+    "lint": "eslint tools --max-warnings=0",
     "format:check": "prettier --check src test tools templates README.md docs",
     "spell": "cspell --no-progress --fail-fast --config cspell.yaml README.md docs/*.md",
     "ratchet": "bun tools/ratchet.mjs",

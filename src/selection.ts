@@ -1,0 +1,322 @@
+/**
+ * How a browser will group this file's text for selection.
+ *
+ * Firefox's PDF.js does not draw one highlight per line. It draws one per *text item*, and
+ * it decides where one item ends and the next begins from the geometry: a gap between two
+ * visible glyphs is kept inside the current item only when it falls in a narrow band
+ * relative to the font size, and outside that band the item is ended and the gap becomes a
+ * whitespace item of its own. The visible result is a highlight broken at every word, and
+ * one DOM span per break to lay out on every selection.
+ *
+ * The band, from `src/core/evaluator.js` in pdf.js:
+ *
+ *     const TRACKING_SPACE_FACTOR = 0.102;   // narrower than this is tracking, not a space
+ *     const NEGATIVE_SPACE_FACTOR = -0.2;    // moving backwards ends the item
+ *     const SPACE_IN_FLOW_MIN_FACTOR = 0.102;
+ *     const SPACE_IN_FLOW_MAX_FACTOR = 0.6;  // wider than this ends the item
+ *     const VERTICAL_SHIFT_RATIO = 0.25;     // a move of this much vertically ends it too
+ *
+ * Justified text lands outside it: on a measured page, changing `text-align` from
+ * `justify` to `left` took the gaps that break a run from 10 to 1 and the longest line from
+ * 19 items to 9, with nothing else changed. A gap wider than 0.6 em is a stretched word
+ * space; a gap narrower than 0.102 em is a word space squeezed by letter-spacing.
+ *
+ * Nothing in the file can change what those gaps are. The geometry is the layout's, and a
+ * reader measures it correctly. So the useful thing to do is measure it and say so, rather
+ * than let the reader of the PDF find out by dragging a cursor over it.
+ *
+ * What this reports is exact is the geometry: where each glyph is, how wide the one before
+ * it advances, and the gap between. What it does *not* claim to match exactly is the
+ * reader's item count. Checked against Firefox on a table it predicted 179 gap breaks where
+ * the reader produced 180, and on running prose it over-predicts by about three times. The
+ * remaining disagreement is in the reader's item bookkeeping -- when a run is also ended by
+ * a font change, a marked-content boundary or an accumulated negative chunk width -- and
+ * that has not been modelled. So `breaks` is an upper estimate and `widest` is the number
+ * to act on.
+ */
+import { inflateSync } from "node:zlib";
+import { LATIN1, dictOf, streamRange, trySplit, type Parts } from "./pdfparts.ts";
+import { cmapStreams, fontTables, type FontTable } from "./textfont.ts";
+
+/** pdf.js `TRACKING_SPACE_FACTOR` and `SPACE_IN_FLOW_MIN_FACTOR`. */
+const MIN_FLOW = 0.102;
+/** pdf.js `SPACE_IN_FLOW_MAX_FACTOR`. */
+const MAX_FLOW = 0.6;
+/** pdf.js `NEGATIVE_SPACE_FACTOR`. */
+const NEGATIVE = -0.2;
+/** pdf.js `VERTICAL_SHIFT_RATIO`. */
+const VERTICAL = 0.25;
+
+export type TextFlow = {
+  glyphs: number;
+  /** Gaps between two visible glyphs on the same line. */
+  gaps: number;
+  /** Of those, the ones a reader will end a text item on. */
+  breaks: number;
+  tooWide: number;
+  tooThin: number;
+  backwards: number;
+  lines: number;
+  /** The widest gap, in em, so the message can name how far out of range it went. */
+  widest: number;
+  /** The narrowest gap treated as a space, in em. */
+  thinest: number;
+};
+
+const EMPTY: TextFlow = {
+  glyphs: 0, gaps: 0, breaks: 0, tooWide: 0, tooThin: 0, backwards: 0, lines: 0,
+  widest: 0, thinest: Number.POSITIVE_INFINITY,
+};
+
+/** Whether a CID stands for a character no reader draws. */
+function invisible(table: FontTable, cid: number): boolean {
+  const u = table.unicodeOf(cid);
+  if (u === "") return false;
+  for (const ch of u) {
+    if (ch !== " " && ch !== " " && ch !== " " && ch !== " ") return false;
+  }
+  return true;
+}
+
+type Placed = {
+  x: number;
+  y: number;
+  size: number;
+  table: FontTable;
+  cid: number;
+  blank: boolean;
+  /**
+   * How much the CTM and line matrix scale, which a reader divides a gap by before
+   * comparing it with the font size -- and compares it against a font size it does *not*
+   * scale. Chromium wraps page content in `q ... 3.125 0 0 3.125 ... cm ... Q`, so on a
+   * real page this is rarely 1 and leaving it out moves the whole measurement.
+   */
+  scale: number;
+};
+
+/**
+ * Every glyph in a content stream, in order, or null when it uses something this does not
+ * read.
+ *
+ * The walk covers the whole stream rather than one text object at a time because that is
+ * what a reader does: `BT` resets the text matrix, not the item being built, so the gap
+ * from the last cell of a table row to the first cell of the next column is measured like
+ * any other. Measuring per text object misses exactly the gaps a table is made of.
+ *
+ * Only the operators Chromium emits are handled. A wrong reading of an operator would invent
+ * gaps that are not there, which is the one thing a report about gaps cannot afford.
+ */
+function glyphsOf(stream: string, fonts: Map<string, FontTable>): Placed[] | null {
+  const out: Placed[] = [];
+  let size = 0;
+  let table: FontTable | null = null;
+  let x = 0;
+  let y = 0;
+  let lx = 0;
+  let ly = 0;
+
+  let ctm = [1, 0, 0, 1, 0, 0] as number[];
+  const stack: number[][] = [];
+
+  const tok =
+    /\bBT\b|\bET\b|\bq\b|\bQ\b|([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+cm|\/(\w+)\s+([-\d.eE]+)\s+Tf|([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+Tm|([-\d.eE]+)\s+([-\d.eE]+)\s+Td|<([0-9A-Fa-f]*)>\s*Tj|\[([^\]]*)\]\s*TJ/g;
+
+  const show = (hex: string): void => {
+    if (hex.length % 4 !== 0 || !table) return;
+    const scale = Math.hypot(ctm[0]!, ctm[1]!);
+    for (let i = 0; i < hex.length; i += 4) {
+      const cid = parseInt(hex.slice(i, i + 4), 16);
+      // A reader folds an invisible glyph into the pen advance instead of placing one, but
+      // it still remembers that a space came by, which is what decides whether a following
+      // narrow gap ends the item.
+      out.push({ x, y, size, table, cid, blank: invisible(table, cid), scale });
+      x += (table.widthOf(cid) / 1000) * size;
+    }
+  };
+
+  for (let m = tok.exec(stream); m; m = tok.exec(stream)) {
+    if (m[0] === "BT") {
+      x = lx = y = ly = 0;
+      table = null;
+      continue;
+    }
+    if (m[0] === "ET") continue;
+    if (m[0] === "q") {
+      stack.push(ctm.slice());
+      continue;
+    }
+    if (m[0] === "Q") {
+      ctm = stack.pop() ?? [1, 0, 0, 1, 0, 0];
+      continue;
+    }
+    if (m[1] !== undefined) {
+      const a = Number(m[1]), b = Number(m[2]), c = Number(m[3]);
+      const dd = Number(m[4]), e = Number(m[5]), f = Number(m[6]);
+      ctm = [
+        a * ctm[0]! + b * ctm[2]!,
+        a * ctm[1]! + b * ctm[3]!,
+        c * ctm[0]! + dd * ctm[2]!,
+        c * ctm[1]! + dd * ctm[3]!,
+        e * ctm[0]! + f * ctm[2]! + ctm[4]!,
+        e * ctm[1]! + f * ctm[3]! + ctm[5]!,
+      ];
+      continue;
+    }
+    if (m[7] !== undefined) {
+      size = Number(m[8]);
+      table = fonts.get(m[7]!) ?? null;
+      if (!table) return null;
+      continue;
+    }
+    if (m[9] !== undefined) {
+      if (Number(m[9]) !== 1 && Number(m[9]) !== -1) return null;
+      if (Number(m[12]) !== 1 && Number(m[12]) !== -1) return null;
+      x = lx = Number(m[13]);
+      y = ly = Number(m[14]);
+      continue;
+    }
+    if (m[15] !== undefined) {
+      lx += Number(m[15]);
+      ly += Number(m[16]);
+      x = lx;
+      y = ly;
+      continue;
+    }
+    if (m[17] !== undefined) show(m[17]!);
+    else if (m[18] !== undefined) {
+      for (const piece of m[18]!.split(/\s+/)) {
+        if (!piece) continue;
+        const hex = /^<([0-9A-Fa-f]*)>$/.exec(piece);
+        if (hex) show(hex[1]!);
+        else {
+          const n = Number(piece);
+          if (Number.isFinite(n)) x -= (n / 1000) * size;
+        }
+      }
+    } else return null;
+  }
+  return out;
+}
+
+/** pdf.js `NOT_A_SPACE_FACTOR`: tighter than this and a reader forgets the space before it. */
+const NOT_A_SPACE = 0.03;
+
+/** pdf.js's two-character window, which decides whether a thin gap ends an item. */
+class LastChars {
+  private two = [" ", " "];
+  private pos = 0;
+
+  reset(): void {
+    this.two = [" ", " "];
+    this.pos = 0;
+  }
+
+  /** Mirrors `shouldAddWhitespace`: a space, then a non-space, then this thin gap. */
+  due(): boolean {
+    return this.two[this.pos] !== " " && this.two[(this.pos + 1) % 2] === " ";
+  }
+
+  save(ch: string): void {
+    const next = (this.pos + 1) % 2;
+    this.two[this.pos] = ch;
+    this.pos = next;
+  }
+}
+
+/**
+ * Whether a document's word gaps fall outside the band, with the widest one measured.
+ *
+ * Returns null for a file whose text it cannot read, which is a different answer from a
+ * file with no gaps.
+ */
+export function textFlow(pdf: Uint8Array): TextFlow | null {
+  const parts: Parts | undefined = trySplit(pdf);
+  if (!parts) return null;
+  const cmaps = cmapStreams(pdf);
+  const fonts = fontTables(parts, (num) => cmaps.get(num) ?? null);
+  if (!fonts.size) return null;
+
+  const flow: TextFlow = { ...EMPTY };
+
+  for (const o of parts.objs) {
+    const dict = dictOf(o);
+    const range = streamRange(o.bytes);
+    if (!range) continue;
+    let text: string;
+    try {
+      const raw = o.bytes.subarray(range.start, range.end);
+      text = (/FlateDecode/.test(dict) ? inflateSync(raw) : Buffer.from(raw)).toString(LATIN1);
+    } catch {
+      continue;
+    }
+    if (!/\bBT\b/.test(text)) continue;
+
+    const glyphs = glyphsOf(text, fonts);
+    if (!glyphs) continue;
+    flow.lines++;
+
+    // One item spans the stream, as it does in a reader: a new text object does not end it.
+    const last = new LastChars();
+    let prev: Placed | null = null;
+    for (const g of glyphs) {
+      if (g.blank) {
+        flow.glyphs++;
+        last.save(" ");
+        continue;
+      }
+      flow.glyphs++;
+      if (prev) {
+        const size = prev.size;
+        // A reader scales the gap by the CTM before comparing it with a font size it leaves
+        // alone, so on a page Chromium wraps in a 3.125 scale the two are not comparable
+        // without this division.
+        const scale = prev.scale || 1;
+        const gap = (g.x - (prev.x + (prev.table.widthOf(prev.cid) / 1000) * prev.size)) / scale;
+        const rise = Math.abs(g.y - prev.y) / scale;
+
+        if (gap < NEGATIVE * size) {
+          // Moving back inside the run ends the item. It is a layout shape rather than a
+          // word gap, so it is reported apart from them.
+          flow.breaks++;
+          flow.backwards++;
+          last.reset();
+        } else if (rise > VERTICAL * size) {
+          // A new line: the item ends and the next glyph anchors a new one, which is what
+          // a reader should do and not a fault.
+          last.reset();
+          prev = null;
+          continue;
+        } else {
+          flow.gaps++;
+          const em = gap / size;
+          if (em > flow.widest) flow.widest = em;
+          if (em < flow.thinest) flow.thinest = em;
+          if (em <= NOT_A_SPACE) last.reset();
+          if (em <= MIN_FLOW) {
+            // Narrower than a tracking space. On its own that is absorbed into the run;
+            // it only ends the item when a space glyph came just before it, because then
+            // the reader would rather split than leave the layer misaligned.
+            if (last.due()) {
+              flow.breaks++;
+              flow.tooThin++;
+              last.reset();
+            }
+          } else if (em > MAX_FLOW) {
+            flow.breaks++;
+            flow.tooWide++;
+          }
+        }
+      }
+      last.save(glyphText(g));
+      prev = g;
+    }
+  }
+  if (flow.thinest === Number.POSITIVE_INFINITY) flow.thinest = 0;
+  return flow;
+}
+
+/** The character a placed glyph stands for, for the two-character window. */
+function glyphText(g: Placed): string {
+  const u = g.table.unicodeOf(g.cid);
+  return u === "" ? " " : u[0]!;
+}

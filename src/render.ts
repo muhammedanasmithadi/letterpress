@@ -6,6 +6,7 @@ import { addMetadata, isVolatileTitle, readDocInfo, setDocTitle } from "./meta.t
 import { fixToUnicode } from "./tounicode.ts";
 import { LINK_DESC_JS, fixLinkDescs, parseLinkDescs } from "./linkdesc.ts";
 import { fixRedundantFigures, redundantFigureCount } from "./figrole.ts";
+import { textFlow } from "./selection.ts";
 import { mergeTextRuns } from "./tjmerge.ts";
 import { repairOrKeep } from "./verify.ts";
 import { audit } from "./lint.ts";
@@ -867,6 +868,23 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       }
       described = merged;
       const pdf = stampPdf(described, pdfTitle);
+
+      // What a browser will do with a selection over this page. Firefox's PDF.js keeps a
+      // word gap inside the current text item only between 0.102 and 0.6 em; outside that
+      // it ends the item and the gap becomes a highlight of its own, which is why a
+      // justified paragraph selects as a row of separate boxes. Nothing in the file can
+      // change the gap, so it is reported rather than repaired.
+      const flow = textFlow(pdf);
+      if (flow && flow.widest > 0.6) {
+        findings.push({
+          code: "selection-fragmented",
+          severity: "warn",
+          message: `the widest gap between words is ${flow.widest.toFixed(2)} em and about ` +
+            `${flow.tooWide} gaps exceed the 0.6 em a browser keeps inside one text item; ` +
+            `selection will break into separate boxes at each of them. ` +
+            `text-align:justify on a short measure is the usual cause.`,
+        });
+      }
 
       if (docMeta.author && !req.author?.trim() && !rejected.has("metadata")) {
         findings.push({

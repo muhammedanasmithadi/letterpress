@@ -345,6 +345,40 @@ over-long render, and it does so with a message that names the flag.
 The body cap binds before the page cap for text, which is worth knowing: raising
 `MAX_PAGES` without raising `MAX_BODY_BYTES` changes nothing for HTML input.
 
+### Compared against reference PDFs
+
+Everything above was measured on documents this project chose, which is a sample of one
+author's imagination. `bun tools/quality.ts` takes reference PDFs and ours side by side on
+the axes that decide whether text behaves in a reader: embedded, subset, ToUnicode, tagged,
+and size per page.
+
+Against a LaTeX-produced paper and two PDFs made by other tools:
+
+    file                        pages   KB/p  fonts    emb    sub  toUni     T3 tagged
+    ours                            1     27      3      3      3      3      0    yes
+    attention.pdf (LaTeX)         15    144     34     33     33     23      0     no
+    CV_Software_Template-1.pdf      1     35      4      4      4      4      0     no
+    2955233_2602197511.pdf          2     26      4      4      4      4      0     no
+
+We are at or above every reference on every axis, and the one place the LaTeX file is
+stronger -- nothing -- is the one place it is weaker: 23 of its 34 fonts carry a ToUnicode
+map, against 3 of 3 for ours, and it is untagged.
+
+Two things that comparison cannot settle, both measured:
+
+- **A space adjacent to a fallback glyph survives in the file and is dropped by the
+  extractor.** `English with an emoji in the middle.` draws the space as its own
+  glyph in its own text object after the font switch, at the right position; `pdftotext`
+  loses it at that boundary. Nothing is wrong with the PDF.
+- **A Type 3 font appears whenever no installed font covers a glyph**, which is Chromium's
+  last resort and carries one glyph in its ToUnicode map. Ordinary text never reaches it,
+  but it is the fragile path, and Type 3 is what viewers handle worst.
+
+The comparison also exposed a real limitation: this codebase's parser reads only classic
+linear layout, so it cannot read PDF 1.5 and up. Nothing in the render path needs to --
+the input is always Chromium's own output -- but no reference PDF can be read with it, which
+is why the tool uses poppler.
+
 ## 9. Still open
 
 1. **The repairs are tested on the documents that motivated them**, not a corpus.

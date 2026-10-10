@@ -370,52 +370,25 @@ async function capImageResolution(
  * occurrences of a filename inside prose and inside scripts. Mirroring removes
  * both problems rather than working around them.
  */
-/**
- * A relative filesystem path turned into the path a browser asks the origin for.
- *
- * `..` clamps at the origin rather than escaping, which is what a browser does with a
- * `..` in a URL, and what a `srcset` candidate like `../a.png 2x` needs. Empty means the
- * path resolves to the origin itself, which is the document and is never staged.
- */
+/** A relative filesystem path as the origin would see it: `..` clamps at the root. */
 /**
  * Whether a load failure is the render being torn down rather than an asset missing.
- *
- * `net::ERR_ABORTED` is what Chromium reports for every request still in flight when the
- * tab closes at the end of a print, so it arrived once per late-loading asset and was
- * counted as one more missing file. The finding then claimed the pdf was missing things
- * it never had a chance to load, and the named list held an error string rather than a
- * path -- the report naming a thing that does not exist is worse than no report.
- *
- * Safe to drop, because a genuine failure is still caught: a 404 arrives as a status on
- * `responseReceived`, and a blocked request carries `blockedReason`.
+ * Chromium reports `net::ERR_ABORTED` for every request in flight when the tab closes, so
+ * it arrived once per late asset. Safe to drop: a 404 arrives as a status, and a blocked
+ * request carries `blockedReason`.
  */
 function isTeardownAbort(errorText: string | undefined): boolean {
   return /ERR_ABORTED/.test(errorText ?? "");
 }
 
-/**
- * The names in the work directory that the document itself occupies.
- *
- * Staging must not write to either. A reference that clamps to `input.html` -- a
- * document linking a file called input.html, which is an ordinary name to choose -- was
- * staged over the served copy: the caller asked for `p.html` and the render printed
- * `input.html`'s content, with no finding. Found by an audit subagent and reproduced before
- * changing anything.
- */
+/** The work-directory names the document occupies. Staging must not write to either. */
 const SERVED_DOCUMENT = "input.html";
 const OVERRIDE_DOCUMENT = "override.html";
 
 /**
- * Whether a work-directory request stays inside that directory.
- *
- * The separator matters and the omission is silent: a prefix check without it accepts a
- * *sibling* whose name begins with the work directory's, so `/tmp/letterpress-1-0` passes
- * for `/tmp/letterpress-1`. WHATWG URL normalisation leaves `..%2f` as `..%2f` rather
- * than decoding it, so such a path reaches this function intact.
- *
- * Exported to be tested. The server binds a random loopback port and only Chromium talks
- * to it, so there is no live reproducer from a test -- which is exactly why the property
- * is worth asserting directly rather than by reading the line.
+ * Whether a work-directory request stays inside it. The separator matters: a prefix check
+ * without it accepts a sibling whose name begins with the directory's. Exported to be
+ * tested, since the server binds a random port only Chromium reaches.
  */
 export function confinedTo(dir: string, name: string): boolean {
   return join(dir, name).startsWith(dir + "/");
@@ -534,21 +507,10 @@ export async function stageAssets(
 
   scan(html, base);
 
-  // A stylesheet that was staged brings its own references with it.
-  //
-  // Staging used to read the document and nothing else, so a document whose own CSS
-  // imported further CSS lost everything past the first hop. Measured on a site whose
-  // stylesheet begins with sixteen `@import` lines: exactly one file was staged, the
-  // sixteen it imports were not, and the render reported one failed subresource for each.
-  // `print.css` among them, which for a renderer whose entire job is printing is the
-  // worst one to be missing.
-  //
-  // Their paths resolve against the *importing stylesheet's* directory, not the
-  // document's -- which is the same directory the file came from, so the containment
-  // rule above keeps holding unchanged.
-  //
-  // Only stylesheets are re-scanned. `written` is marked before the file is queued, so
-  // two stylesheets importing each other enqueue each other once and stop.
+  // A staged stylesheet or module brings its own references. They resolve against the
+  // importing file's directory -- the directory it was copied from -- so the boundary
+  // still holds. `written` is marked before queueing, so two files importing each other
+  // stop.
   while (queue.length) {
     const { ref, from, outside } = queue.shift()!;
     // The lexical check in `consider` reads the path as written. A symlink does not care:
@@ -965,8 +927,28 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           failedSubresources.push({ kind: p.type, url: `${status} ${p.response?.url ?? ""}` });
         }
       });
+      // Which URL each in-flight request is for. Needed because `loadingFailed` does not
+      // carry one, and "the document failed to load" has to mean the *main* document.
+      //
+      // A subframe that fails is not fatal. Measured on `<iframe src="input.html">`,
+      // where the staged name is reserved so the document is not replaced: the frame asks
+      // the work server for the document, gets the document, and frames it again until
+      // Chromium aborts the top frame. Every intermediate failure was being reported as
+      // "could not load html: net::ERR_ABORTED" and the render threw -- no PDF, and no
+      // finding either, because findings are assembled after this point. A document that
+      // cannot load its own subframe can still print.
+      const requestUrls = new Map<string, string>();
+      tab.on("Network.requestWillBeSent", (p) => {
+        if (p.requestId && p.request?.url) requestUrls.set(p.requestId, p.request.url);
+      });
       tab.on("Network.loadingFailed", (p) => {
-        if (p.type === "Document" && !netError && !p.blockedReason) netError = p.errorText;
+        const url = p.requestId ? requestUrls.get(p.requestId) : undefined;
+        const isMainDocument = p.type === "Document" && url !== undefined && url === srcUrl;
+        if (isMainDocument && !netError && !p.blockedReason) netError = p.errorText;
+        else if (p.type === "Document" && !p.blockedReason) {
+          // A subframe that will not load is worth saying, and is not worth failing over.
+          failedSubresources.push({ kind: "Subframe", url: url ?? p.errorText ?? "" });
+        }
         else if (!p.blockedReason && !isTeardownAbort(p.errorText)) {
           // Images are included. A missing image still "renders": Chromium draws
           // its own broken-image placeholder and the pdf carries that glyph

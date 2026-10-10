@@ -58,26 +58,12 @@ function dictClose(window: string): number {
 
 export function split(raw: Buffer): Parts {
   const text = raw.toString(LATIN1);
-  // Object headers must begin a line. Both this code and Chromium write them there, and
-  // it is what separates a header from a literal string that happens to spell one:
+  // Headers must begin a line, which is what separates one from a literal string that
+  // spells one -- `<img alt="2 0 obj">` puts `/Alt (2 0 obj)` in a dictionary.
   //
-  //   <img alt="2 0 obj">   ->   /Alt (2 0 obj)
-  //
-  // Measured on a real render: the phantom header split the Figure's dictionary, `/P`,
-  // `/Pg` and `/K` went with it, and poppler printed `Syntax Error: Illegal character
-  // ')'` -- with verify() reporting ok and no findings, the same signature as the `endobj`
-  // case it shares a cause with.
-  //
-  // Masking the file first was the obvious fix and it is wrong: maskStrings reads the
-  // whole text as syntax, and a stream payload is not syntax. An unbalanced `(` in binary
-  // data blanks everything after it, real headers stop being found, and objects merge.
-  // Measured: with the masked scan, a plain one-image document reported `/Length 293 but
-  // carries 860 bytes`. The scan is therefore on the raw text with a line anchor, which
-  // has no payload problem.
-  //
-  // The residual: a literal string containing a newline and then a header-shaped line
-  // would still be read as one. Nothing this code writes can produce that, and the
-  // round-trip test in test/verify.test.ts is what would catch it if it started to.
+  // Masking first was the obvious fix and it is wrong: maskStrings reads the text as
+  // syntax, and a stream payload is not. An unbalanced `(` in binary data blanks every
+  // header after it and objects merge, measured as `/Length 293 but carries 860`.
   const starts: Array<{ num: number; at: number }> = [];
   for (const m of text.matchAll(/(?:^|\n)(\d+) \d+ obj\b/g)) {
     starts.push({ num: Number(m[1]), at: m.index + (m.index > 0 && m[0][0] !== "0" ? 1 : 0) });
@@ -88,25 +74,16 @@ export function split(raw: Buffer): Parts {
   for (let i = 0; i < starts.length; i++) {
     const from = starts[i].at;
     const next = i + 1 < starts.length ? starts[i + 1].at : trailerAt;
-    // An object ends at its own `endobj` -- unless it is a stream object, whose payload
-    // is delimited by `stream` and `endstream` and may hold anything at all.
-    //
-    // Searching for the first `endobj` got that wrong in both directions. Measured: a
-    // stream whose dictionary carried `/Producer (endobj)` came back as 28 bytes with no
-    // range at all, and one whose *payload* began with those bytes as 38. Either way the
-    // object lost its stream, so a repair touching it would write back a truncated object
-    // and destroy the payload -- and the verification gate would see no payload on either
-    // side to compare, so it passed. The gate's whole job is to catch that.
-    //
-    // The keyword is found in the masked window, so a string carrying the word does not
-    // promote a plain dictionary into a stream object.
+    // An object ends at its own `endobj`, or after its own `endstream` if it is a stream.
+    // A stream payload may hold anything, so the payload keyword decides the end rather
+    // than a search for `endobj` -- a dictionary or payload carrying those bytes used to
+    // truncate the object, and the gate then had no payload on either side to compare.
     const window = text.slice(from, next);
     const marker = maskStrings(window).match(/stream\r?\n/);
     let to: number;
     if (marker && marker.index !== undefined) {
-      // Last occurrence within this object, which is the documented convention: a
-      // payload may contain the bytes but cannot contain the keyword's own line ending
-      // before its own terminator without being ambiguous by construction.
+      // Last occurrence within the object: a payload may contain the bytes, and the
+      // terminator is written after it.
       const endKw = window.lastIndexOf("\nendstream");
       if (endKw !== -1) {
         let end = endKw + "\nendstream".length;
@@ -117,39 +94,14 @@ export function split(raw: Buffer): Parts {
         to = next; // no terminator: fall through to the next header rather than guess
       }
     } else {
-      // The same search, on the same masked window, and with two constraints the plain
-      // `indexOf` did not have.
-      //
-      // Masking, because a literal string can carry the keyword. And a word boundary
-      // followed by an end-of-line, which is what ISO 32000-1 §7.3.10 requires of the
-      // keyword itself. The boundary is what an ordinary document hits: a link to
-      // `https://example.com/docs/endobject.html` contains the six letters `endobj` as
-      // the *prefix* of `endobject`, so a plain indexOf cut the annotation there. Object
-      // 6 was spliced into the middle of the /URI string, and the file shipped that way:
-      //
-      //   /URI (https://example.com/docs/endobj
-      //   6 0 obj
-      //   <</Filter /FlateDecode
-      //
-      // verify() returned ok with no failures, there were no findings, and pdftotext
-      // exited 0 while printing three syntax errors.
-      //
-      // The end-of-line requirement is most of it, but not all of it. A *name* that ends
-      // a line is lexically identical to the keyword -- `<< /A endobj\n>>` -- and the
-      // end-of-line rule cuts there, dropping `\n>>\nendobj`. What distinguishes them is
-      // position: an object's `endobj` comes after its dictionary is closed. So the
-      // keyword is looked for after the matching `>>`, and the end-of-line rule is only the
-      // fallback for an object with no dictionary to close -- an integer object, say.
-      //
-      // Chromium emits no bare `endobj` name and looksBinary refuses PDF input, so this
-      // was unreachable through the product. Fixed because the counting is cheap and the
-      // alternative is a comment saying the rule is sufficient when it is not.
+      // Three constraints, none sufficient alone. Masking, because a string can carry
+      // the keyword. An end-of-line after it, because a URL containing `endobject` begins
+      // with those six letters. And a position past the dictionary's `>>`, because a bare
+      // *name* ending a line -- `<< /A endobj\n>>` -- is otherwise identical to it.
       const maskedWindow = maskStrings(window);
       const dictEnd = dictClose(maskedWindow);
-      // `after` is measured from the dictionary's close, so the offset has to be added
-      // back to where that close is -- and to zero when there is no dictionary, or every
-      // object without one is cut a byte early. The round-trip test caught that: one
-      // object of 182 gained a byte per round trip and the file grew a byte every time.
+      // Zero when there is no dictionary to search past, or every object without one is
+      // cut a byte early.
       const after = dictEnd === -1 ? 0 : dictEnd;
       const m = /\bendobj[ \t]*[\r\n]/.exec(maskedWindow.slice(after));
       to = m ? from + after + m.index + 6 : next;
@@ -215,28 +167,13 @@ export function trySplit(pdf: Uint8Array): Parts | undefined {
 /**
  * Add an entry inside a dictionary that spans several lines.
  *
- * A dictionary's closing `>>` cannot be found by anchoring at the end of the object,
- * because the object ends with `endobj`. Nor by matching the first `>>`, because
- * dictionaries nest -- the catalog carries `/MarkInfo << /Type /MarkInfo /Marked
- * true >>` -- and an insertion at the wrong one lands inside the nested dictionary,
- * producing `/Marked true/Metadata 27 0 R`.
- *
- * So the insert point is the last `>>` not nested inside another `<<`, counted rather
- * than guessed. `lastIndexOf(">>")` is the tempting one-liner and is wrong for the
- * same reason: a struct element whose /K is an inline object reference dictionary ends
- * in `>> >>`, and the last pair belongs to the inner one. Measured on a Link element:
- * `/K [13 0 R <</Type /OBJR /Obj 5 0 R /Pg 2 0 R>>]`, where the inner `>>` is the
- * last one in the text.
- *
- * Shared rather than written per module, because several repairs now add keys to
- * dictionaries of different shapes and the counting is the part that must not drift.
+ * The insert point is the last `>>` not nested inside another `<<`, counted rather than
+ * guessed. Dictionaries nest -- the catalog carries `/MarkInfo << /Marked true >>` -- and
+ * `lastIndexOf(">>")` picks the inner one there.
  */
 export function insertIntoDict(body: string, entry: string): string {
-  // Masked before counting. An unbalanced `<<` inside a literal string drove the depth
-  // negative, `close` stayed -1, and the function returned the body unchanged -- so the
-  // caller believed it had written a key and had not. Chromium percent-encodes `<<` to
-  // `%3C%3C`, so this was not reachable through a render; it was reachable through a
-  // document whose alt text carried the characters.
+  // Counted on the masked copy so a `<<` inside a string cannot drive the depth negative,
+  // which would return the body unchanged while the caller counted a write.
   const code = maskStrings(body);
   let depth = 0;
   let close = -1;
@@ -247,9 +184,8 @@ export function insertIntoDict(body: string, entry: string): string {
       i++;
     } else if (pair === ">>") {
       depth--;
-      // `i` is the index of the first `>` of the pair, and the entry belongs
-      // immediately before it. Landing after it puts the key outside the
-      // dictionary, where a reader never sees it and the file fails to parse.
+      // The entry goes before the first `>` of the pair; after it lands the key outside
+      // the dictionary, where no reader sees it.
       if (depth === 0) close = i;
       i++;
     }
@@ -259,47 +195,24 @@ export function insertIntoDict(body: string, entry: string): string {
 }
 
 /**
- * The same text with the contents of every literal string blanked out.
+ * The same text with the contents of every literal string and comment blanked out.
  *
- * Every parser in this file reads a dictionary as text and matches against it, and a
- * literal string is arbitrary text that happens to sit inside that dictionary. So
- * `alt="see object 999 0 R"` makes a scan for indirect references find one, and
- * `alt="a stream of monthly revenue"` makes a scan for the `stream` keyword find one.
- * Both were measured doing real damage:
+ * A literal string and a `%` comment are both arbitrary text sitting inside a dictionary,
+ * so anything searched for in code can be found in one. Blanked to spaces rather than
+ * removed, so offsets found in the masked copy index into the original.
  *
- *   - a document whose alt text read "see object 999 0 R" had every gated repair
- *     rejected, so it shipped with no author and no XMP packet at all;
- *   - `dictOf` cut a Figure element's dictionary at the word inside the alt, so the
- *     repair decided the figure was undescribed and silently did nothing;
- *   - a link whose URL contained "stream" was cut before its /Contents, so the
- *     idempotence guard missed and a second pass wrote a duplicate key.
- *
- * The contents are replaced with spaces rather than removed, so every offset, length and
- * slice in the caller still refers to the same place. That is the whole reason this is a
- * function and not a regex.
- *
- * Only literal strings are masked. A hex string is a run of hex digits, so it cannot
- * contain the delimiters being searched for, and masking it would stop callers reading
- * values they legitimately need -- an /Alt written as UTF-16BE, for one.
- *
- * Escapes are honoured, so a `\)` does not end the string and `\(` inside it is not
- * mistaken for the opening of a nested one.
+ * Only literal strings are blanked. A hex string is a run of hex digits and cannot carry a
+ * delimiter, and blanking it would stop callers reading values they need -- an /Alt
+ * written as UTF-16BE, for one. Escapes are honoured, so `\)` does not close a string.
  */
 export function maskStrings(text: string): string {
   let out = "";
   let i = 0;
   while (i < text.length) {
     const ch = text[i]!;
-    // A comment runs to the end of the line and is not code. ISO 32000-1 §7.2.4.
-    //
-    // Skipping it matters because a comment is arbitrary text too, and the one thing it
-    // must not contain is an unbalanced `(`: that opens a string which never closes, and
-    // every byte after it is blanked. Measured on `<< /A % a comment ( unbalanced` --
-    // entirely legal -- the /Length two lines down became invisible and insertIntoDict
-    // returned its input unchanged, silently.
-    //
-    // A `%` inside a literal string is not a comment, and never reaches here: the string
-    // branch below consumes the whole string.
+    // ISO 32000-1 §7.2.4: a comment runs to end of line. Skipping it matters because an
+    // unbalanced `(` inside one would open a string that never closes. A `%` inside a
+    // literal string is not a comment and never reaches here.
     if (ch === "%") {
       out += "%";
       i++;

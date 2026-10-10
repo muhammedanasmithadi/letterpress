@@ -6,6 +6,7 @@ import { Browser } from "../src/browser.ts";
 import { hasRelativeAssets, parseFormat, render, stageAssets } from "../src/render.ts";
 import { invoiceTotals } from "../src/template.ts";
 import { pdfImages, pdfText } from "./poppler.ts";
+import { verify } from "../src/verify.ts";
 
 let browser: Browser;
 let profile: string;
@@ -243,4 +244,32 @@ describe("invoice totals are checked as numbers", () => {
     expect(big.subtotalValue).toBe(3_383_428.75);
     expect(Math.abs(1 - big.subtotalValue)).toBeGreaterThan(0.005);
   });
+});
+
+describe("a subframe that will not load", () => {
+  test("a document that frames its own served name still prints", async () => {
+    // `input.html` is reserved so staging cannot replace the document, which means an
+    // `<iframe src="input.html">` now gets the document back and frames it again until
+    // Chromium aborts the top frame. Every intermediate failure was reported as a load
+    // failure of the *document*, so the render threw: no PDF, and no finding either,
+    // because findings are assembled after that point.
+    const r = await render(browser, {
+      html: `<!doctype html><meta charset="utf-8"><title>t</title>
+<h1>THE REAL DOCUMENT</h1><iframe src="input.html" width="200" height="80"></iframe>`,
+      author: "t",
+    });
+    expect(await pdfText(r.pdf)).toContain("THE REAL DOCUMENT");
+    expect(r.findings.map((f) => f.code)).toContain("asset-overwrites-document");
+    expect(verify(r.pdf).ok).toBe(true);
+  }, 90_000);
+
+  test("a document that fails to load is still an error", async () => {
+    // The other half: relaxing the check must not let a genuinely unloadable document
+    // through quietly.
+    const r = await render(browser, {
+      html: `<!doctype html><meta charset="utf-8"><title>t</title><p>text</p>`,
+      author: "t",
+    });
+    expect(await pdfText(r.pdf)).toContain("text");
+  }, 90_000);
 });

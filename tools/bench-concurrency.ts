@@ -30,6 +30,7 @@ const payload = JSON.stringify({ html: doc(3) });
 async function one() {
   const t0 = Bun.nanoseconds();
   const target = 'http://127.0.0.1:8791/render';
+  // prettier-ignore
   const res = await fetch(target, { // nosemgrep: react-insecure-request
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: 'http://127.0.0.1:8791' },

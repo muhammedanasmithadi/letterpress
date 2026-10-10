@@ -6,7 +6,8 @@ Baseline 2026-10-10, Bun + TypeScript 7.0.2 codebase (18 src files, 23 test file
 
 - Format: Prettier 3.9.9 (`bunx prettier --check`). One-time normalization applied.
 - Lint: ESLint core recommended + `no-warning-comments` + `no-empty` (allowEmptyCatch for best-effort kills). Covers `tools/` (`.mjs`); `.ts` is covered by `tsc --noEmit` — type-aware lint is blocked until typescript-eslint supports TS 7.
-- Types: `tsc --noEmit`, clean.
+- Types: `tsc --noEmit`, clean — with `noUnusedLocals` + `noUnusedParameters` on (12 dead declarations removed to get there).
+- Next ratchet, not yet enforced: `noUncheckedIndexedAccess` (62 non-null assertions in `src/` today; enable only with a per-site justification pass).
 - Spelling: cspell 10 on `README.md` + `docs/*.md` (en-GB + 40 domain words in `cspell.yaml`).
 - Complexity ratchet: `tools/ratchet.mjs` fails on any NEW CC>15/L>200 function. 14 known breaches baselined in `waivers/baseline.lizard.txt`.
 - Coverage: `bun run coverage` ≥85% lines (measured 93.28 local / 89.94 CI). Floor sits 5 points below the lowest observed: coverage is font/browser-env-sensitive (±3 measured), so a tight floor would fail on noise, not regressions. Runs in the `suite` job, not `gates`: line hits depend on the same fonts/readers the suite installs.

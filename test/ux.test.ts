@@ -432,7 +432,7 @@ describe('the rendered invoice is what a customer would expect', () => {
 });
 describe('ctrl-c cancels', () => {
   test('SIGINT ends the run at once, with the conventional exit code', async () => {
-    const { readdir, readFile } = await import('node:fs/promises');
+    const { readdir } = await import('node:fs/promises');
     const big = join(dir, 'huge.html');
     await writeFile(
       big,

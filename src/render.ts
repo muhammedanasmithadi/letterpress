@@ -10,7 +10,7 @@ import { textFlow } from './selection.ts';
 import { mergeTextRuns } from './tjmerge.ts';
 import { repairOrKeep } from './verify.ts';
 import { audit } from './lint.ts';
-import { declaredPageMargin, declaredPageSize, inspect, pageRules, type PdfInfo } from './pdf.ts';
+import { declaredPageMargin, declaredPageSize, inspect, type PdfInfo } from './pdf.ts';
 
 export const FORMATS = {
   a3: [11.6929, 16.5354],
@@ -1110,7 +1110,6 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
 
       const unresolved = unresolvedFontMetrics(pdf);
       if (unresolved.length) {
-        const named = [...new Set(unresolved.map((u) => u.fontName))].slice(0, 3);
         findings.push({
           code: 'font-metrics',
           severity: 'warn',

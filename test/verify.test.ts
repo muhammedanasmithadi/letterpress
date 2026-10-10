@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Browser } from '../src/browser.ts';
 import { render } from '../src/render.ts';
 import { addMetadata, readDocInfo } from '../src/meta.ts';
-import { fixFontDescriptors, unresolvedFontMetrics } from '../src/fontdesc.ts';
+import { fixFontDescriptors } from '../src/fontdesc.ts';
 import { fixToUnicode, unresolvedLigatures } from '../src/tounicode.ts';
 import { contentPayloads, repairOrKeep, verify } from '../src/verify.ts';
 import { join as joinParts, split } from '../src/pdfparts.ts';

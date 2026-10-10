@@ -1,4 +1,4 @@
-import { CHROMIUM, resolveChromium, type Subprocess } from './chromium.ts';
+import { resolveChromium, type Subprocess } from './chromium.ts';
 import type { CdpEvent } from './chromium.ts';
 
 const CALL_TIMEOUT_MS = 30_000;

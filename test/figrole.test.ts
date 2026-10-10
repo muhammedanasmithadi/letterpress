@@ -5,13 +5,7 @@ import { join } from 'node:path';
 import { Browser } from '../src/browser.ts';
 import { render } from '../src/render.ts';
 import { fixRedundantFigures, redundantFigureCount, redundantFigures } from '../src/figrole.ts';
-import {
-  dictOf,
-  structElementsInOrder,
-  trySplit,
-  join as joinParts,
-  LATIN1,
-} from '../src/pdfparts.ts';
+import { dictOf, structElementsInOrder, trySplit, LATIN1 } from '../src/pdfparts.ts';
 import { verify } from '../src/verify.ts';
 
 const PNG =

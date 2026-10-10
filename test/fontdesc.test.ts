@@ -87,9 +87,6 @@ const notoSans = () => sfnt([head(1000, 0), os2(4, 0x00c0, 536), post(0, 0), cma
 
 const notoSansBold = () => sfnt([head(1000, 0x01), os2(4, 0x00a0, 546), post(0, 0), cmap(3, 1)]);
 
-const notoSansItalic = () =>
-  sfnt([head(1000, 0x02), os2(4, 0x0181, 536), post(-12, 0), cmap(3, 1)]);
-
 function pdfWith(fileKey: string, font: Buffer, overrides: Record<string, string>): Buffer {
   const body = deflateSync(font);
   const descriptorBody =

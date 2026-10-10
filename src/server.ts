@@ -1,7 +1,7 @@
 import type { Server } from 'bun';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { Browser } from './browser.ts';
 import { FORMATS, render, type Format } from './render.ts';
 

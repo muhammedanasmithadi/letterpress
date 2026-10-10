@@ -1,11 +1,11 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { deflateSync } from "node:zlib";
-import { Browser } from "../src/browser.ts";
-import { render } from "../src/render.ts";
-import { readXmpPacket } from "../src/meta.ts";
+import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { deflateSync } from 'node:zlib';
+import { Browser } from '../src/browser.ts';
+import { render } from '../src/render.ts';
+import { readXmpPacket } from '../src/meta.ts';
 
 function widePng(width: number, height: number): Buffer {
   const raw = Buffer.alloc(height * (1 + width * 3));
@@ -13,8 +13,8 @@ function widePng(width: number, height: number): Buffer {
     const row = y * (1 + width * 3);
     raw[row] = 0;
     for (let x = 0; x < width; x++) {
-      raw[row + 1 + x * 3] = (x * 255 / width) | 0;
-      raw[row + 2 + x * 3] = (y * 255 / height) | 0;
+      raw[row + 1 + x * 3] = ((x * 255) / width) | 0;
+      raw[row + 2 + x * 3] = ((y * 255) / height) | 0;
       raw[row + 3 + x * 3] = ((x ^ y) * 7) & 0xff;
     }
   }
@@ -31,7 +31,7 @@ function widePng(width: number, height: number): Buffer {
   const chunk = (type: string, body: Buffer): Buffer => {
     const head = Buffer.alloc(8);
     head.writeUInt32BE(body.length, 0);
-    head.write(type, 4, "latin1");
+    head.write(type, 4, 'latin1');
     const crc = Buffer.alloc(4);
     crc.writeUInt32BE(crc32(Buffer.concat([head.subarray(4), body])), 0);
     return Buffer.concat([head, body, crc]);
@@ -43,9 +43,9 @@ function widePng(width: number, height: number): Buffer {
   ihdr[9] = 2;
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk("IHDR", ihdr),
-    chunk("IDAT", deflateSync(raw, { level: 6 })),
-    chunk("IEND", Buffer.alloc(0)),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(raw, { level: 6 })),
+    chunk('IEND', Buffer.alloc(0)),
   ]);
 }
 
@@ -53,7 +53,7 @@ let browser: Browser;
 let profile: string;
 
 beforeAll(async () => {
-  profile = await mkdtemp(join(tmpdir(), "letterpress-audit-"));
+  profile = await mkdtemp(join(tmpdir(), 'letterpress-audit-'));
   browser = await Browser.launch({ profile });
 }, 60_000);
 
@@ -69,26 +69,33 @@ const boxSize = (box: string) => {
   return { w: Number(m![1]), h: Number(m![2]) };
 };
 
-test("a page count above eight is reported correctly", async () => {
+test('a page count above eight is reported correctly', async () => {
   for (const n of [9, 12, 40]) {
-    const html = `<!doctype html><style>@page{size:A4;margin:8mm}</style>` +
-      Array.from({ length: n }, (_, i) => `<div style="break-before:page">p${i + 1}</div>`).join("");
+    const html =
+      `<!doctype html><style>@page{size:A4;margin:8mm}</style>` +
+      Array.from({ length: n }, (_, i) => `<div style="break-before:page">p${i + 1}</div>`).join(
+        '',
+      );
     const r = await render(browser, { html });
     expect(r.info.pages).toBe(n);
   }
 }, 90_000);
 
-test("a document that declares no paper defaults to a4, not us letter", async () => {
-  const r = await render(browser, { html: "<!doctype html><p>no @page here</p>" });
+test('a document that declares no paper defaults to a4, not us letter', async () => {
+  const r = await render(browser, { html: '<!doctype html><p>no @page here</p>' });
   expect(r.info.mediaBoxes[0]).toMatch(/595\.\d+ 841\.\d+/);
 }, 30_000);
 
-test("--format a4 and @page size a4 agree to within a point", async () => {
-  const viaFlag = await render(browser, { html: "<!doctype html><p>x</p>", format: "a4" });
+test('--format a4 and @page size a4 agree to within a point', async () => {
+  const viaFlag = await render(browser, { html: '<!doctype html><p>x</p>', format: 'a4' });
   const viaCss = await render(browser, {
-    html: "<!doctype html><style>@page{size:a4;margin:0}</style><p>x</p>",
+    html: '<!doctype html><style>@page{size:a4;margin:0}</style><p>x</p>',
   });
-  const size = (box: string) => box.match(/([\d.]+)\s+([\d.]+)\s*\]/)!.slice(1).map(Number);
+  const size = (box: string) =>
+    box
+      .match(/([\d.]+)\s+([\d.]+)\s*\]/)!
+      .slice(1)
+      .map(Number);
   const a = size(viaFlag.info.mediaBoxes[0]);
   const b = size(viaCss.info.mediaBoxes[0]);
 
@@ -96,184 +103,179 @@ test("--format a4 and @page size a4 agree to within a point", async () => {
   expect(Math.abs(a[1] - b[1])).toBeLessThan(1.5);
 }, 30_000);
 
-test("--landscape under a portrait @page is an error, not silence", async () => {
+test('--landscape under a portrait @page is an error, not silence', async () => {
   const r = await render(browser, {
-    html: "<!doctype html><style>@page{size:A4;margin:10mm}</style><p>x</p>",
+    html: '<!doctype html><style>@page{size:A4;margin:10mm}</style><p>x</p>',
     landscape: true,
   });
-  expect(codes(r.findings)).toContain("orientation-ignored");
-  expect(r.findings.find((f) => f.code === "orientation-ignored")!.severity).toBe("error");
+  expect(codes(r.findings)).toContain('orientation-ignored');
+  expect(r.findings.find((f) => f.code === 'orientation-ignored')!.severity).toBe('error');
 
   expect(r.info.mediaBoxes[0]).toMatch(/594\.\d+ 841\.\d+/);
 }, 30_000);
 
-test("--margin under a declared @page margin is reported", async () => {
+test('--margin under a declared @page margin is reported', async () => {
   const r = await render(browser, {
-    html: "<!doctype html><style>@page{size:A4;margin:0}</style><p>x</p>",
-    format: "a4",
-    margin: "20mm",
+    html: '<!doctype html><style>@page{size:A4;margin:0}</style><p>x</p>',
+    format: 'a4',
+    margin: '20mm',
   });
-  expect(codes(r.findings)).toContain("margin-ignored");
+  expect(codes(r.findings)).toContain('margin-ignored');
 }, 30_000);
 
-test("an unfilled template placeholder is an error", async () => {
+test('an unfilled template placeholder is an error', async () => {
   const r = await render(browser, {
-    html: "<!doctype html><style>@page{size:A4}</style><p>{{company}} owes {{total}}</p>",
+    html: '<!doctype html><style>@page{size:A4}</style><p>{{company}} owes {{total}}</p>',
   });
-  const f = r.findings.find((x) => x.code === "unfilled-placeholder")!;
+  const f = r.findings.find((x) => x.code === 'unfilled-placeholder')!;
   expect(f).toBeTruthy();
-  expect(f.severity).toBe("error");
-  expect(f.message).toContain("{{company}}");
+  expect(f.severity).toBe('error');
+  expect(f.message).toContain('{{company}}');
 }, 30_000);
 
-test("a data file rendered as a document is refused with a finding", async () => {
-  const r = await render(browser, { html: JSON.stringify({ a: 1, b: ["x", "y"] }, null, 2) });
-  expect(codes(r.findings)).toContain("json-rendered");
+test('a data file rendered as a document is refused with a finding', async () => {
+  const r = await render(browser, { html: JSON.stringify({ a: 1, b: ['x', 'y'] }, null, 2) });
+  expect(codes(r.findings)).toContain('json-rendered');
 }, 30_000);
 
-test("target-counter in a stylesheet is reported, because it prints nothing", async () => {
+test('target-counter in a stylesheet is reported, because it prints nothing', async () => {
   const html = `<!doctype html><style>
 @page{size:A4;margin:15mm}
 .toc a::after{content: leader('.') target-counter(attr(href url), page)}
 </style><h1>T</h1><p><a href="#s">Section</a></p><h2 id="s">Section</h2>`;
   const r = await render(browser, { html });
-  const f = r.findings.find((x) => x.code === "unsupported-paged-media")!;
+  const f = r.findings.find((x) => x.code === 'unsupported-paged-media')!;
   expect(f).toBeTruthy();
-  expect(f.severity).toBe("error");
-  expect(f.message).toContain("target-counter");
+  expect(f.severity).toBe('error');
+  expect(f.message).toContain('target-counter');
 }, 30_000);
 
-test("digits at risk of bidi reversal in arabic text are reported", async () => {
+test('digits at risk of bidi reversal in arabic text are reported', async () => {
   const html = `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
 @page{size:A4;margin:15mm} body{direction:rtl;font-family:'Noto Naskh Arabic',serif}
 </style></head><body><p>التاريخ: 2026-10-03</p></body></html>`;
   const r = await render(browser, { html });
-  const f = r.findings.find((x) => x.code === "rtl-digit-run")!;
+  const f = r.findings.find((x) => x.code === 'rtl-digit-run')!;
   expect(f).toBeTruthy();
-  expect(f.message).toContain("2026-10-03");
-  expect(f.message).toContain("bdi");
+  expect(f.message).toContain('2026-10-03');
+  expect(f.message).toContain('bdi');
 }, 30_000);
 
-test("a character no installed font covers is reported", async () => {
-
+test('a character no installed font covers is reported', async () => {
   const html = `<!doctype html><html><head><meta charset="utf-8"><style>
 @page{size:A4;margin:15mm} body{font-family:'Noto Naskh Arabic',serif}
 </style></head><body><p>marker  here</p></body></html>`;
   const r = await render(browser, { html });
-  const f = r.findings.find((x) => x.code === "missing-glyph")!;
+  const f = r.findings.find((x) => x.code === 'missing-glyph')!;
   expect(f).toBeTruthy();
-  expect(f.message).toContain("U+E000");
+  expect(f.message).toContain('U+E000');
 }, 30_000);
 
-test("every missing glyph is listed, not capped", async () => {
-
-  const chars = Array.from({ length: 20 }, (_, i) => String.fromCodePoint(0xe000 + i)).join("");
+test('every missing glyph is listed, not capped', async () => {
+  const chars = Array.from({ length: 20 }, (_, i) => String.fromCodePoint(0xe000 + i)).join('');
   const html = `<!doctype html><head><meta charset="utf-8"><style>
 @page{size:A4;margin:15mm} body{font-family:'Noto Naskh Arabic',serif}
 </style></head><body><p>${chars}</p></body></html>`;
   const r = await render(browser, { html });
-  expect(r.findings.filter((x) => x.code === "missing-glyph").length).toBe(20);
+  expect(r.findings.filter((x) => x.code === 'missing-glyph').length).toBe(20);
 }, 30_000);
 
-test("a no-break space is reported as a real space, not as an invisible format character", async () => {
-
+test('a no-break space is reported as a real space, not as an invisible format character', async () => {
   const html = `<!doctype html><head><meta charset="utf-8"><style>
 @page{size:A4;margin:15mm} body{font-family:'Noto Naskh Arabic',serif}
 </style></head><body><p>a&nbsp;b</p></body></html>`;
   const r = await render(browser, { html });
-  const joined = r.findings.map((x) => x.message).join(" ");
-  expect(joined).not.toContain("invisible formatting characters");
-  expect(joined).toContain("U+00A0");
+  const joined = r.findings.map((x) => x.message).join(' ');
+  expect(joined).not.toContain('invisible formatting characters');
+  expect(joined).toContain('U+00A0');
 }, 30_000);
 
-test("a character covered by the font fallback chain is not reported", async () => {
-
+test('a character covered by the font fallback chain is not reported', async () => {
   const html = `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
 @page{size:A4;margin:15mm} body{direction:rtl;font-family:'Noto Naskh Arabic',serif}
 </style></head><body><p>القياس Привет</p></body></html>`;
   const r = await render(browser, { html });
-  expect(codes(r.findings)).not.toContain("missing-glyph");
+  expect(codes(r.findings)).not.toContain('missing-glyph');
 }, 30_000);
 
-test("a date with a strong ltr character before it is not reported", async () => {
-
+test('a date with a strong ltr character before it is not reported', async () => {
   const one = await render(browser, {
     html: `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
 @page{size:A4;margin:15mm} body{direction:rtl;font-family:'Noto Naskh Arabic',serif}
 </style></head><body><p>ISO 8601: 2026-10-03</p></body></html>`,
   });
-  expect(codes(one.findings)).not.toContain("rtl-digit-run");
+  expect(codes(one.findings)).not.toContain('rtl-digit-run');
 
   const two = await render(browser, {
     html: `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
 @page{size:A4;margin:15mm} body{direction:rtl;font-family:'Noto Naskh Arabic',serif}
 </style></head><body><p>رقم INV-2026-0147</p></body></html>`,
   });
-  expect(codes(two.findings)).not.toContain("rtl-digit-run");
+  expect(codes(two.findings)).not.toContain('rtl-digit-run');
 }, 40_000);
 
-test("a date with no dir attribute at all is still reported", async () => {
-
+test('a date with no dir attribute at all is still reported', async () => {
   const r = await render(browser, {
     html: `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
 @page{size:A4;margin:15mm} body{font-family:'Noto Naskh Arabic',serif}
 </style></head><body><p>التاريخ: 2026-10-03</p></body></html>`,
   });
-  expect(codes(r.findings)).toContain("rtl-digit-run");
+  expect(codes(r.findings)).toContain('rtl-digit-run');
 }, 30_000);
 
-test("the prescribed fix does not re-trigger the warning", async () => {
+test('the prescribed fix does not re-trigger the warning', async () => {
   const r = await render(browser, {
     html: `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
 @page{size:A4;margin:15mm} body{direction:rtl;font-family:'Noto Naskh Arabic',serif}
 </style></head><body><p>التاريخ: <bdi dir="ltr">2026-10-03</bdi></p></body></html>`,
   });
-  expect(codes(r.findings)).not.toContain("rtl-digit-run");
+  expect(codes(r.findings)).not.toContain('rtl-digit-run');
 }, 30_000);
 
-test("repeated occurrences are counted, not collapsed to one", async () => {
+test('repeated occurrences are counted, not collapsed to one', async () => {
   const r = await render(browser, {
     html: `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
 @page{size:A4;margin:15mm} body{direction:rtl;font-family:'Noto Naskh Arabic',serif}
 </style></head><body><p>التاريخ: 2026-10-03</p><p>التاريخ: 2026-10-03</p></body></html>`,
   });
-  const f = r.findings.find((x) => x.code === "rtl-digit-run")!;
+  const f = r.findings.find((x) => x.code === 'rtl-digit-run')!;
   expect(f).toBeTruthy();
-  expect(f.message).toContain("2 times");
+  expect(f.message).toContain('2 times');
 }, 30_000);
 
-test("--format with --landscape actually produces landscape", async () => {
+test('--format with --landscape actually produces landscape', async () => {
   const doc = `<!doctype html><style>@page{size:A4;margin:10mm}</style><h1>x</h1>`;
-  const r = await render(browser, { html: doc, format: "a4", landscape: true });
+  const r = await render(browser, { html: doc, format: 'a4', landscape: true });
   const { w, h } = boxSize(r.info.mediaBoxes[0]);
   expect(w).toBeGreaterThan(h);
-  expect(codes(r.findings)).toContain("page-size-override");
+  expect(codes(r.findings)).toContain('page-size-override');
 }, 30_000);
 
-test("a commented-out @page is not treated as a declaration", async () => {
-
+test('a commented-out @page is not treated as a declaration', async () => {
   const r = await render(browser, {
     html: `<!doctype html><style>/* @page{size:A5} */ @page{margin:10mm}</style><h1>x</h1>`,
     landscape: true,
   });
-  expect(codes(r.findings)).not.toContain("orientation-ignored");
+  expect(codes(r.findings)).not.toContain('orientation-ignored');
   const { w, h } = boxSize(r.info.mediaBoxes[0]);
   expect(w).toBeGreaterThan(h);
 }, 30_000);
 
-test("plain latin text raises no text findings", async () => {
+test('plain latin text raises no text findings', async () => {
   const r = await render(browser, {
     html: `<!doctype html><style>@page{size:A4;margin:15mm}</style>
 <body style="font-family:sans-serif"><p>Invoice 2026-014 dated 2026-10-03, total 1,234.56</p></body>`,
   });
-  expect(codes(r.findings).filter((c) => c === "rtl-digit-run" || c === "missing-glyph")).toHaveLength(0);
+  expect(
+    codes(r.findings).filter((c) => c === 'rtl-digit-run' || c === 'missing-glyph'),
+  ).toHaveLength(0);
 }, 30_000);
 
-test("an http failure is reported instead of printing the error page", async () => {
-  let message = "";
+test('an http failure is reported instead of printing the error page', async () => {
+  let message = '';
   try {
     await render(browser, {
-      url: "https://this-host-does-not-exist-zzq7.invalid/",
+      url: 'https://this-host-does-not-exist-zzq7.invalid/',
       allowNetwork: true,
       timeoutMs: 20_000,
     });
@@ -284,31 +286,30 @@ test("an http failure is reported instead of printing the error page", async () 
   expect(message).toMatch(/could not load|ERR_|HTTP \d\d\d/);
 }, 40_000);
 
-test("a document declaring no paper defaults to a4 through the work server", async () => {
-
-  const r = await render(browser, { html: "<!doctype html><p>served</p>" });
+test('a document declaring no paper defaults to a4 through the work server', async () => {
+  const r = await render(browser, { html: '<!doctype html><p>served</p>' });
   expect(r.info.pages).toBe(1);
   expect(r.info.mediaBoxes[0]).toMatch(/59[45]\.\d+ 84[12]\.\d+/);
 }, 30_000);
 
-test("SOURCE_DATE_EPOCH makes output byte-reproducible", async () => {
+test('SOURCE_DATE_EPOCH makes output byte-reproducible', async () => {
   const previous = process.env.SOURCE_DATE_EPOCH;
-  process.env.SOURCE_DATE_EPOCH = "1700000000";
+  process.env.SOURCE_DATE_EPOCH = '1700000000';
   try {
     const html = `<!doctype html><style>@page{size:A4;margin:10mm}</style><p>reproducible</p>`;
-    const a = await render(browser, { html, author: "Someone" });
+    const a = await render(browser, { html, author: 'Someone' });
 
     await Bun.sleep(1_100);
-    const b = await render(browser, { html, author: "Someone" });
+    const b = await render(browser, { html, author: 'Someone' });
 
-    expect(new TextDecoder("latin1").decode(a.pdf)).toBe(new TextDecoder("latin1").decode(b.pdf));
-    const text = new TextDecoder("latin1").decode(a.pdf);
+    expect(new TextDecoder('latin1').decode(a.pdf)).toBe(new TextDecoder('latin1').decode(b.pdf));
+    const text = new TextDecoder('latin1').decode(a.pdf);
     expect(text).toMatch(/D:20231114\d{6}Z/);
-    expect(text).toContain("document");
+    expect(text).toContain('document');
 
     const packet = readXmpPacket(a.pdf);
-    expect(packet).toContain("<xmp:CreateDate>2023-11-14T");
-    expect(packet).toContain("<xmp:ModifyDate>2023-11-14T");
+    expect(packet).toContain('<xmp:CreateDate>2023-11-14T');
+    expect(packet).toContain('<xmp:ModifyDate>2023-11-14T');
     expect(packet).not.toMatch(/<xmp:(?:Create|Modify)Date>(?!2023-11-14)/);
   } finally {
     if (previous === undefined) delete process.env.SOURCE_DATE_EPOCH;
@@ -316,8 +317,7 @@ test("SOURCE_DATE_EPOCH makes output byte-reproducible", async () => {
   }
 }, 60_000);
 
-test("without a pinned clock two renders differ only in their timestamps", async () => {
-
+test('without a pinned clock two renders differ only in their timestamps', async () => {
   const previous = process.env.SOURCE_DATE_EPOCH;
   delete process.env.SOURCE_DATE_EPOCH;
   try {
@@ -325,8 +325,8 @@ test("without a pinned clock two renders differ only in their timestamps", async
     const a = await render(browser, { html });
     await Bun.sleep(1_100);
     const b = await render(browser, { html });
-    const first = new TextDecoder("latin1").decode(a.pdf);
-    const second = new TextDecoder("latin1").decode(b.pdf);
+    const first = new TextDecoder('latin1').decode(a.pdf);
+    const second = new TextDecoder('latin1').decode(b.pdf);
     expect(first).not.toBe(second);
 
     expect(first.length).toBe(second.length);
@@ -336,12 +336,12 @@ test("without a pinned clock two renders differ only in their timestamps", async
   }
 }, 60_000);
 
-test("without SOURCE_DATE_EPOCH the timestamp is left alone", async () => {
+test('without SOURCE_DATE_EPOCH the timestamp is left alone', async () => {
   const previous = process.env.SOURCE_DATE_EPOCH;
   delete process.env.SOURCE_DATE_EPOCH;
   try {
-    const r = await render(browser, { html: "<!doctype html><p>unstamped</p>" });
-    const text = new TextDecoder("latin1").decode(r.pdf);
+    const r = await render(browser, { html: '<!doctype html><p>unstamped</p>' });
+    const text = new TextDecoder('latin1').decode(r.pdf);
 
     expect(text).toMatch(/D:\d{14}/);
     expect(text).not.toMatch(/127\.0\.0\.1:\d+/);
@@ -352,21 +352,20 @@ test("without SOURCE_DATE_EPOCH the timestamp is left alone", async () => {
   }
 }, 30_000);
 
-test("images are downsampled to the cap, and reported", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "letterpress-img-"));
+test('images are downsampled to the cap, and reported', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'letterpress-img-'));
   try {
-
-    const photo = join(dir, "photo.png");
+    const photo = join(dir, 'photo.png');
     await Bun.write(photo, widePng(1200, 900));
     const doc = `<!doctype html><style>@page{size:A4;margin:10mm} img{width:180mm}</style><img src="photo.png">`;
-    await Bun.write(join(dir, "doc.html"), doc);
+    await Bun.write(join(dir, 'doc.html'), doc);
 
-    const capped = await render(browser, { path: join(dir, "doc.html"), maxImagePpi: 120 });
-    expect(capped.findings.map((f) => f.code)).toContain("image-downsampled");
+    const capped = await render(browser, { path: join(dir, 'doc.html'), maxImagePpi: 120 });
+    expect(capped.findings.map((f) => f.code)).toContain('image-downsampled');
     expect(capped.info.imageObjects).toBe(1);
 
-    const off = await render(browser, { path: join(dir, "doc.html"), maxImagePpi: 0 });
-    expect(off.findings.map((f) => f.code)).not.toContain("image-downsampled");
+    const off = await render(browser, { path: join(dir, 'doc.html'), maxImagePpi: 0 });
+    expect(off.findings.map((f) => f.code)).not.toContain('image-downsampled');
 
     expect(capped.pdf.byteLength).toBeLessThan(off.pdf.byteLength);
   } finally {

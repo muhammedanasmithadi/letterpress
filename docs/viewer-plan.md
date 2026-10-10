@@ -19,19 +19,19 @@ Each was tested. Earlier claims of mine that verification retracted are listed
 under "What I got wrong" below — including the tagged-PDF one, which was the
 basis for treating heading roles as an engine defect.
 
-| finding | evidence |
-|---|---|
-| `Page.printToPDF` works headless **and** headful, identically | 3-page Arabic doc: same page count, same MediaBox, same `HDR` count, same `page 3 of 3` footer, byte sizes within 8 of each other |
-| Headful needs `--ozone-platform=x11` | Wayland start-up printed the DevTools endpoint then the process exited; X11 stayed up |
-| `pageRanges` selects exactly the named pages | `pdftotext`: `"1-2"`→PAGE_1,PAGE_2 · `"5"`→PAGE_5 · `"3,7"`→PAGE_3,PAGE_7 · `"2-2"`→PAGE_2 |
-| `pageRanges` keeps total-page counters correct | `"1-2"` of a 3-page doc prints footer `page 2 of 3`, not `of 2` |
-| `transferMode:"ReturnAsStream"` matches base64 | 14,980 streamed bytes vs 14,980 predicted. Returns `eof:false` on a 64 KB read of a 14 KB doc, so the last chunk is short |
-| `Page.setDocumentContent` prints with no file written | 9,244 base64 chars, zero disk writes |
-| …but cannot resolve relative assets | `<img src="relative.png">` → `naturalWidth: 0`. No origin to resolve against |
-| Print media emulation does **not** paginate | `matchMedia('print')` true, 3 page divs still in DOM, 3,061 px doc in a 437 px viewport, no page boxes |
-| `WebMCP.invokeTool` works over CDP, no extension | `toolResponded` → `status:"Completed"`, `output.text:"sum=42"`. Needs `--enable-blink-features=WebMCP` + secure context + `{frameId, toolName, input}` |
-| A `file://` image taints the canvas | `toDataURL` throws "Tainted canvases may not be exported" |
-| Image ppi formula | `effective_ppi = source_px / (css_px / 96)`. 4000px at 180mm → 565 ppi |
+| finding                                                       | evidence                                                                                                                                               |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Page.printToPDF` works headless **and** headful, identically | 3-page Arabic doc: same page count, same MediaBox, same `HDR` count, same `page 3 of 3` footer, byte sizes within 8 of each other                      |
+| Headful needs `--ozone-platform=x11`                          | Wayland start-up printed the DevTools endpoint then the process exited; X11 stayed up                                                                  |
+| `pageRanges` selects exactly the named pages                  | `pdftotext`: `"1-2"`→PAGE_1,PAGE_2 · `"5"`→PAGE_5 · `"3,7"`→PAGE_3,PAGE_7 · `"2-2"`→PAGE_2                                                             |
+| `pageRanges` keeps total-page counters correct                | `"1-2"` of a 3-page doc prints footer `page 2 of 3`, not `of 2`                                                                                        |
+| `transferMode:"ReturnAsStream"` matches base64                | 14,980 streamed bytes vs 14,980 predicted. Returns `eof:false` on a 64 KB read of a 14 KB doc, so the last chunk is short                              |
+| `Page.setDocumentContent` prints with no file written         | 9,244 base64 chars, zero disk writes                                                                                                                   |
+| …but cannot resolve relative assets                           | `<img src="relative.png">` → `naturalWidth: 0`. No origin to resolve against                                                                           |
+| Print media emulation does **not** paginate                   | `matchMedia('print')` true, 3 page divs still in DOM, 3,061 px doc in a 437 px viewport, no page boxes                                                 |
+| `WebMCP.invokeTool` works over CDP, no extension              | `toolResponded` → `status:"Completed"`, `output.text:"sum=42"`. Needs `--enable-blink-features=WebMCP` + secure context + `{frameId, toolName, input}` |
+| A `file://` image taints the canvas                           | `toDataURL` throws "Tainted canvases may not be exported"                                                                                              |
+| Image ppi formula                                             | `effective_ppi = source_px / (css_px / 96)`. 4000px at 180mm → 565 ppi                                                                                 |
 
 ## The one decision that shapes everything
 
@@ -67,7 +67,7 @@ browser (user's own window)
                                           └── warm Chromium via CDP
 ```
 
-The viewer is served by the tool's own server. It renders through the *same*
+The viewer is served by the tool's own server. It renders through the _same_
 `render()` the CLI uses, so the preview and the download cannot diverge.
 
 ## Implementation
@@ -86,7 +86,7 @@ export type RenderRequest = {
    * Only valid when the document references no relative assets. */
   fastPath?: boolean;
   /** Drain the PDF from the CDP stream instead of a base64 JSON string. */
-  transfer?: "base64" | "stream";
+  transfer?: 'base64' | 'stream';
 };
 ```
 
@@ -95,7 +95,7 @@ export type RenderRequest = {
 `Buffer.from(chunk.data, "base64")`. Do not trust `eof` on the first read — a
 14 KB document returns `eof:false` on a 64 KB read.
 
-**Fast path.** When `fastPath` is set *and* a pre-scan finds no relative `src`/
+**Fast path.** When `fastPath` is set _and_ a pre-scan finds no relative `src`/
 `href` (regex: `/(?:src|href)\s*=\s*["'](?!https?:|data:|blob:|#|mailto:)[^"']/i`),
 skip `stageAssets` and `serveWorkDir`, and drive the tab with
 `Page.setDocumentContent({frameId, html})`. Saves a temp dir, a socket, and a
@@ -103,7 +103,7 @@ loopback round trip. This is the common case: most documents are one HTML
 string with no images.
 
 **pageRanges.** Pass straight through. Note in the doc comment that the returned
-`pages` count is the number *emitted*, not the document total — `inspect()`
+`pages` count is the number _emitted_, not the document total — `inspect()`
 reports 2 for `"1-2"` of a 3-page document. The viewer must not display that as
 the document length.
 
@@ -141,15 +141,19 @@ broken there.
 `basicSetup` (saves 42 KB gzip):
 
 ```js
-import { EditorView, keymap } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
-import { html } from "@codemirror/lang-html";
-import { css } from "@codemirror/lang-css";
-import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
-import { bracketMatching, indentOnInput, syntaxHighlighting,
-         defaultHighlightStyle } from "@codemirror/language";
-import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
-import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
+import { EditorView, keymap } from '@codemirror/view';
+import { EditorState } from '@codemirror/state';
+import { html } from '@codemirror/lang-html';
+import { css } from '@codemirror/lang-css';
+import { history, historyKeymap, defaultKeymap } from '@codemirror/commands';
+import {
+  bracketMatching,
+  indentOnInput,
+  syntaxHighlighting,
+  defaultHighlightStyle,
+} from '@codemirror/language';
+import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
+import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 ```
 
 ~146 KB gzip, ~94 ms import. `@codemirror/lang-html` pulls `@lezer/javascript`
@@ -157,6 +161,7 @@ import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 
 **`viewer/preview.js`** — PDF.js 6.4.299, Apache-2.0, loaded from our own origin.
 `pdf.min.mjs` + `pdf.worker.min.mjs` = 505 KB gzip. Must:
+
 - call `getDocument({url})`, **not** a bare string — v6 rejects it
 - set `GlobalWorkerOptions.workerSrc` explicitly, or the fast worker path is lost
 - self-host `cmaps/`, `standard_fonts/`, `wasm/`
@@ -173,7 +178,7 @@ invokers + `@starting-style` + `transition-behavior: allow-discrete`, and CSS
 nesting + container queries.
 
 **Iframe colour scheme.** Verified behaviour: `prefers-color-scheme` inside an
-iframe follows the *host's* scheme, but `light-dark()` does not flip unless the
+iframe follows the _host's_ scheme, but `light-dark()` does not flip unless the
 iframe's own `:root` sets `color-scheme`. Set it explicitly and keep it in sync,
 because a mismatch forces an opaque canvas.
 
@@ -184,14 +189,18 @@ registers one tool; the server invokes it:
 
 ```js
 document.modelContext.registerTool({
-  name: "html_to_pdf",
+  name: 'html_to_pdf',
   description: "Render HTML to PDF through Chromium's native print engine",
-  inputSchema: { type: "object", properties: {
-    html: { type: "string" }, path: { type: "string" },
-    format: { type: "string", enum: ["a3","a4","a5","legal","letter","tabloid"] },
-    landscape: { type: "boolean" },
-  }},
-  execute: async (args) => ({ content: [{ type: "text", text: JSON.stringify(result) }] }),
+  inputSchema: {
+    type: 'object',
+    properties: {
+      html: { type: 'string' },
+      path: { type: 'string' },
+      format: { type: 'string', enum: ['a3', 'a4', 'a5', 'legal', 'letter', 'tabloid'] },
+      landscape: { type: 'boolean' },
+    },
+  },
+  execute: async (args) => ({ content: [{ type: 'text', text: JSON.stringify(result) }] }),
 });
 ```
 
@@ -208,8 +217,8 @@ can run commands.
 - **"Animations are already deterministic."** My test compared the first 40 bytes
   of a PNG, which is the magic number plus the IHDR header — identical for every
   image of the same size. With real pixel hashes, an animation gives 4 distinct
-  hashes and a static control gives 1. Animations *do* advance on screen. The
-  *rendered PDF* is still deterministic; that is a separate, untested-for-animations
+  hashes and a static control gives 1. Animations _do_ advance on screen. The
+  _rendered PDF_ is still deterministic; that is a separate, untested-for-animations
   claim. Open question, not a decision.
 - **"Virtual time freezes rendering."** Same broken comparison. Re-tested: 4
   distinct hashes while "frozen". `Emulation.setVirtualTimePolicy` does not
@@ -240,6 +249,7 @@ can run commands.
   than the PDF. Two gaps are real but small and neither is worth post-processing:
   `<dl>`/`<dt>`/`<dd>` produce only `NonStruct`, and `<section>`, `<nav>`,
   `<main>`, `<header>` and `<footer>` produce none.
+
 - **Two false alarms from my own ParentTree checker.** Checking MCID ownership
   against the structure tree reported a defect on the resume — twice, on identical
   data. Both were the checker: Chromium batches all 95 MCIDs into a single

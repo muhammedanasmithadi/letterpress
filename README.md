@@ -21,15 +21,15 @@ bun src/cli.ts --template invoice --data order.json -o invoice.pdf
 
 ## What the renderer gives you
 
-| | |
-|---|---|
-| warm render | ~65 ms |
-| A4 from `@page { size: A4 }` | exactly 594.96 × 841.92 pt |
-| text | selectable and searchable, with `ToUnicode` maps |
-| structure | tagged PDF, bookmarks from `<h1>`–`<h6>` |
-| fonts | embedded and subset, including a full Arabic set |
-| eight concurrent renders | ~1.1 s wall; one browser is enough |
-| image downsampling | capped at 300 ppi by default; a 4000px photo at 180mm would otherwise print at 565 ppi and produce a PDF larger than the source |
+|                              |                                                                                                                                 |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| warm render                  | ~65 ms                                                                                                                          |
+| A4 from `@page { size: A4 }` | exactly 594.96 × 841.92 pt                                                                                                      |
+| text                         | selectable and searchable, with `ToUnicode` maps                                                                                |
+| structure                    | tagged PDF, bookmarks from `<h1>`–`<h6>`                                                                                        |
+| fonts                        | embedded and subset, including a full Arabic set                                                                                |
+| eight concurrent renders     | ~1.1 s wall; one browser is enough                                                                                              |
+| image downsampling           | capped at 300 ppi by default; a 4000px photo at 180mm would otherwise print at 565 ppi and produce a PDF larger than the source |
 
 ## Writing a document that paginates well
 
@@ -40,11 +40,21 @@ is what makes the page box exact.
 @page {
   size: A4;
   margin: 18mm 16mm;
-  @top-right    { content: "ACME"; font: 8pt sans-serif }
-  @bottom-right { content: "page " counter(page) " of " counter(pages); font: 8pt sans-serif }
+  @top-right {
+    content: 'ACME';
+    font: 8pt sans-serif;
+  }
+  @bottom-right {
+    content: 'page ' counter(page) ' of ' counter(pages);
+    font: 8pt sans-serif;
+  }
 }
-thead { display: table-header-group }   /* headings repeat on every page */
-tr    { break-inside: avoid }           /* never split a row */
+thead {
+  display: table-header-group;
+} /* headings repeat on every page */
+tr {
+  break-inside: avoid;
+} /* never split a row */
 ```
 
 Three things Chromium does **not** implement, all of which fail silently:
@@ -110,22 +120,22 @@ asked.
 `--quiet` does not silence them, because they are diagnostics rather than part
 of the summary.
 
-| code | meaning |
-|---|---|
-| `orientation-ignored` | `--landscape` was dropped: the document declares `@page size` |
-| `margin-ignored` | `--margin` was dropped: the document declares `@page margin` |
-| `page-size-override` | `--format` disagrees with the document's `@page`; the declaration is stripped and the request applied |
-| `orientation-ignored` | `--landscape` cannot apply: the document declares `@page size` and no `--format` was given |
-| `rtl-digit-run` | `2026-10-03` after Arabic prints as `03-10-2026`; wrap it in `<bdi dir="ltr">` |
-| `missing-glyph` | a character no installed font covers, so it prints as a blank box |
-| `unsupported-paged-media` | a CSS paged-media function Chromium silently discards |
-| `unfilled-placeholder` | the document still contains `{{token}}` |
-| `json-rendered` | a data file was printed as a document |
-| `network-blocked` | a remote request was blocked, with its URL |
-| `subresource-failed` | a referenced asset did not load, so the pdf will not look like the source |
-| `asset-outside-root` | the document references a path outside its own directory, which was not read; pass `--root` |
-| `selection-fragmented` | a word gap is wider than 0.6 em, so a browser will break the selection into separate boxes at it |
-| `text-runs-merged` | per-glyph text positioning folded into TJ arrays, glyph positions verified unchanged; also reports any block left alone |
+| code                        | meaning                                                                                                                      |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `orientation-ignored`       | `--landscape` was dropped: the document declares `@page size`                                                                |
+| `margin-ignored`            | `--margin` was dropped: the document declares `@page margin`                                                                 |
+| `page-size-override`        | `--format` disagrees with the document's `@page`; the declaration is stripped and the request applied                        |
+| `orientation-ignored`       | `--landscape` cannot apply: the document declares `@page size` and no `--format` was given                                   |
+| `rtl-digit-run`             | `2026-10-03` after Arabic prints as `03-10-2026`; wrap it in `<bdi dir="ltr">`                                               |
+| `missing-glyph`             | a character no installed font covers, so it prints as a blank box                                                            |
+| `unsupported-paged-media`   | a CSS paged-media function Chromium silently discards                                                                        |
+| `unfilled-placeholder`      | the document still contains `{{token}}`                                                                                      |
+| `json-rendered`             | a data file was printed as a document                                                                                        |
+| `network-blocked`           | a remote request was blocked, with its URL                                                                                   |
+| `subresource-failed`        | a referenced asset did not load, so the pdf will not look like the source                                                    |
+| `asset-outside-root`        | the document references a path outside its own directory, which was not read; pass `--root`                                  |
+| `selection-fragmented`      | a word gap is wider than 0.6 em, so a browser will break the selection into separate boxes at it                             |
+| `text-runs-merged`          | per-glyph text positioning folded into TJ arrays, glyph positions verified unchanged; also reports any block left alone      |
 | `asset-overwrites-document` | the document references a file named `input.html` or `override.html`, which was not staged because it would replace the page |
 
 ## Right-to-left text
@@ -155,8 +165,12 @@ It cannot fix the text for you.
 `--list-templates` prints what is bundled. Values come from JSON:
 
 ```json
-{ "invoice_no": "2026-014", "currency": "EUR", "vat_rate": 0.21,
-  "items": [{ "description": "Consulting", "qty": 12, "unit": 1150 }] }
+{
+  "invoice_no": "2026-014",
+  "currency": "EUR",
+  "vat_rate": 0.21,
+  "items": [{ "description": "Consulting", "qty": 12, "unit": 1150 }]
+}
 ```
 
 `{{token}}` is escaped, so a value cannot inject markup. `{{{token}}}` passes
@@ -186,11 +200,11 @@ Tests assert against independent implementations rather than against this
 renderer's own parser, because every real defect found so far came from one of
 them and none from a test written here.
 
-| tool | what it is for |
-|---|---|
-| poppler — `pdfinfo` `pdftotext` `pdffonts` `pdfimages` `pdftoppm` | the assertions in the test suite |
-| ghostscript | an independent parser that disagrees usefully |
-| [veraPDF](https://software.verapdf.org/releases/) 1.30.3 | PDF/UA-1 and PDF/A conformance, via `bun tools/pdfua.ts` |
+| tool                                                              | what it is for                                           |
+| ----------------------------------------------------------------- | -------------------------------------------------------- |
+| poppler — `pdfinfo` `pdftotext` `pdffonts` `pdfimages` `pdftoppm` | the assertions in the test suite                         |
+| ghostscript                                                       | an independent parser that disagrees usefully            |
+| [veraPDF](https://software.verapdf.org/releases/) 1.30.3          | PDF/UA-1 and PDF/A conformance, via `bun tools/pdfua.ts` |
 
 veraPDF is not vendored — 33MB of Java with a bundled JRE — so `tools/pdfua.ts`
 reads `VERA_PDF` and points at an install. It is **not pinned by this repository**:

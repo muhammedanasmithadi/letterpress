@@ -1,4 +1,13 @@
-import { dictCode, join, kidsOf, LATIN1, structElementsInOrder, trySplit, type Obj, type Parts } from "./pdfparts.ts";
+import {
+  dictCode,
+  join,
+  kidsOf,
+  LATIN1,
+  structElementsInOrder,
+  trySplit,
+  type Obj,
+  type Parts,
+} from './pdfparts.ts';
 
 function hasDescription(text: string): boolean {
   return /\/(?:Alt|ActualText)\s*(\((?:[^()\\]|\\.)*\)|<[0-9A-Fa-f\s]*>)/.test(text);
@@ -10,11 +19,11 @@ function rolePattern(role: string): RegExp {
 
 export function redundantFigures(parts: Parts): number[] {
   const byNum = new Map<number, string>(parts.objs.map((o) => [o.num, dictCode(o)]));
-  const figures = structElementsInOrder(parts, "Figure");
+  const figures = structElementsInOrder(parts, 'Figure');
   if (figures.length === 0) return [];
 
   const described = new Set<number>();
-  for (const n of figures) if (hasDescription(byNum.get(n) ?? "")) described.add(n);
+  for (const n of figures) if (hasDescription(byNum.get(n) ?? '')) described.add(n);
 
   const out: number[] = [];
   const guard = new Set<number>();
@@ -31,7 +40,7 @@ export function redundantFigures(parts: Parts): number[] {
   };
 
   for (const n of figures) {
-    const text = byNum.get(n) ?? "";
+    const text = byNum.get(n) ?? '';
     if (hasDescription(text)) continue;
     guard.clear();
     if (hasDescribedDescendant(n, 0)) out.push(n);
@@ -51,8 +60,8 @@ export function fixRedundantFigures(pdf: Uint8Array): Uint8Array {
     const obj = byNum.get(num);
     if (!obj) continue;
     const text = obj.bytes.toString(LATIN1);
-    if (!rolePattern("Figure").test(text)) continue;
-    obj.bytes = Buffer.from(text.replace(rolePattern("Figure"), "/S$1/Div"), LATIN1);
+    if (!rolePattern('Figure').test(text)) continue;
+    obj.bytes = Buffer.from(text.replace(rolePattern('Figure'), '/S$1/Div'), LATIN1);
     changed++;
   }
   if (changed === 0) return pdf;

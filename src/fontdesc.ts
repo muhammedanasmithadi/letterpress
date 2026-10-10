@@ -1,5 +1,5 @@
-import { inflateSync } from "node:zlib";
-import { inflatedStream, join, LATIN1, trySplit, type Obj } from "./pdfparts.ts";
+import { inflateSync } from 'node:zlib';
+import { inflatedStream, join, LATIN1, trySplit, type Obj } from './pdfparts.ts';
 
 type Table = { offset: number; length: number };
 type Sfnt = {
@@ -23,8 +23,10 @@ export function parseSfnt(font: Buffer): Sfnt | undefined {
   if (font.length < 12) return undefined;
 
   const tag = font.readUInt32BE(0);
-  const isSfnt = tag === 0x00010000 || font.subarray(0, 4).toString(LATIN1) === "true"
-    || font.subarray(0, 4).toString(LATIN1) === "OTTO";
+  const isSfnt =
+    tag === 0x00010000 ||
+    font.subarray(0, 4).toString(LATIN1) === 'true' ||
+    font.subarray(0, 4).toString(LATIN1) === 'OTTO';
   if (!isSfnt) return undefined;
 
   const numTables = u16(font, 4);
@@ -39,9 +41,9 @@ export function parseSfnt(font: Buffer): Sfnt | undefined {
     if (offset + length <= font.length) tables.set(name, { offset, length });
   }
 
-  const head = tables.get("head");
-  const os2 = tables.get("OS/2");
-  const post = tables.get("post");
+  const head = tables.get('head');
+  const os2 = tables.get('OS/2');
+  const post = tables.get('post');
   if (!head || head.length < 54) return undefined;
 
   const out: Sfnt = {
@@ -63,7 +65,7 @@ export function parseSfnt(font: Buffer): Sfnt | undefined {
     if (fixedPitch !== 0 && fixedPitch !== 0xffff_ffff) out.fixedPitch = true;
   }
 
-  const cmap = tables.get("cmap");
+  const cmap = tables.get('cmap');
   if (cmap && cmap.length >= 4) {
     const n = u16(font, cmap.offset + 2);
     for (let i = 0; i < n; i++) {
@@ -71,9 +73,13 @@ export function parseSfnt(font: Buffer): Sfnt | undefined {
       if (rec + 8 > font.length) break;
       const platform = u16(font, rec);
       const encoding = u16(font, rec + 2);
-      const unicode = (platform === 3 && (encoding === 1 || encoding === 10))
-        || (platform === 0 && encoding >= 4);
-      if (unicode) { out.unicodeCmap = true; break; }
+      const unicode =
+        (platform === 3 && (encoding === 1 || encoding === 10)) ||
+        (platform === 0 && encoding >= 4);
+      if (unicode) {
+        out.unicodeCmap = true;
+        break;
+      }
     }
   }
   return out;
@@ -87,7 +93,10 @@ export function flagsFrom(font: Sfnt, current: number): number {
 
   set(4, !font.unicodeCmap);
   set(32, font.unicodeCmap);
-  set(64, (font.macStyle & 0x02) !== 0 || font.italicAngle !== 0 || (font.fsSelection & 0x01) !== 0);
+  set(
+    64,
+    (font.macStyle & 0x02) !== 0 || font.italicAngle !== 0 || (font.fsSelection & 0x01) !== 0,
+  );
   if (font.fixedPitch !== undefined) set(1, font.fixedPitch);
   return flags;
 }
@@ -119,11 +128,13 @@ export function fixFontDescriptors(pdf: Uint8Array): Uint8Array {
     const text = desc.bytes.toString(LATIN1);
     const fileRef = text.match(/\/FontFile2\s+(\d+) 0 R/);
     if (!fileRef) {
-
       const cap = Number(text.match(/\/CapHeight\s+(-?\d+)/)?.[1] ?? NaN);
       const xHeight = Number(text.match(/\/XHeight\s+(-?\d+)/)?.[1] ?? NaN);
       if (Number.isFinite(cap) && cap < 0 && Number.isFinite(xHeight) && -cap > xHeight) {
-        wanted.set(num, { flags: Number(text.match(/\/Flags\s+(\d+)/)?.[1] ?? 0), capHeight: -cap });
+        wanted.set(num, {
+          flags: Number(text.match(/\/Flags\s+(\d+)/)?.[1] ?? 0),
+          capHeight: -cap,
+        });
       }
       continue;
     }
@@ -161,7 +172,9 @@ export function fixFontDescriptors(pdf: Uint8Array): Uint8Array {
   return join(parts.head, objs, parts.trailer);
 }
 
-export function unresolvedFontMetrics(pdf: Uint8Array): Array<{ fontName: string; capHeight: number }> {
+export function unresolvedFontMetrics(
+  pdf: Uint8Array,
+): Array<{ fontName: string; capHeight: number }> {
   const out: Array<{ fontName: string; capHeight: number }> = [];
   const parts = trySplit(pdf);
   if (!parts) return out;
@@ -172,7 +185,7 @@ export function unresolvedFontMetrics(pdf: Uint8Array): Array<{ fontName: string
     if (!(cap < 0)) continue;
     if (/\/FontFile\d?\s+\d+\s+0\s+R/.test(text)) continue;
     out.push({
-      fontName: text.match(/\/FontName\s*\/([^\s/>\]]+)/)?.[1] ?? "unnamed",
+      fontName: text.match(/\/FontName\s*\/([^\s/>\]]+)/)?.[1] ?? 'unnamed',
       capHeight: cap,
     });
   }

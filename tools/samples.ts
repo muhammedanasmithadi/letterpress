@@ -4,14 +4,14 @@
  * visible: spacing under justification, hairlines in a table, script coverage beyond
  * Latin, page furniture, and the copy-paste path.
  */
-import { mkdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { Browser } from "../src/browser.ts";
-import { render } from "../src/render.ts";
-import { pdfInfo, pdfText, pdfWords } from "../test/poppler.ts";
+import { mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Browser } from '../src/browser.ts';
+import { render } from '../src/render.ts';
+import { pdfInfo, pdfText, pdfWords } from '../test/poppler.ts';
 
-const OUT = join(tmpdir(), "letterpress-samples");
+const OUT = join(tmpdir(), 'letterpress-samples');
 
 type Doc = { name: string; note: string; html: string };
 
@@ -25,8 +25,8 @@ const page = (css: string, body: string): string =>
 
 const DOCS: Doc[] = [
   {
-    name: "1-typography",
-    note: "justified body at 10.5pt, ligatures, kerning, hanging punctuation, small caps",
+    name: '1-typography',
+    note: 'justified body at 10.5pt, ligatures, kerning, hanging punctuation, small caps',
     html: page(
       `@page{size:A4;margin:22mm 20mm}
        body{font-family:${SERIF};font-size:10.5pt;line-height:1.55;color:#111}
@@ -61,8 +61,8 @@ const DOCS: Doc[] = [
     ),
   },
   {
-    name: "2-multipage",
-    note: "running header and footer, page numbers, forced breaks, widow and orphan control",
+    name: '2-multipage',
+    note: 'running header and footer, page numbers, forced breaks, widow and orphan control',
     html: page(
       `@page{size:A4;margin:20mm 18mm}
        @page{@top-center{content:"The Quarterly Review"};@bottom-right{content:counter(page) " / " counter(pages)}}
@@ -72,18 +72,23 @@ const DOCS: Doc[] = [
        p{margin:0 0 .75em;text-align:justify}
        .page{break-after:page}
        .page:last-child{break-after:auto}`,
-      [...Array.from({ length: 3 }, (_, i) => `
+      [
+        ...Array.from(
+          { length: 3 },
+          (_, i) => `
         <section class="page">
           <h2>Chapter ${i + 1}</h2>
-          <p>${"The reader of a long document should never have to ask where they are. A running head names the work, a folio numbers the leaf, and the margin holds both without intruding on the text. ".repeat(6)}</p>
+          <p>${'The reader of a long document should never have to ask where they are. A running head names the work, a folio numbers the leaf, and the margin holds both without intruding on the text. '.repeat(6)}</p>
           <h2>A second heading</h2>
-          <p>${"Kerning is the adjustment of the space between two letters so that the pair looks right rather than merely fits. ".repeat(7)}</p>
-        </section>`)].join(""),
+          <p>${'Kerning is the adjustment of the space between two letters so that the pair looks right rather than merely fits. '.repeat(7)}</p>
+        </section>`,
+        ),
+      ].join(''),
     ),
   },
   {
-    name: "3-table",
-    note: "hairline rules, right-aligned figures, repeating header row, dense grid",
+    name: '3-table',
+    note: 'hairline rules, right-aligned figures, repeating header row, dense grid',
     html: page(
       `@page{size:A4;margin:18mm}
        body{font-family:${SANS};font-size:8.5pt}
@@ -102,15 +107,15 @@ const DOCS: Doc[] = [
          <thead><tr><th>Sample</th><th class="n">Mean</th><th class="n">Low</th><th class="n">High</th><th class="n">n</th><th>Note</th></tr></thead>
          <tbody>${Array.from({ length: 34 }, (_, i) => {
            const m = 12 + i * 0.37;
-           return `<tr><td>S-${String(i + 1).padStart(3, "0")}</td><td class="n">${m.toFixed(3)}</td><td class="n">${(m - 0.4).toFixed(3)}</td><td class="n">${(m + 0.4).toFixed(3)}</td><td class="n">${1000 + i * 7}</td><td>${["baseline", "after cut", "re-run", "re-run", "control"][i % 5]}</td></tr>`;
-         }).join("")}</tbody>
+           return `<tr><td>S-${String(i + 1).padStart(3, '0')}</td><td class="n">${m.toFixed(3)}</td><td class="n">${(m - 0.4).toFixed(3)}</td><td class="n">${(m + 0.4).toFixed(3)}</td><td class="n">${1000 + i * 7}</td><td>${['baseline', 'after cut', 're-run', 're-run', 'control'][i % 5]}</td></tr>`;
+         }).join('')}</tbody>
          <tfoot><tr><td>Mean</td><td class="n">18.110</td><td class="n">17.710</td><td class="n">18.510</td><td class="n">10453</td><td></td></tr></tfoot>
        </table>`,
     ),
   },
   {
-    name: "4-multilingual",
-    note: "CJK, Cyrillic, Greek, Arabic, Devanagari, accents, ligatures",
+    name: '4-multilingual',
+    note: 'CJK, Cyrillic, Greek, Arabic, Devanagari, accents, ligatures',
     html: page(
       `@page{size:A4;margin:20mm}
        body{font-family:${SANS};font-size:13pt;line-height:2}
@@ -136,8 +141,8 @@ const DOCS: Doc[] = [
     ),
   },
   {
-    name: "5-web-page",
-    note: "an ordinary styled HTML page: nav, cards, code, links, lists",
+    name: '5-web-page',
+    note: 'an ordinary styled HTML page: nav, cards, code, links, lists',
     html: page(
       `@page{size:A4;margin:16mm}
        *{box-sizing:border-box}
@@ -191,25 +196,25 @@ console.log(`\n  writing to ${OUT}\n`);
 for (const doc of DOCS) {
   const r = await render(browser, {
     html: doc.html,
-    author: "letterpress samples",
+    author: 'letterpress samples',
     title: doc.note,
-    subject: "rendered with src/render.ts",
+    subject: 'rendered with src/render.ts',
   });
   const path = join(OUT, `${doc.name}.pdf`);
   await Bun.write(path, r.pdf);
   await Bun.$`pdftoppm -png -r 96 -f 1 -l 1 ${path} ${join(OUT, doc.name)}`.quiet();
   const info = await pdfInfo(r.pdf);
   const words = (await pdfWords(r.pdf)).length;
-  const chars = (await pdfText(r.pdf)).replace(/\s+/g, "").length;
-  const notes = r.findings.length === 0 ? "no findings" : r.findings.map((f) => f.code).join(" ");
+  const chars = (await pdfText(r.pdf)).replace(/\s+/g, '').length;
+  const notes = r.findings.length === 0 ? 'no findings' : r.findings.map((f) => f.code).join(' ');
   console.log(
     `  ${doc.name.padEnd(17)} ${String(info.pages).padStart(2)}p  ` +
       `${String(Math.round(r.pdf.byteLength / 1024)).padStart(4)}KB  ` +
       `${String(words).padStart(4)} words  ${String(chars).padStart(5)} chars   ${notes}`,
   );
-  console.log(`  ${" ".repeat(17)} ${doc.note}`);
+  console.log(`  ${' '.repeat(17)} ${doc.note}`);
 }
 
 await browser.close();
 await rm(profile, { recursive: true, force: true }).catch(() => {});
-console.log("");
+console.log('');

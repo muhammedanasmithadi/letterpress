@@ -8,8 +8,8 @@
  * not at the geometry, so a caller that wants to know which glyphs are invisible has to
  * ask the ToUnicode map rather than guess.
  */
-import { inflateSync } from "node:zlib";
-import { LATIN1, dictOf, streamRange, trySplit, type Parts } from "./pdfparts.ts";
+import { inflateSync } from 'node:zlib';
+import { LATIN1, dictOf, streamRange, trySplit, type Obj, type Parts } from './pdfparts.ts';
 
 export type FontTable = {
   /** Advance in text-space units for a CID at 1000 units/em. */
@@ -21,22 +21,22 @@ export type FontTable = {
 /** The body of the `/Font` dictionary, to its matching `>>`. */
 function fontDictOf(dict: string): string {
   const at = /\/Font\s*<</.exec(dict);
-  if (!at) return "";
+  if (!at) return '';
   let depth = 0;
   for (let i = at.index + at[0].length - 2; i < dict.length - 1; i++) {
     const pair = dict.slice(i, i + 2);
-    if (pair === "<<") {
+    if (pair === '<<') {
       depth++;
       i++;
       continue;
     }
-    if (pair === ">>") {
+    if (pair === '>>') {
       depth--;
       i++;
       if (depth === 0) return dict.slice(at.index + at[0].length, i - 1);
     }
   }
-  return "";
+  return '';
 }
 
 /**
@@ -60,8 +60,8 @@ export function parseW(dict: string): Map<number, number> {
   let depth = 0;
   let end = -1;
   for (let i = at.index + at[0].length - 1; i < dict.length; i++) {
-    if (dict[i] === "[") depth++;
-    else if (dict[i] === "]") {
+    if (dict[i] === '[') depth++;
+    else if (dict[i] === ']') {
       depth--;
       if (depth === 0) {
         end = i;
@@ -74,7 +74,7 @@ export function parseW(dict: string): Map<number, number> {
   const out = new Map<number, number>();
   const toks = dict
     .slice(at.index + at[0].length, end)
-    .replace(/[[\]]/g, " $& ")
+    .replace(/[[\]]/g, ' $& ')
     .split(/\s+/)
     .filter(Boolean);
 
@@ -82,10 +82,10 @@ export function parseW(dict: string): Map<number, number> {
   let last: number | null = null;
   for (let i = 0; i < toks.length; i++) {
     const tok = toks[i]!;
-    if (tok === "[") {
+    if (tok === '[') {
       const from = cid;
       let j = i + 1;
-      for (; j < toks.length && toks[j] !== "]"; j++) {
+      for (; j < toks.length && toks[j] !== ']'; j++) {
         const w = Number(toks[j]);
         if (from !== null && Number.isFinite(w)) out.set(from + (j - i - 1), w);
       }
@@ -107,7 +107,7 @@ export function parseW(dict: string): Map<number, number> {
 
 /** UTF-16BE hex to a string, which is what a ToUnicode destination holds. */
 function utf16be(hex: string): string {
-  let out = "";
+  let out = '';
   for (let i = 0; i + 3 < hex.length + 1; i += 4) {
     const unit = parseInt(hex.slice(i, i + 4), 16);
     if (Number.isFinite(unit)) out += String.fromCharCode(unit);
@@ -124,7 +124,7 @@ export function parseCMap(cmap: string): Map<number, string> {
     }
   }
   for (const m of cmap.matchAll(/beginbfrange\n([\s\S]*?)\nendbfrange/g)) {
-    for (const row of m[1]!.split("\n")) {
+    for (const row of m[1]!.split('\n')) {
       const r = /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(?:<([0-9A-Fa-f]+)>|\[([^\]]*)\])/.exec(row);
       if (!r) continue;
       const lo = parseInt(r[1]!, 16);
@@ -134,7 +134,8 @@ export function parseCMap(cmap: string): Map<number, string> {
         for (let i = 0; lo + i <= hi && i < list.length; i++) out.set(lo + i, list[i]!);
       } else if (r[3]) {
         const base = parseInt(r[3]!, 16);
-        for (let c = lo; c <= hi && c - lo < 65536; c++) out.set(c, String.fromCharCode(base + (c - lo)));
+        for (let c = lo; c <= hi && c - lo < 65536; c++)
+          out.set(c, String.fromCharCode(base + (c - lo)));
       }
     }
   }
@@ -142,15 +143,23 @@ export function parseCMap(cmap: string): Map<number, string> {
 }
 
 /**
- * Tables per page font resource, keyed by resource name.
+ * Tables per page font resource, keyed first by the content stream that uses them.
  *
- * A `/Type0` font is a parent: it names a descendant through `/DescendantFonts`, and the
- * widths live on the descendant. Reading the parent finds nothing, which looks like a font
- * with no metrics rather than one indirection away.
+ * A resource name is page-local: `/F1` on page one and `/F1` on page two are two different
+ * fonts. One flat map keyed by name lets the last page that binds `/F1` overwrite the
+ * widths for every other page, and a width read from the wrong font moves every number
+ * computed from it. The glyphs still land where they did, so nothing looks broken and the
+ * measurement is simply wrong.
+ *
+ * The outer key is the object number of a content stream, which is what a caller walking
+ * streams in file order has in hand.
  */
-export function fontTables(parts: Parts, cmapOf: (num: number) => string | null): Map<string, FontTable> {
-  const out = new Map<string, FontTable>();
+export function fontsByContent(
+  parts: Parts,
+  cmapOf: (num: number) => string | null,
+): Map<number, Map<string, FontTable>> {
   const byNum = new Map(parts.objs.map((o) => [o.num, o]));
+  const out = new Map<number, Map<string, FontTable>>();
   for (const page of parts.objs) {
     const dict = dictOf(page);
     if (!/\/Type\s*\/Page\b/.test(dict)) continue;
@@ -160,21 +169,49 @@ export function fontTables(parts: Parts, cmapOf: (num: number) => string | null)
     let resDict = fontDictOf(dict);
     const ref = /\/Resources\s+(\d+)\s+0\s+R/.exec(dict)?.[1];
     if (ref) resDict = fontDictOf(dictOf(byNum.get(Number(ref))!)) || resDict;
+
+    const fonts = new Map<string, FontTable>();
     for (const m of resDict.matchAll(/\/(\w+)\s+(\d+)\s+0\s+R/g)) {
       const target = byNum.get(Number(m[2]));
       if (!target) continue;
       const parent = dictOf(target);
-      const descendant = byNum.get(Number(/\/DescendantFonts\s*\[\s*(\d+)\s+0\s+R/.exec(parent)?.[1]));
-      const font = descendant ? dictOf(descendant) : parent;
+      // `/DescendantFonts` names an array, and the array may itself be an indirect
+      // reference. Reading only the inline form leaves the parent, which carries no /W,
+      // and every glyph then falls back to the default width.
+      const inline = /\/DescendantFonts\s*\[\s*(\d+)\s+0\s+R/.exec(parent)?.[1];
+      const kid = inline !== undefined ? Number(inline) : descendantOf(byNum, parent);
+      const kidObj = kid === undefined ? undefined : byNum.get(kid);
+      const font = kidObj ? dictOf(kidObj) : parent;
       const dw = Number(/\/DW\s+(-?[\d.]+)/.exec(font)?.[1] ?? 1000);
       const widths = parseW(font);
-      const cmap = parseCMap(cmapOf(Number(/\/ToUnicode\s+(\d+)\s+0\s+R/.exec(parent)?.[1] ?? -1)) ?? "");
-      out.set(m[1]!, {
+      const cmap = parseCMap(
+        cmapOf(Number(/\/ToUnicode\s+(\d+)\s+0\s+R/.exec(parent)?.[1] ?? -1)) ?? '',
+      );
+      fonts.set(m[1]!, {
         widthOf: (cid: number) => widths.get(cid) ?? dw,
-        unicodeOf: (cid: number) => cmap.get(cid) ?? "",
+        unicodeOf: (cid: number) => cmap.get(cid) ?? '',
       });
     }
+
+    for (const n of contentsOf(dict)) out.set(n, fonts);
   }
+  return out;
+}
+
+/** The first descendant named by a `/DescendantFonts` that is itself a reference. */
+function descendantOf(byNum: Map<number, Obj>, parent: string): number | undefined {
+  const arrNum = Number(/\/DescendantFonts\s+(\d+)\s+0\s+R/.exec(parent)?.[1] ?? NaN);
+  if (!Number.isFinite(arrNum)) return undefined;
+  const arr = byNum.get(arrNum);
+  const first = arr ? /(\d+)\s+0\s+R/.exec(dictOf(arr))?.[1] : undefined;
+  return first === undefined ? undefined : Number(first);
+}
+
+/** Every content stream object a page draws through. */
+function contentsOf(dict: string): number[] {
+  const out = [...dict.matchAll(/\/Contents\s+(\d+)\s+0\s+R/g)].map((m) => Number(m[1]));
+  const array = /\/Contents\s*\[([^\]]*)\]/.exec(dict)?.[1] ?? '';
+  for (const n of array.matchAll(/(\d+)\s+0\s+R/g)) out.push(Number(n[1]));
   return out;
 }
 
@@ -195,9 +232,7 @@ export function cmapStreams(pdf: Uint8Array): Map<number, string> {
     const raw = o.bytes.subarray(range.start, range.end);
     let text: string;
     try {
-      text = (/FlateDecode/.test(dictOf(o))
-        ? inflateSync(raw)
-        : Buffer.from(raw)).toString(LATIN1);
+      text = (/FlateDecode/.test(dictOf(o)) ? inflateSync(raw) : Buffer.from(raw)).toString(LATIN1);
     } catch {
       continue;
     }

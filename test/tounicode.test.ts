@@ -1,14 +1,14 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { deflateSync, inflateSync } from "node:zlib";
-import { Browser } from "../src/browser.ts";
-import { render } from "../src/render.ts";
-import { fixToUnicode, ligatureExpansion, unresolvedLigatures } from "../src/tounicode.ts";
-import { pdfInfo, pdfText } from "./poppler.ts";
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { deflateSync, inflateSync } from 'node:zlib';
+import { Browser } from '../src/browser.ts';
+import { render } from '../src/render.ts';
+import { fixToUnicode, ligatureExpansion, unresolvedLigatures } from '../src/tounicode.ts';
+import { pdfInfo, pdfText } from './poppler.ts';
 
-const LATIN1 = "latin1" as BufferEncoding;
+const LATIN1 = 'latin1' as BufferEncoding;
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
@@ -30,12 +30,14 @@ function cmaps(pdf: Uint8Array): string[] {
     if (!cm) continue;
     const at = cm.match(/stream\r?\n/);
     if (!at || at.index === undefined) continue;
-    const end = cm.lastIndexOf("\nendstream");
+    const end = cm.lastIndexOf('\nendstream');
     try {
-      out.push(inflateSync(Buffer.from(cm, LATIN1).subarray(at.index + at[0].length, end)).toString(LATIN1));
-    } catch {
-
-    }
+      out.push(
+        inflateSync(Buffer.from(cm, LATIN1).subarray(at.index + at[0].length, end)).toString(
+          LATIN1,
+        ),
+      );
+    } catch {}
   }
   return out;
 }
@@ -44,16 +46,16 @@ function pdfWithCMap(cmap: string): Buffer {
   const body = deflateSync(Buffer.from(cmap, LATIN1));
 
   const parts: Array<string | Buffer> = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> >>",
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> >>',
     `<< /Length ${body.length} /Filter /FlateDecode >>\nstream\n`,
-    "<< /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+NotoSans /Encoding /Identity-H " +
-      "/DescendantFonts [6 0 R] /ToUnicode 4 0 R >>",
-    "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /AAAAAA+NotoSans /CIDSystemInfo " +
-      "<< /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> >>",
+    '<< /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+NotoSans /Encoding /Identity-H ' +
+      '/DescendantFonts [6 0 R] /ToUnicode 4 0 R >>',
+    '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /AAAAAA+NotoSans /CIDSystemInfo ' +
+      '<< /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> >>',
   ];
-  const chunks: Buffer[] = [Buffer.from("%PDF-1.4\n%\xe2\xe3\xcf\xd3\n", LATIN1)];
+  const chunks: Buffer[] = [Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n', LATIN1)];
   let length = chunks[0]!.length;
   const offsets: number[] = [];
   for (let i = 0; i < parts.length; i++) {
@@ -61,49 +63,51 @@ function pdfWithCMap(cmap: string): Buffer {
     const head = Buffer.from(`${i + 1} 0 obj\n${parts[i]}`, LATIN1);
     chunks.push(head);
     length += head.length;
-    if (typeof parts[i] === "string" && parts[i].includes("\nstream\n")) {
-      const tail = Buffer.from("\nendstream\nendobj\n", LATIN1);
+    if (typeof parts[i] === 'string' && parts[i].includes('\nstream\n')) {
+      const tail = Buffer.from('\nendstream\nendobj\n', LATIN1);
       chunks.push(body, tail);
       length += body.length + tail.length;
     } else {
-      chunks.push(Buffer.from("endobj\n", LATIN1));
+      chunks.push(Buffer.from('endobj\n', LATIN1));
       length += 7;
     }
   }
   const xrefAt = length;
-  const table = ["xref\n0 7\n0000000000 65535 f \n"];
+  const table = ['xref\n0 7\n0000000000 65535 f \n'];
   for (let n = 1; n <= 6; n++) {
-    table.push(`${String(offsets[n - 1]).padStart(10, "0")} 00000 n \n`);
+    table.push(`${String(offsets[n - 1]).padStart(10, '0')} 00000 n \n`);
   }
-  chunks.push(Buffer.from(table.join(""), LATIN1));
-  chunks.push(Buffer.from(`trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`, LATIN1));
+  chunks.push(Buffer.from(table.join(''), LATIN1));
+  chunks.push(
+    Buffer.from(`trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`, LATIN1),
+  );
   return Buffer.concat(chunks);
 }
 
 const cmapOf = (pairs: Array<[number, string]>) =>
   `/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CMapType 2 def\n` +
   `1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n` +
-  `${pairs.length} beginbfchar\n${pairs.map(([g, d]) => `<${g.toString(16).toUpperCase().padStart(4, "0")}> <${d}>`).join("\n")}\nendbfchar\n` +
+  `${pairs.length} beginbfchar\n${pairs.map(([g, d]) => `<${g.toString(16).toUpperCase().padStart(4, '0')}> <${d}>`).join('\n')}\nendbfchar\n` +
   `endcmap\nend\nend\n`;
 
 const cmapOfRange = (lo: number, hi: number, base: number) =>
   `/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CMapType 2 def\n` +
   `1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n` +
-  `1 beginbfrange\n<${lo.toString(16).toUpperCase().padStart(4, "0")}> <${hi.toString(16).toUpperCase().padStart(4, "0")}> ` +
-  `<${base.toString(16).toUpperCase().padStart(4, "0")}>\nendbfrange\nendcmap\nend\nend\n`;
+  `1 beginbfrange\n<${lo.toString(16).toUpperCase().padStart(4, '0')}> <${hi.toString(16).toUpperCase().padStart(4, '0')}> ` +
+  `<${base.toString(16).toUpperCase().padStart(4, '0')}>\nendbfrange\nendcmap\nend\nend\n`;
 
-describe("ligatureExpansion", () => {
-  test("the seven Latin ligatures expand to their component letters", () => {
-    expect(ligatureExpansion(0xfb00)).toBe("ff");
-    expect(ligatureExpansion(0xfb01)).toBe("fi");
-    expect(ligatureExpansion(0xfb02)).toBe("fl");
-    expect(ligatureExpansion(0xfb03)).toBe("ffi");
-    expect(ligatureExpansion(0xfb04)).toBe("ffl");
-    expect(ligatureExpansion(0xfb05)).toBe("st");
-    expect(ligatureExpansion(0xfb06)).toBe("st");
+describe('ligatureExpansion', () => {
+  test('the seven Latin ligatures expand to their component letters', () => {
+    expect(ligatureExpansion(0xfb00)).toBe('ff');
+    expect(ligatureExpansion(0xfb01)).toBe('fi');
+    expect(ligatureExpansion(0xfb02)).toBe('fl');
+    expect(ligatureExpansion(0xfb03)).toBe('ffi');
+    expect(ligatureExpansion(0xfb04)).toBe('ffl');
+    expect(ligatureExpansion(0xfb05)).toBe('st');
+    expect(ligatureExpansion(0xfb06)).toBe('st');
   });
 
-  test("the whole qualifying set is the 21 codepoints measured, no more", () => {
+  test('the whole qualifying set is the 21 codepoints measured, no more', () => {
     const hits: Array<[number, string]> = [];
     for (let cp = 0x20; cp <= 0x10ffff; cp++) {
       if (cp >= 0xd800 && cp <= 0xdfff) continue;
@@ -114,28 +118,27 @@ describe("ligatureExpansion", () => {
     expect(hits).toHaveLength(21);
     const alphabetic = hits.filter(([cp]) => cp >= 0xfb00 && cp <= 0xfb4f);
     expect(alphabetic.map(([cp]) => cp)).toEqual([
-      0xfb00, 0xfb01, 0xfb02, 0xfb03, 0xfb04, 0xfb05, 0xfb06,
-      0xfb13, 0xfb14, 0xfb15, 0xfb16, 0xfb17, 0xfb4f,
+      0xfb00, 0xfb01, 0xfb02, 0xfb03, 0xfb04, 0xfb05, 0xfb06, 0xfb13, 0xfb14, 0xfb15, 0xfb16,
+      0xfb17, 0xfb4f,
     ]);
     expect(hits.filter(([cp]) => cp >= 0xfe70 && cp <= 0xfeff)).toHaveLength(8);
   });
 
-  test("a single letter carrying a diacritic keeps its codepoint", () => {
-
+  test('a single letter carrying a diacritic keeps its codepoint', () => {
     for (const cp of [0x0675, 0x0676, 0x0677, 0x0678, 0x0edc, 0x0edd]) {
       expect(ligatureExpansion(cp)).toBeUndefined();
 
-      expect(String.fromCodePoint(cp).normalize("NFKC").length).toBeGreaterThan(1);
+      expect(String.fromCodePoint(cp).normalize('NFKC').length).toBeGreaterThan(1);
     }
   });
 
-  test("a compatibility character is not a ligature", () => {
+  test('a compatibility character is not a ligature', () => {
     for (const cp of [0x00a8, 0x00af, 0x00bc, 0x02d8, 0x2160, 0x2163, 0x0132]) {
       expect(ligatureExpansion(cp)).toBeUndefined();
     }
   });
 
-  test("a codepoint outside every range is refused without consulting NFKC", () => {
+  test('a codepoint outside every range is refused without consulting NFKC', () => {
     expect(ligatureExpansion(0x41)).toBeUndefined();
     expect(ligatureExpansion(-1)).toBeUndefined();
     expect(ligatureExpansion(0x110000)).toBeUndefined();
@@ -143,90 +146,103 @@ describe("ligatureExpansion", () => {
   });
 });
 
-describe("fixToUnicode", () => {
-  test("a ligature in a bfchar destination becomes its expansion", () => {
-    const out = fixToUnicode(pdfWithCMap(cmapOf([[0x0654, "FB01"], [0x0003, "0020"]])));
+describe('fixToUnicode', () => {
+  test('a ligature in a bfchar destination becomes its expansion', () => {
+    const out = fixToUnicode(
+      pdfWithCMap(
+        cmapOf([
+          [0x0654, 'FB01'],
+          [0x0003, '0020'],
+        ]),
+      ),
+    );
     expect(unresolvedLigatures(out)).toEqual([]);
-    const text = cmaps(out).join("");
-    expect(text).toContain("<0654> <00660069>");
-    expect(text).toContain("<0003> <0020>");
+    const text = cmaps(out).join('');
+    expect(text).toContain('<0654> <00660069>');
+    expect(text).toContain('<0003> <0020>');
   });
 
-  test("a ligature hidden in a bfrange destination is found", () => {
-
+  test('a ligature hidden in a bfrange destination is found', () => {
     const out = fixToUnicode(pdfWithCMap(cmapOfRange(0x0675, 0x0677, 0xfb00)));
     expect(unresolvedLigatures(out)).toEqual([]);
-    const text = cmaps(out).join("");
-    expect(text).toContain("<0675> <00660066>");
-    expect(text).toContain("<0676> <00660069>");
-    expect(text).toContain("<0677> <0066006C>");
+    const text = cmaps(out).join('');
+    expect(text).toContain('<0675> <00660066>');
+    expect(text).toContain('<0676> <00660069>');
+    expect(text).toContain('<0677> <0066006C>');
   });
 
-  test("every glyph a rewritten range covered is still present", () => {
-
+  test('every glyph a rewritten range covered is still present', () => {
     const out = fixToUnicode(pdfWithCMap(cmapOfRange(0x0675, 0x0678, 0xfb00)));
-    const text = cmaps(out).join("");
-    for (const gid of ["0675", "0676", "0677", "0678"]) expect(text).toContain(`<${gid}>`);
+    const text = cmaps(out).join('');
+    for (const gid of ['0675', '0676', '0677', '0678']) expect(text).toContain(`<${gid}>`);
   });
 
-  test("a block header states the number of entries it actually contains", () => {
+  test('a block header states the number of entries it actually contains', () => {
     const out = fixToUnicode(pdfWithCMap(cmapOfRange(0x0675, 0x0677, 0xfb00)));
-    const text = cmaps(out).join("");
+    const text = cmaps(out).join('');
 
     const blocks = [...text.matchAll(/(\d+) begin(bfchar|bfrange)\n([\s\S]*?)\nend\2/g)];
-    expect(blocks.length, "no cmap blocks were matched at all").toBeGreaterThan(0);
+    expect(blocks.length, 'no cmap blocks were matched at all').toBeGreaterThan(0);
     for (const m of blocks) {
-      const entries = m[3]!.split("\n").filter((l) => l.trim()).length;
+      const entries = m[3]!.split('\n').filter((l) => l.trim()).length;
       expect(Number(m[1])).toBe(entries);
     }
   });
 
-  test("a range with no ligature in it is left exactly as written", () => {
+  test('a range with no ligature in it is left exactly as written', () => {
     const input = pdfWithCMap(cmapOfRange(0x0044, 0x004c, 0x0061));
     expect(sameBytes(fixToUnicode(input), input)).toBe(true);
   });
 
-  test("a document with no ligature is returned byte for byte", () => {
-    const input = pdfWithCMap(cmapOf([[0x0003, "0020"], [0x0014, "0031"], [0x0079, "00B7"]]));
+  test('a document with no ligature is returned byte for byte', () => {
+    const input = pdfWithCMap(
+      cmapOf([
+        [0x0003, '0020'],
+        [0x0014, '0031'],
+        [0x0079, '00B7'],
+      ]),
+    );
     expect(sameBytes(fixToUnicode(input), input)).toBe(true);
   });
 
-  test("a ligature in a bfchar is fixed even when a bfrange is also rewritten", () => {
-
-    const withBoth = "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n" +
-      "1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n" +
-      "3 beginbfchar\n<0654> <FB03>\n<0003> <0020>\n<0014> <0031>\nendbfchar\n" +
-      "1 beginbfrange\n<0675> <0677> <FB00>\nendbfrange\n" +
-      "endcmap\nend\nend\n";
+  test('a ligature in a bfchar is fixed even when a bfrange is also rewritten', () => {
+    const withBoth =
+      '/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n' +
+      '1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n' +
+      '3 beginbfchar\n<0654> <FB03>\n<0003> <0020>\n<0014> <0031>\nendbfchar\n' +
+      '1 beginbfrange\n<0675> <0677> <FB00>\nendbfrange\n' +
+      'endcmap\nend\nend\n';
     const out = fixToUnicode(pdfWithCMap(withBoth));
     expect(unresolvedLigatures(out)).toEqual([]);
-    const text = cmaps(out).join("");
-    expect(text).toContain("<0654> <006600660069>");
-    expect(text).toContain("<0675> <00660066>");
+    const text = cmaps(out).join('');
+    expect(text).toContain('<0654> <006600660069>');
+    expect(text).toContain('<0675> <00660066>');
   });
 
-  test("the codespacerange line is not mistaken for a glyph mapping", () => {
+  test('the codespacerange line is not mistaken for a glyph mapping', () => {
     const out = fixToUnicode(pdfWithCMap(cmapOfRange(0x0675, 0x0677, 0xfb00)));
-    expect(cmaps(out).join("")).toContain("<0000> <FFFF>");
+    expect(cmaps(out).join('')).toContain('<0000> <FFFF>');
   });
 
-  test("a rewritten file is still a valid pdf", () => {
+  test('a rewritten file is still a valid pdf', () => {
     const out = fixToUnicode(pdfWithCMap(cmapOfRange(0x0675, 0x0677, 0xfb00)));
     const text = Buffer.from(out).toString(LATIN1);
     expect(text.match(/startxref/g)).toHaveLength(1);
     const at = Number(text.match(/startxref\s+(\d+)/)![1]);
-    expect(text.slice(at, at + 4)).toBe("xref");
+    expect(text.slice(at, at + 4)).toBe('xref');
     const header = text.slice(at).match(/^xref\s+0\s+(\d+)\s/)!;
     const table = text.slice(at + header[0].length);
     let checked = 0;
     for (let n = 1; n < Number(header[1]); n++) {
       const entry = table.slice(n * 20, n * 20 + 20);
-      if (entry[17] !== "n") continue;
+      if (entry[17] !== 'n') continue;
       checked++;
-      expect(text.slice(Number(entry.slice(0, 10)), Number(entry.slice(0, 10)) + 20)).toStartWith(`${n} 0 obj`);
+      expect(text.slice(Number(entry.slice(0, 10)), Number(entry.slice(0, 10)) + 20)).toStartWith(
+        `${n} 0 obj`,
+      );
     }
     expect(checked).toBeGreaterThan(0);
-    expect(text).not.toContain("endobjxref");
+    expect(text).not.toContain('endobjxref');
   });
 
   test("a stream's /Length matches the payload after rewriting", () => {
@@ -235,23 +251,25 @@ describe("fixToUnicode", () => {
     let streams = 0;
     for (const m of text.matchAll(/(?:^|[^0-9])(\d+) 0 obj([\s\S]*?)endobj/g)) {
       const body = m[2]!;
-      const len = body.split("stream")[0]!.match(/\/Length (\d+)/);
+      const len = body.split('stream')[0]!.match(/\/Length (\d+)/);
       const at = body.match(/stream\r?\n/);
       if (!len || !at || at.index === undefined) continue;
       streams++;
-      const end = body.lastIndexOf("\nendstream");
-      expect(Buffer.from(body, LATIN1).subarray(at.index + at[0].length, end).length).toBe(Number(len[1]));
+      const end = body.lastIndexOf('\nendstream');
+      expect(Buffer.from(body, LATIN1).subarray(at.index + at[0].length, end).length).toBe(
+        Number(len[1]),
+      );
     }
     expect(streams).toBeGreaterThan(0);
   });
 
-  test("input that is not a linear pdf is returned untouched", () => {
-    for (const junk of [Buffer.alloc(0), Buffer.from("not a pdf"), Buffer.from("%PDF-1.7\n")]) {
+  test('input that is not a linear pdf is returned untouched', () => {
+    for (const junk of [Buffer.alloc(0), Buffer.from('not a pdf'), Buffer.from('%PDF-1.7\n')]) {
       expect(sameBytes(fixToUnicode(junk), junk)).toBe(true);
     }
   });
 
-  test("a Uint8Array that is not a Buffer is still read as bytes", () => {
+  test('a Uint8Array that is not a Buffer is still read as bytes', () => {
     const input = pdfWithCMap(cmapOfRange(0x0675, 0x0677, 0xfb00));
     const asView = new Uint8Array(input);
     expect(asView).not.toBeInstanceOf(Buffer);
@@ -259,12 +277,12 @@ describe("fixToUnicode", () => {
   });
 });
 
-describe("rendered output", () => {
+describe('rendered output', () => {
   let browser: Browser;
   let profile: string;
 
   beforeAll(async () => {
-    profile = await mkdtemp(join(tmpdir(), "letterpress-tounicode-"));
+    profile = await mkdtemp(join(tmpdir(), 'letterpress-tounicode-'));
     browser = await Browser.launch({ profile });
   }, 60_000);
 
@@ -273,19 +291,19 @@ describe("rendered output", () => {
     await rm(profile, { recursive: true, force: true }).catch(() => {});
   });
 
-  test("text with ligatures leaves none behind in the ToUnicode", async () => {
+  test('text with ligatures leaves none behind in the ToUnicode', async () => {
     const r = await render(browser, {
       html: `<!doctype html><p>office efficient different flags finished</p>`,
     });
     expect(unresolvedLigatures(r.pdf)).toEqual([]);
   });
 
-  test("extracted text is plain letters, so a word search finds it", async () => {
+  test('extracted text is plain letters, so a word search finds it', async () => {
     const r = await render(browser, {
       html: `<!doctype html><p>office efficient different flags finished</p>`,
     });
     const text = await pdfText(r.pdf);
-    for (const word of ["office", "efficient", "different", "flags", "finished"]) {
+    for (const word of ['office', 'efficient', 'different', 'flags', 'finished']) {
       expect(text.toLowerCase()).toContain(word);
     }
 
@@ -294,23 +312,23 @@ describe("rendered output", () => {
     }
   });
 
-  test("a document with no ligature is unaffected", async () => {
+  test('a document with no ligature is unaffected', async () => {
     const r = await render(browser, { html: `<!doctype html><p>plain words only</p>` });
     expect(unresolvedLigatures(r.pdf)).toEqual([]);
-    expect(await pdfText(r.pdf)).toContain("plain words only");
+    expect(await pdfText(r.pdf)).toContain('plain words only');
   });
 
-  test("no font family keeps a ligature, and no repair changes its own output", async () => {
-
+  test('no font family keeps a ligature, and no repair changes its own output', async () => {
     for (const style of [
-      "",
-      "font-family:serif",
-      "font-family:monospace",
-      "font-weight:700",
-      "font-style:italic",
+      '',
+      'font-family:serif',
+      'font-family:monospace',
+      'font-weight:700',
+      'font-style:italic',
     ]) {
       const r = await render(browser, {
-        html: `<!doctype html><meta charset="utf-8"><p style="${style}">` +
+        html:
+          `<!doctype html><meta charset="utf-8"><p style="${style}">` +
           `office efficient different flags finished</p>`,
       });
       expect(unresolvedLigatures(r.pdf)).toEqual([]);
@@ -318,18 +336,17 @@ describe("rendered output", () => {
     }
   }, 120_000);
 
-  test("a word containing an ffi ligature is findable in a serif document", async () => {
+  test('a word containing an ffi ligature is findable in a serif document', async () => {
     const r = await render(browser, {
       html: `<!doctype html><meta charset="utf-8">
 <style>body{font-family:"DejaVu Serif",serif}</style><p>efficient sufficient</p>`,
     });
     expect(unresolvedLigatures(r.pdf)).toEqual([]);
-    expect(await pdfText(r.pdf)).toContain("efficient");
+    expect(await pdfText(r.pdf)).toContain('efficient');
     expect(await pdfText(r.pdf)).not.toContain(String.fromCodePoint(0xfb03));
   }, 90_000);
 
-  test("arabic letters carrying hamza keep their codepoints", async () => {
-
+  test('arabic letters carrying hamza keep their codepoints', async () => {
     const r = await render(browser, {
       html: `<!doctype html><p dir="rtl" lang="ar">الأ专著 والمكتبة</p>`,
     });
@@ -337,15 +354,15 @@ describe("rendered output", () => {
     expect(r.info.pages).toBe(1);
   });
 
-  test("hebrew and french text survive", async () => {
+  test('hebrew and french text survive', async () => {
     for (const html of [`<p dir="rtl" lang="he">שלום עולם</p>`, `<p lang="fr">œuvre cœur</p>`]) {
       const r = await render(browser, { html: `<!doctype html>${html}` });
       expect(unresolvedLigatures(r.pdf)).toEqual([]);
-      expect(r.findings.filter((f) => f.severity === "error")).toEqual([]);
+      expect(r.findings.filter((f) => f.severity === 'error')).toEqual([]);
     }
   });
 
-  test("the file is still readable after both fixes have run", async () => {
+  test('the file is still readable after both fixes have run', async () => {
     const r = await render(browser, {
       html: `<!doctype html><p>office efficient</p>`,
     });
@@ -353,22 +370,23 @@ describe("rendered output", () => {
     expect(info.pages).toBe(1);
     const text = Buffer.from(r.pdf).toString(LATIN1);
     expect(text.match(/startxref/g)).toHaveLength(1);
-    expect(text.slice(Number(text.match(/startxref\s+(\d+)/)![1]))).toStartWith("xref");
+    expect(text.slice(Number(text.match(/startxref\s+(\d+)/)![1]))).toStartWith('xref');
   });
 
-  test("the fix composes with the descriptor fix in one pass", async () => {
-
+  test('the fix composes with the descriptor fix in one pass', async () => {
     const r = await render(browser, {
       html: `<!doctype html><p style="font-family:sans-serif">office efficient</p>`,
     });
     expect(unresolvedLigatures(r.pdf)).toEqual([]);
     const text = Buffer.from(r.pdf).toString(LATIN1);
-    const header = text.slice(Number(text.match(/startxref\s+(\d+)/)![1])).match(/^xref\s+0\s+(\d+)\s/)!;
+    const header = text
+      .slice(Number(text.match(/startxref\s+(\d+)/)![1]))
+      .match(/^xref\s+0\s+(\d+)\s/)!;
     const table = text.slice(Number(text.match(/startxref\s+(\d+)/)![1]) + header[0].length);
     let bad = 0;
     for (let n = 1; n < Number(header[1]); n++) {
       const entry = table.slice(n * 20, n * 20 + 20);
-      if (entry[17] !== "n") continue;
+      if (entry[17] !== 'n') continue;
       const off = Number(entry.slice(0, 10));
       if (!text.startsWith(`${n} 0 obj`, off)) bad++;
     }

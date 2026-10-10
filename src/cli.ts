@@ -1,11 +1,19 @@
 #!/usr/bin/env bun
-import { readdirSync, rmSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { Browser } from "./browser.ts";
-import { FORMATS, render, type Format, type Finding } from "./render.ts";
-import { TemplateError, escapeCss, invoiceTotals, lines, money, render as fillTemplate, type TemplateData } from "./template.ts";
+import { readdirSync, rmSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Browser } from './browser.ts';
+import { FORMATS, render, type Format, type Finding } from './render.ts';
+import {
+  TemplateError,
+  escapeCss,
+  invoiceTotals,
+  lines,
+  money,
+  render as fillTemplate,
+  type TemplateData,
+} from './template.ts';
 
 const USAGE = `letterpress - render HTML to PDF through Chromium's own print engine
 
@@ -83,50 +91,84 @@ type ParseResult = { opts: Options; error?: string };
 
 export function parseArgs(argv: string[]): ParseResult {
   const opts: Options = {
-    landscape: false, allowNetwork: false, background: true,
-    settleMs: 0, timeoutMs: 30_000, maxImagePpi: 300, json: false, quiet: false,
+    landscape: false,
+    allowNetwork: false,
+    background: true,
+    settleMs: 0,
+    timeoutMs: 30_000,
+    maxImagePpi: 300,
+    json: false,
+    quiet: false,
   };
   const rest: string[] = [];
 
   const need = (i: number, flag: string): string => {
     const v = argv[i + 1];
-    if (v === undefined || v.startsWith("-")) return fail(`option ${flag} needs a value`);
+    if (v === undefined || v.startsWith('-')) return fail(`option ${flag} needs a value`);
     return v;
   };
-  const fail = (m: string): never => { throw new UsageError(m); };
+  const fail = (m: string): never => {
+    throw new UsageError(m);
+  };
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
-      case "-h": case "--help": opts.help = true; break;
-      case "-o": case "--out": opts.out = need(i, a); i++; break;
-      case "-t": case "--template": opts.template = need(i, a); i++; break;
-      case "--list-templates": opts.listTemplates = true; break;
-      case "-d": case "--data": opts.data = need(i, a); i++; break;
-      case "--format": {
-        const v = need(i, a).toLowerCase(); i++;
-        if (!(v in FORMATS)) return { opts, error: `unknown format "${v}". try: ${Object.keys(FORMATS).join(", ")}` };
+      case '-h':
+      case '--help':
+        opts.help = true;
+        break;
+      case '-o':
+      case '--out':
+        opts.out = need(i, a);
+        i++;
+        break;
+      case '-t':
+      case '--template':
+        opts.template = need(i, a);
+        i++;
+        break;
+      case '--list-templates':
+        opts.listTemplates = true;
+        break;
+      case '-d':
+      case '--data':
+        opts.data = need(i, a);
+        i++;
+        break;
+      case '--format': {
+        const v = need(i, a).toLowerCase();
+        i++;
+        if (!(v in FORMATS))
+          return { opts, error: `unknown format "${v}". try: ${Object.keys(FORMATS).join(', ')}` };
         opts.format = v as Format;
         break;
       }
-      case "--landscape": opts.landscape = true; break;
-      case "--margin": {
-
+      case '--landscape':
+        opts.landscape = true;
+        break;
+      case '--margin': {
         const v = a[i + 1];
-        if (v === undefined) return { opts, error: "option --margin needs a value" };
+        if (v === undefined) return { opts, error: 'option --margin needs a value' };
         i++;
         opts.margin = v;
         break;
       }
-      case "--allow-network": opts.allowNetwork = true; break;
-      case "--root": {
-        const v = need(i, a); i++;
+      case '--allow-network':
+        opts.allowNetwork = true;
+        break;
+      case '--root': {
+        const v = need(i, a);
+        i++;
         opts.root = v;
         break;
       }
-      case "--no-background": opts.background = false; break;
-      case "--settle": {
-        const v = need(i, a); i++;
+      case '--no-background':
+        opts.background = false;
+        break;
+      case '--settle': {
+        const v = need(i, a);
+        i++;
         const n = wholeNumber(v);
 
         if (n === undefined || n < 0) {
@@ -135,14 +177,17 @@ export function parseArgs(argv: string[]): ParseResult {
         opts.settleMs = n;
         break;
       }
-      case "--max-image-ppi": {
-        const v = need(i, a); i++;
-        if (!/^\d+$/.test(v)) return { opts, error: `--max-image-ppi needs a whole number, got "${v}"` };
+      case '--max-image-ppi': {
+        const v = need(i, a);
+        i++;
+        if (!/^\d+$/.test(v))
+          return { opts, error: `--max-image-ppi needs a whole number, got "${v}"` };
         opts.maxImagePpi = Number(v);
         break;
       }
-      case "--timeout": {
-        const v = need(i, a); i++;
+      case '--timeout': {
+        const v = need(i, a);
+        i++;
         const n = wholeNumber(v);
 
         if (n === undefined || n < 1000) {
@@ -151,38 +196,52 @@ export function parseArgs(argv: string[]): ParseResult {
         opts.timeoutMs = n;
         break;
       }
-      case "--author":
-        opts.author = need(i, a); i++;
-        if (!opts.author.trim()) return { opts, error: "--author needs a name" };
+      case '--author':
+        opts.author = need(i, a);
+        i++;
+        if (!opts.author.trim()) return { opts, error: '--author needs a name' };
         break;
-      case "--subject":
-        opts.subject = need(i, a); i++;
-        if (!opts.subject.trim()) return { opts, error: "--subject needs text" };
+      case '--subject':
+        opts.subject = need(i, a);
+        i++;
+        if (!opts.subject.trim()) return { opts, error: '--subject needs text' };
         break;
-      case "--keywords":
-        opts.keywords = need(i, a); i++;
-        if (!opts.keywords.trim()) return { opts, error: "--keywords needs text" };
+      case '--keywords':
+        opts.keywords = need(i, a);
+        i++;
+        if (!opts.keywords.trim()) return { opts, error: '--keywords needs text' };
         break;
-      case "--json": opts.json = true; break;
-      case "-q": case "--quiet": opts.quiet = true; break;
+      case '--json':
+        opts.json = true;
+        break;
+      case '-q':
+      case '--quiet':
+        opts.quiet = true;
+        break;
       default:
-        if (a.startsWith("-") && a !== "-") return { opts, error: `unknown option "${a}"` };
+        if (a.startsWith('-') && a !== '-') return { opts, error: `unknown option "${a}"` };
         rest.push(a);
     }
   }
 
-  if (rest.length > 1) return { opts, error: `expected one input, got ${rest.length}: ${rest.join(", ")}` };
+  if (rest.length > 1)
+    return { opts, error: `expected one input, got ${rest.length}: ${rest.join(', ')}` };
   if (opts.help || opts.listTemplates) return { opts };
-  if (opts.data && !opts.template) return { opts, error: "--data needs --template" };
-  if (opts.template && !opts.data) return { opts, error: "--template needs --data" };
+  if (opts.data && !opts.template) return { opts, error: '--data needs --template' };
+  if (opts.template && !opts.data) return { opts, error: '--template needs --data' };
   if (rest.length) {
-    if (opts.template) return { opts, error: "pass either an input file or --template with --data, not both" };
+    if (opts.template)
+      return { opts, error: 'pass either an input file or --template with --data, not both' };
     opts.input = rest[0];
     if (/^https?:\/\//i.test(opts.input)) opts.allowNetwork = true;
   } else if (!opts.template) {
-    return { opts, error: "no input. pass a file, - for stdin, a URL, or --template with --data" };
+    return { opts, error: 'no input. pass a file, - for stdin, a URL, or --template with --data' };
   }
-  if (opts.margin && !opts.format) return { opts, error: "--margin only applies with --format, because the document's own @page wins otherwise" };
+  if (opts.margin && !opts.format)
+    return {
+      opts,
+      error: "--margin only applies with --format, because the document's own @page wins otherwise",
+    };
   return { opts };
 }
 
@@ -194,18 +253,24 @@ function wholeNumber(v: string): number | undefined {
 export class UsageError extends Error {}
 
 function defaultOut(input: string): string {
-  if (input === "-") return "out.pdf";
+  if (input === '-') return 'out.pdf';
   try {
     const u = new URL(input);
-    const name = u.pathname.split("/").filter(Boolean).pop() ?? "index";
-    return `${name.replace(/\.html?$/i, "") || "index"}.pdf`;
+    const name = u.pathname.split('/').filter(Boolean).pop() ?? 'index';
+    return `${name.replace(/\.html?$/i, '') || 'index'}.pdf`;
   } catch {
-    const base = input.split("/").filter(Boolean).pop() ?? "out";
-    return base.replace(/\.html?$/i, "") + ".pdf";
+    const base = input.split('/').filter(Boolean).pop() ?? 'out';
+    return base.replace(/\.html?$/i, '') + '.pdf';
   }
 }
 
-async function readStdin({ timeoutMs, maxBytes }: { timeoutMs: number; maxBytes: number }): Promise<string> {
+async function readStdin({
+  timeoutMs,
+  maxBytes,
+}: {
+  timeoutMs: number;
+  maxBytes: number;
+}): Promise<string> {
   const chunks: Uint8Array[] = [];
   let total = 0;
 
@@ -215,7 +280,7 @@ async function readStdin({ timeoutMs, maxBytes }: { timeoutMs: number; maxBytes:
       if (total > maxBytes) {
         throw new Error(
           `stdin is over the ${(maxBytes / 1048576).toFixed(0)}MB limit at ${(total / 1048576).toFixed(1)}MB. ` +
-          `write the document to a file and pass the path.`,
+            `write the document to a file and pass the path.`,
         );
       }
       chunks.push(chunk as Uint8Array);
@@ -224,39 +289,48 @@ async function readStdin({ timeoutMs, maxBytes }: { timeoutMs: number; maxBytes:
   })();
 
   const guard = new Promise<never>((_, reject) => {
-    const t = setTimeout(() => reject(new Error(
-      `stdin was still open after ${(timeoutMs / 1000).toFixed(0)}s, so there is nothing to render. ` +
-      `the pipe is either trickling or not closing. raise --timeout if the document really is that slow.`,
-    )), timeoutMs);
+    const t = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `stdin was still open after ${(timeoutMs / 1000).toFixed(0)}s, so there is nothing to render. ` +
+              `the pipe is either trickling or not closing. raise --timeout if the document really is that slow.`,
+          ),
+        ),
+      timeoutMs,
+    );
 
     t.unref?.();
-    pump.then(() => clearTimeout(t), () => clearTimeout(t));
+    pump.then(
+      () => clearTimeout(t),
+      () => clearTimeout(t),
+    );
   });
 
   await Promise.race([pump, guard]);
-  let out = "";
+  let out = '';
   for (const c of chunks) out += new TextDecoder().decode(c, { stream: true });
   return out;
 }
 
 function report(finding: Finding): string {
-  return finding.severity === "error" ? `error: ${finding.message}` : `warn:  ${finding.message}`;
+  return finding.severity === 'error' ? `error: ${finding.message}` : `warn:  ${finding.message}`;
 }
 
 function killBrowserByProfile(profile: string): void {
-  if (process.platform.toUpperCase() !== "LINUX") return;
+  if (process.platform.toUpperCase() !== 'LINUX') return;
   try {
-    const { readdirSync, readFileSync } = require("node:fs") as typeof import("node:fs");
-    for (const entry of readdirSync("/proc")) {
+    const { readdirSync, readFileSync } = require('node:fs') as typeof import('node:fs');
+    for (const entry of readdirSync('/proc')) {
       if (!/^\d+$/.test(entry)) continue;
       const pid = Number(entry);
       if (pid === process.pid) continue;
       try {
-        if (!readFileSync(`/proc/${pid}/cmdline`, "utf8").includes(profile)) continue;
-        process.kill(pid, "SIGKILL");
-      } catch {  }
+        if (!readFileSync(`/proc/${pid}/cmdline`, 'utf8').includes(profile)) continue;
+        process.kill(pid, 'SIGKILL');
+      } catch {}
     }
-  } catch {  }
+  } catch {}
 }
 
 export async function main(argv: string[]): Promise<number> {
@@ -278,12 +352,12 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (opts.listTemplates) {
     const names = await listTemplates();
-    process.stdout.write(names.length ? `${names.join("\n")}\n` : "no templates bundled\n");
+    process.stdout.write(names.length ? `${names.join('\n')}\n` : 'no templates bundled\n');
     return 0;
   }
 
   const outPath = opts.out ?? (opts.template ? `${opts.template}.pdf` : defaultOut(opts.input!));
-  const profile = await mkdtemp(join(tmpdir(), "letterpress-cli-"));
+  const profile = await mkdtemp(join(tmpdir(), 'letterpress-cli-'));
   let browser: Browser | undefined;
 
   let interrupted: NodeJS.Signals | undefined;
@@ -298,13 +372,13 @@ export async function main(argv: string[]): Promise<number> {
         if (entry.startsWith(own)) rmSync(join(tmpdir(), entry), { recursive: true, force: true });
       }
       rmSync(profile, { recursive: true, force: true });
-    } catch {  }
+    } catch {}
 
-    process.exit(128 + (signal === "SIGINT" ? 2 : signal === "SIGTERM" ? 15 : 1));
+    process.exit(128 + (signal === 'SIGINT' ? 2 : signal === 'SIGTERM' ? 15 : 1));
   };
-  process.on("SIGINT", onSignal);
-  process.on("SIGTERM", onSignal);
-  process.on("SIGHUP", onSignal);
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+  process.on('SIGHUP', onSignal);
   void interrupted;
 
   try {
@@ -317,13 +391,15 @@ export async function main(argv: string[]): Promise<number> {
       } catch (e) {
         throw new Error(`${opts.data} is not valid JSON: ${(e as Error).message}`);
       }
-      const tplPath = join(import.meta.dir, "..", "templates", `${opts.template}.html`);
+      const tplPath = join(import.meta.dir, '..', 'templates', `${opts.template}.html`);
       if (!(await Bun.file(tplPath).exists())) {
         throw new Error(`no bundled template named "${opts.template}". try --list-templates`);
       }
       request = { html: fillTemplate(await Bun.file(tplPath).text(), buildTemplateData(data)) };
-    } else if (opts.input === "-") {
-      request = { html: await readStdin({ timeoutMs: opts.timeoutMs ?? 30_000, maxBytes: 64 * 1024 * 1024 }) };
+    } else if (opts.input === '-') {
+      request = {
+        html: await readStdin({ timeoutMs: opts.timeoutMs ?? 30_000, maxBytes: 64 * 1024 * 1024 }),
+      };
     } else if (/^https?:\/\//i.test(opts.input!)) {
       request = { url: opts.input! };
     } else {
@@ -352,39 +428,51 @@ export async function main(argv: string[]): Promise<number> {
 
     for (const f of result.findings) process.stderr.write(`${report(f)}\n`);
 
-    const contradicted = result.findings.some((f) => f.severity === "error");
+    const contradicted = result.findings.some((f) => f.severity === 'error');
 
     if (opts.json) {
-      process.stdout.write(`${JSON.stringify({
-
-        ok: !contradicted, path: outPath, pages: result.info.pages, bytes,
-        ms: result.ms, source: result.source,
-        mediaBoxes: result.info.mediaBoxes, imageObjects: result.info.imageObjects,
-        tagged: result.info.tagged, blocked: result.blocked,
-        findings: result.findings,
-      }, null, 2)}\n`);
+      process.stdout.write(
+        `${JSON.stringify(
+          {
+            ok: !contradicted,
+            path: outPath,
+            pages: result.info.pages,
+            bytes,
+            ms: result.ms,
+            source: result.source,
+            mediaBoxes: result.info.mediaBoxes,
+            imageObjects: result.info.imageObjects,
+            tagged: result.info.tagged,
+            blocked: result.blocked,
+            findings: result.findings,
+          },
+          null,
+          2,
+        )}\n`,
+      );
     } else if (!opts.quiet) {
-      const shape = result.info.mediaBoxes[0] ?? "unknown";
-      process.stdout.write(`${outPath}  ${result.info.pages} page${result.info.pages === 1 ? "" : "s"}  ${formatBytes(bytes)}  ${result.ms}ms  ${shape}\n`);
+      const shape = result.info.mediaBoxes[0] ?? 'unknown';
+      process.stdout.write(
+        `${outPath}  ${result.info.pages} page${result.info.pages === 1 ? '' : 's'}  ${formatBytes(bytes)}  ${result.ms}ms  ${shape}\n`,
+      );
     }
 
     if (contradicted) {
       process.stderr.write(
-        "the pdf was written, but a finding above is an error: it is not the document you asked for.\n",
+        'the pdf was written, but a finding above is an error: it is not the document you asked for.\n',
       );
       return 1;
     }
-    return result.findings.some((f) => f.code === "url-render-blocked") ? 1 : 0;
+    return result.findings.some((f) => f.code === 'url-render-blocked') ? 1 : 0;
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     if (opts.json) process.stdout.write(`${JSON.stringify({ ok: false, error: message })}\n`);
     else process.stderr.write(`render failed: ${message}\n`);
     return 1;
   } finally {
-
-    process.off("SIGINT", onSignal);
-    process.off("SIGTERM", onSignal);
-    process.off("SIGHUP", onSignal);
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+    process.off('SIGHUP', onSignal);
     await browser?.close();
     await rm(profile, { recursive: true, force: true }).catch(() => {});
   }
@@ -397,9 +485,10 @@ export function formatBytes(n: number): string {
 }
 
 export async function listTemplates(): Promise<string[]> {
-  const dir = join(import.meta.dir, "..", "templates");
+  const dir = join(import.meta.dir, '..', 'templates');
   const names: string[] = [];
-  for await (const entry of new Bun.Glob("*.html").scan({ cwd: dir })) names.push(entry.replace(/\.html$/, ""));
+  for await (const entry of new Bun.Glob('*.html').scan({ cwd: dir }))
+    names.push(entry.replace(/\.html$/, ''));
   return names.sort();
 }
 
@@ -411,14 +500,14 @@ function buildTemplateData(data: Record<string, unknown>): TemplateData {
 
   if (!hasItems && data.rows !== undefined) {
     throw new TemplateError([
-      "rows is pre-built table markup and cannot be checked against a total. " +
-      "give items instead: an array of {description, qty, unit}, and the rows, " +
-      "subtotal, vat and total are all computed from them.",
+      'rows is pre-built table markup and cannot be checked against a total. ' +
+        'give items instead: an array of {description, qty, unit}, and the rows, ' +
+        'subtotal, vat and total are all computed from them.',
     ]);
   }
   if (hasItems) {
     const raw = (data.items ?? data.lines) as unknown;
-    if (!Array.isArray(raw)) throw new TemplateError(["items must be an array"]);
+    if (!Array.isArray(raw)) throw new TemplateError(['items must be an array']);
     const items = raw as Array<Record<string, unknown>>;
 
     const rateInput = data.vat_rate ?? data.vatRate ?? 0.2;
@@ -426,7 +515,7 @@ function buildTemplateData(data: Record<string, unknown>): TemplateData {
     if (!Number.isFinite(vatRate) || vatRate < 0 || vatRate > 1) {
       throw new TemplateError([
         `vat_rate must be a number between 0 and 1, got ${JSON.stringify(rateInput)}. ` +
-        `use 0.2 for twenty percent.`,
+          `use 0.2 for twenty percent.`,
       ]);
     }
 
@@ -437,50 +526,50 @@ function buildTemplateData(data: Record<string, unknown>): TemplateData {
       if (!Number.isFinite(qty) || !Number.isFinite(unit)) {
         throw new TemplateError([
           `items[${at}] has a qty or unit that is not a number: ` +
-          `${JSON.stringify({ qty: i.qty ?? i.quantity, unit: i.unit ?? i.price })}`,
+            `${JSON.stringify({ qty: i.qty ?? i.quantity, unit: i.unit ?? i.price })}`,
         ]);
       }
-      return { description: String(i.description ?? i.item ?? ""), qty, unit };
+      return { description: String(i.description ?? i.item ?? ''), qty, unit };
     });
 
     if (!lineItems.length) {
-
       throw new TemplateError([
-        "items is empty, so the invoice would print a header and a total with no " +
-        "line items between them. pass at least one item, or check the data file.",
+        'items is empty, so the invoice would print a header and a total with no ' +
+          'line items between them. pass at least one item, or check the data file.',
       ]);
     }
 
-    const totals = invoiceTotals(lineItems, { vatRate, currency: String(data.currency ?? "EUR") });
+    const totals = invoiceTotals(lineItems, { vatRate, currency: String(data.currency ?? 'EUR') });
     Object.assign(out, totals);
     for (const [key, computed] of [
-      ["subtotal", totals.subtotalValue],
-      ["vat", totals.vatValue],
-      ["total", totals.totalValue],
+      ['subtotal', totals.subtotalValue],
+      ['vat', totals.vatValue],
+      ['total', totals.totalValue],
     ] as const) {
       const claimed = data[key];
-      if (claimed === undefined || claimed === null || claimed === "") continue;
+      if (claimed === undefined || claimed === null || claimed === '') continue;
 
-      const digits = typeof claimed === "number" ? String(claimed) : String(claimed).replace(/[^\d.\-]/g, "");
-      const parsed = typeof claimed === "number" ? claimed : Number(digits);
+      const digits =
+        typeof claimed === 'number' ? String(claimed) : String(claimed).replace(/[^\d.\-]/g, '');
+      const parsed = typeof claimed === 'number' ? claimed : Number(digits);
       if (!digits.trim() || !Number.isFinite(parsed)) {
         throw new TemplateError([
           `${key} in the data file is ${JSON.stringify(claimed)}, which is not a number. ` +
-          `remove ${key} to let it be computed from the line items.`,
+            `remove ${key} to let it be computed from the line items.`,
         ]);
       }
       if (Math.abs(parsed - computed) > 0.005) {
         throw new TemplateError([
           `${key} in the data file is ${claimed}, but the line items add up to ${money(computed)}. ` +
-          `the computed figure is printed, because printing the supplied one would send a wrong total. ` +
-          `remove ${key} from the data file to let it always be computed.`,
+            `the computed figure is printed, because printing the supplied one would send a wrong total. ` +
+            `remove ${key} from the data file to let it always be computed.`,
         ]);
       }
     }
   }
 
-  for (const k of ["company", "invoice_no", "company_secondary", "note", "currency"]) {
-    if (typeof data[k] === "string") out[`${k}_text`] = escapeCss(data[k] as string);
+  for (const k of ['company', 'invoice_no', 'company_secondary', 'note', 'currency']) {
+    if (typeof data[k] === 'string') out[`${k}_text`] = escapeCss(data[k] as string);
   }
   if (Array.isArray(data.bill_to_lines)) out.bill_to_lines = lines(data.bill_to_lines.map(String));
   if (Array.isArray(data.company_lines)) out.company_lines = lines(data.company_lines.map(String));

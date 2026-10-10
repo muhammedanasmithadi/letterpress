@@ -37,16 +37,8 @@
  * it uses the same width table the merge does, so a table read wrongly agrees with itself.
  * The word boxes poppler reports are the independent check, and they live in the test.
  */
-import { deflateSync, inflateSync } from "node:zlib";
-import {
-  LATIN1,
-  dictOf,
-  join,
-  streamRange,
-  trySplit,
-  type Obj,
-  type Parts,
-} from "./pdfparts.ts";
+import { deflateSync, inflateSync } from 'node:zlib';
+import { LATIN1, dictOf, join, streamRange, trySplit, type Obj, type Parts } from './pdfparts.ts';
 
 /** Where a glyph was drawn, in text space. */
 type Placed = { x: number; y: number; cid: number };
@@ -70,22 +62,22 @@ export type MergeStats = {
 /** The body of the `/Font` dictionary, to its matching `>>`. */
 function fontDictOf(dict: string): string {
   const at = /\/Font\s*<</.exec(dict);
-  if (!at) return "";
+  if (!at) return '';
   let depth = 0;
   for (let i = at.index + at[0].length - 2; i < dict.length - 1; i++) {
     const pair = dict.slice(i, i + 2);
-    if (pair === "<<") {
+    if (pair === '<<') {
       depth++;
       i++;
       continue;
     }
-    if (pair === ">>") {
+    if (pair === '>>') {
       depth--;
       i++;
       if (depth === 0) return dict.slice(at.index + at[0].length, i - 1);
     }
   }
-  return "";
+  return '';
 }
 
 /**
@@ -111,7 +103,9 @@ function widthsByResource(parts: Parts): Widths {
       const target = byNum.get(Number(m[2]));
       if (!target) continue;
       let font = dictOf(target);
-      const descendant = byNum.get(Number(/\/DescendantFonts\s*\[\s*(\d+)\s+0\s+R/.exec(font)?.[1]));
+      const descendant = byNum.get(
+        Number(/\/DescendantFonts\s*\[\s*(\d+)\s+0\s+R/.exec(font)?.[1]),
+      );
       if (descendant) font = dictOf(descendant);
       if (!/\/Subtype\s*\/CIDFontType2/.test(font)) continue;
       const dw = Number(/\/DW\s+(-?[\d.]+)/.exec(font)?.[1] ?? 1000);
@@ -143,8 +137,8 @@ function parseW(dict: string): Map<number, number> {
   let depth = 0;
   let end = -1;
   for (let i = at.index + at[0].length - 1; i < dict.length; i++) {
-    if (dict[i] === "[") depth++;
-    else if (dict[i] === "]") {
+    if (dict[i] === '[') depth++;
+    else if (dict[i] === ']') {
       depth--;
       if (depth === 0) {
         end = i;
@@ -157,7 +151,7 @@ function parseW(dict: string): Map<number, number> {
   const out = new Map<number, number>();
   const toks = dict
     .slice(at.index + at[0].length, end)
-    .replace(/[[\]]/g, " $& ")
+    .replace(/[[\]]/g, ' $& ')
     .split(/\s+/)
     .filter(Boolean);
 
@@ -165,10 +159,10 @@ function parseW(dict: string): Map<number, number> {
   let last: number | null = null;
   for (let i = 0; i < toks.length; i++) {
     const tok = toks[i]!;
-    if (tok === "[") {
+    if (tok === '[') {
       const from = cid;
       let j = i + 1;
-      for (; j < toks.length && toks[j] !== "]"; j++) {
+      for (; j < toks.length && toks[j] !== ']'; j++) {
         const w = Number(toks[j]);
         if (from !== null && Number.isFinite(w)) out.set(from + (j - i - 1), w);
       }
@@ -247,7 +241,11 @@ function replay(block: string, widths: Widths): { placed: Placed[]; simple: bool
     }
     if (m[3] !== undefined) {
       // A rotated or scaled text matrix is not the case this handles.
-      if (Number(m[3]) !== 1 && Number(m[3]) !== -1) simple = false;
+      // Only the untransformed shape this handles: a b c d = 1 0 0 +/-1. Any shear,
+      // rotation or mirror changes what a `Td` does to the origin, and reading it as a
+      // plain horizontal move puts glyphs somewhere the proof cannot see, because the
+      // proof walks the same mistake.
+      if (Number(m[3]) !== 1 || Number(m[4]) !== 0 || Number(m[5]) !== 0) simple = false;
       if (Number(m[6]) !== 1 && Number(m[6]) !== -1) simple = false;
       x = lx = Number(m[7]);
       y = ly = Number(m[8]);
@@ -294,7 +292,7 @@ type Item = { raw: string } | { cids: number[]; dx: number; moved: boolean };
 /** Rewrite one text block, or return null when it is not the shape handled. */
 function mergeBlock(block: string, widths: Widths): string | null {
   const text = block.trim();
-  if (!text.startsWith("BT") || !text.endsWith("ET")) return null;
+  if (!text.startsWith('BT') || !text.endsWith('ET')) return null;
 
   // Chromium marks a ligature as its own run for accessibility:
   //
@@ -313,9 +311,9 @@ function mergeBlock(block: string, widths: Widths): string | null {
   const tok =
     /\bBT\b|\bET\b|\/(\w+)\s+([-\d.eE]+)\s+Tf|([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+Tm|([-\d.eE]+)\s+([-\d.eE]+)\s+Td|<([0-9A-Fa-f]*)>\s*Tj|([^\n]*\bBDC\b[^\n]*)|\bEMC\b/g;
 
-  let tf = "";
+  let tf = '';
   let size = 0;
-  let tm = "";
+  let tm = '';
   let open = false;
   let closed = false;
   let dx = 0;
@@ -325,15 +323,15 @@ function mergeBlock(block: string, widths: Widths): string | null {
   const items: Item[] = [];
 
   for (let m = tok.exec(text); m; m = tok.exec(text)) {
-    if (text.slice(at, m.index).trim() !== "") return null;
+    if (text.slice(at, m.index).trim() !== '') return null;
     at = m.index + m[0].length;
 
-    if (m[0] === "BT") {
+    if (m[0] === 'BT') {
       if (open || items.length) return null;
       open = true;
       continue;
     }
-    if (m[0] === "ET") {
+    if (m[0] === 'ET') {
       if (!open || closed) return null;
       closed = true;
       continue;
@@ -342,21 +340,24 @@ function mergeBlock(block: string, widths: Widths): string | null {
       items.push({ raw: m[12] });
       continue;
     }
-    if (m[0] === "EMC") {
+    if (m[0] === 'EMC') {
       items.push({ raw: m[0] });
       continue;
     }
     if (closed) return null;
     if (m[1] !== undefined) {
       // A second Tf means two runs in one block, which this does not merge.
-      if (items.some((i) => "cids" in i)) return null;
+      if (items.some((i) => 'cids' in i)) return null;
       tf = `/${m[1]} ${Number(m[2])} Tf`;
       size = Number(m[2]);
       continue;
     }
     if (m[3] !== undefined) {
-      if (items.some((i) => "cids" in i)) return null;
-      if (Number(m[3]) !== 1 && Number(m[3]) !== -1) return null;
+      if (items.some((i) => 'cids' in i)) return null;
+      // `Td tx ty` moves the origin to (e + tx*a + ty*c, f + tx*b + ty*d). Folding a
+      // leading `Td` into `e` is the same move only when a is 1 and b is 0, so anything
+      // with a shear, a rotation or a mirror is refused rather than rewritten.
+      if (Number(m[3]) !== 1 || Number(m[4]) !== 0 || Number(m[5]) !== 0) return null;
       if (Number(m[6]) !== 1 && Number(m[6]) !== -1) return null;
       tm = `${m[3]} ${m[4]} ${m[5]} ${m[6]} ${m[7]} ${m[8]} Tm`;
       continue;
@@ -376,11 +377,11 @@ function mergeBlock(block: string, widths: Widths): string | null {
     moved = false;
     dx = dy = 0;
   }
-  if (text.slice(at).trim() !== "") return null;
+  if (text.slice(at).trim() !== '') return null;
   if (!open || !closed) return null;
-  if (!items.some((i) => "cids" in i)) return null;
+  if (!items.some((i) => 'cids' in i)) return null;
 
-  const widthOf = widths.get(tf.slice(1, tf.indexOf(" ")));
+  const widthOf = widths.get(tf.slice(1, tf.indexOf(' ')));
   if (!widthOf || size <= 0) return null;
 
   // `Td` positions the pen against the *line* matrix, so what a run of text costs the pen
@@ -398,12 +399,12 @@ function mergeBlock(block: string, widths: Widths): string | null {
 
   const flush = (): void => {
     if (!entries.length) return;
-    out.push(`[${entries.join(" ")}] TJ`);
+    out.push(`[${entries.join(' ')}] TJ`);
     entries = [];
   };
 
   for (const item of items) {
-    if ("raw" in item) {
+    if ('raw' in item) {
       flush();
       out.push(item.raw);
       continue;
@@ -420,7 +421,7 @@ function mergeBlock(block: string, widths: Widths): string | null {
         if (item.dx !== 0) {
           if (!tm) tm = `1 0 0 -1 ${item.dx} 0 Tm`;
           else {
-            const m = tm.split(" ");
+            const m = tm.split(' ');
             tm = `${m[0]} ${m[1]} ${m[2]} ${m[3]} ${Number(m[4]) + item.dx} ${m[5]} Tm`;
           }
         }
@@ -435,10 +436,11 @@ function mergeBlock(block: string, widths: Widths): string | null {
       pending += sum;
     }
     first = false;
-    for (const cid of item.cids) entries.push(`<${cid.toString(16).toUpperCase().padStart(4, "0")}>`);
+    for (const cid of item.cids)
+      entries.push(`<${cid.toString(16).toUpperCase().padStart(4, '0')}>`);
   }
   flush();
-  return `BT ${tf} ${tm} ${out.join(" ")} ET`;
+  return `BT ${tf} ${tm} ${out.join(' ')} ET`;
 }
 
 /** Every glyph position in a whole content stream, or null if any block is unfamiliar. */
@@ -471,7 +473,10 @@ function decodeStream(o: Obj): { text: string; compressed: boolean } | null {
   const compressed = /FlateDecode/.test(dict);
   const raw = o.bytes.subarray(range.start, range.end);
   try {
-    return { text: (compressed ? inflateSync(raw) : Buffer.from(raw)).toString(LATIN1), compressed };
+    return {
+      text: (compressed ? inflateSync(raw) : Buffer.from(raw)).toString(LATIN1),
+      compressed,
+    };
   } catch {
     return null;
   }
@@ -521,13 +526,15 @@ export function mergeTextRuns(pdf: Uint8Array): { pdf: Uint8Array; stats: MergeS
     // still passing verify(), because the gate compares streams and not the header above
     // them. The dictionary is also not truncated: cutting it at a fixed length loses its
     // tail, and for a content stream holding a Type 3 font that tail is the resource dict.
-    const head = dictOf(o).replace(/\/Length\s+\d+/, `/Length ${body.length}`).trim();
+    const head = dictOf(o)
+      .replace(/\/Length\s+\d+/, `/Length ${body.length}`)
+      .trim();
     return {
       num: o.num,
       bytes: Buffer.concat([
         Buffer.from(`${head}\nstream\n`, LATIN1),
         body,
-        Buffer.from("\nendstream\nendobj\n", LATIN1),
+        Buffer.from('\nendstream\nendobj\n', LATIN1),
       ]),
     };
   });
@@ -546,7 +553,8 @@ export function textRunProfile(pdf: Uint8Array): { glyphs: number; tj: number; s
     if (!decoded || !/\bBT\b/.test(decoded.text)) continue;
     profile.glyphs += (decoded.text.match(/<[0-9A-Fa-f]+>/g) ?? []).length;
     profile.tj += (decoded.text.match(/\bTJ\b/g) ?? []).length;
-    profile.showOps += (decoded.text.match(/\bTj\b/g) ?? []).length + (decoded.text.match(/\bTJ\b/g) ?? []).length;
+    profile.showOps +=
+      (decoded.text.match(/\bTj\b/g) ?? []).length + (decoded.text.match(/\bTJ\b/g) ?? []).length;
   }
   return profile;
 }

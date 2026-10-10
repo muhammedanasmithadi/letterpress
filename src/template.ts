@@ -7,9 +7,9 @@ export class TemplateError extends Error {
     super(
       problems.length === 1 && !missing
         ? problems[0]
-        : `${missing ? "template is missing values for" : "template rejected the data"}: ${problems.join(", ")}`,
+        : `${missing ? 'template is missing values for' : 'template rejected the data'}: ${problems.join(', ')}`,
     );
-    this.name = "TemplateError";
+    this.name = 'TemplateError';
     this.missing = problems;
   }
 }
@@ -17,7 +17,7 @@ export class TemplateError extends Error {
 export class TemplateMissingError extends TemplateError {
   constructor(missing: string[]) {
     super(missing, { missing: true });
-    this.name = "TemplateMissingError";
+    this.name = 'TemplateMissingError';
   }
 }
 
@@ -34,23 +34,32 @@ function substitute(template: string, data: TemplateData, missing: Set<string>):
   return template.replace(
     PATTERN,
     (whole, blockKey?: string, body?: string, rawKey?: string, textKey?: string) => {
-      if (blockKey !== undefined) return data[blockKey] ? substitute(body!, data, missing) : "";
+      if (blockKey !== undefined) return data[blockKey] ? substitute(body!, data, missing) : '';
       if (rawKey !== undefined) {
         const raw = data[rawKey];
-        if (raw === undefined || raw === null) { missing.add(rawKey); return whole; }
+        if (raw === undefined || raw === null) {
+          missing.add(rawKey);
+          return whole;
+        }
 
-        if (Array.isArray(raw)) return raw.map((v) => String(v)).join("\n    ");
+        if (Array.isArray(raw)) return raw.map((v) => String(v)).join('\n    ');
         return String(raw);
       }
       const value = data[textKey!];
-      if (value === undefined || value === null) { missing.add(textKey!); return whole; }
+      if (value === undefined || value === null) {
+        missing.add(textKey!);
+        return whole;
+      }
       return escapeHtml(String(value));
     },
   );
 }
 
 export function money(n: number, decimals = 2): string {
-  return n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  return n.toLocaleString('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
 }
 
 export type LineItem = { description: string; qty: number; unit: number };
@@ -59,23 +68,24 @@ const UNSAFE_ROW = /<\s*(script|style|iframe|object|embed|link|meta|base|form|sv
 
 export class UnsafeRowError extends Error {
   constructor(what: string) {
-    super(`line item ${what} contains markup that cannot be rendered safely inside a table row. ` +
-      "item fields are inserted as built markup, so a description must be plain text. " +
-      "remove the tags, or render your own document instead of using a template.");
-    this.name = "UnsafeRowError";
+    super(
+      `line item ${what} contains markup that cannot be rendered safely inside a table row. ` +
+        'item fields are inserted as built markup, so a description must be plain text. ' +
+        'remove the tags, or render your own document instead of using a template.',
+    );
+    this.name = 'UnsafeRowError';
   }
 }
 
 export function invoiceTotals(
   items: LineItem[],
-  { vatRate = 0.2, currency = "EUR" }: { vatRate?: number; currency?: string } = {},
+  { vatRate = 0.2, currency = 'EUR' }: { vatRate?: number; currency?: string } = {},
 ) {
   if (!Array.isArray(items)) {
-    throw new TemplateError(["items"]);
+    throw new TemplateError(['items']);
   }
   if (items.length === 0) {
-
-    throw new TemplateError(["items (the array is empty, so there is nothing to total)"]);
+    throw new TemplateError(['items (the array is empty, so there is nothing to total)']);
   }
   const rows = items.map((item, i) => {
     if (item.description && UNSAFE_ROW.test(item.description)) {
@@ -88,7 +98,8 @@ export function invoiceTotals(
     return {
       ...item,
       amount,
-      html: `<tr><td>${escapeHtml(item.description)}</td>` +
+      html:
+        `<tr><td>${escapeHtml(item.description)}</td>` +
         `<td class="num">${item.qty}</td>` +
         `<td class="num">${money(item.unit)}</td>` +
         `<td class="num">${money(amount)}</td></tr>`,
@@ -97,10 +108,10 @@ export function invoiceTotals(
   const subtotal = rows.reduce((sum, r) => sum + r.amount, 0);
   const vat = subtotal * vatRate;
   if (!Number.isFinite(vatRate) || vatRate < 0) {
-    throw new TemplateError(["vat_rate must be a number, for example 0.21"]);
+    throw new TemplateError(['vat_rate must be a number, for example 0.21']);
   }
   return {
-    rows: rows.map((r) => r.html).join("\n    "),
+    rows: rows.map((r) => r.html).join('\n    '),
 
     subtotalValue: subtotal,
     vatValue: vat,
@@ -115,14 +126,16 @@ export function invoiceTotals(
 }
 
 export function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+  return s.replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
+  );
 }
 
 export function escapeCss(s: string): string {
-  return s.replace(/[\\"]/g, (c) => `\\${c}`).replace(/\n/g, " ");
+  return s.replace(/[\\"]/g, (c) => `\\${c}`).replace(/\n/g, ' ');
 }
 
 export function lines(items: string[]): string {
-  return items.filter(Boolean).map(escapeHtml).join("<br>\n    ");
+  return items.filter(Boolean).map(escapeHtml).join('<br>\n    ');
 }

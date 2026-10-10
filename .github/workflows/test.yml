@@ -16,6 +16,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  gates:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - uses: actions/setup-python@v5
+        with: { python-version-file: .python-version }
+      - run: bun install --frozen-lockfile
+      - run: pip install 'lizard==1.24.1'
+      - run: bun run format:check
+      - run: bun run lint
+      - run: bun run spell
+      - run: bun run ratchet
+        env: { LIZARD_BIN: lizard }
+      - run: bunx commitlint --from HEAD~1 --to HEAD
   suite:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -25,7 +44,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.4.0"
+          bun-version: '1.4.0'
 
       # Chromium is not on the runner and cannot be apt-installed usefully: on Ubuntu
       # that package is a snap wrapper, which does not work in a container. This action

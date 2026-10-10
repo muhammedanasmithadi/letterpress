@@ -1,0 +1,14 @@
+src/browser.ts::#onMessage
+src/cli.ts::parseArgs
+src/fontdesc.ts::fixFontDescriptors
+src/fontdesc.ts::parseSfnt
+src/meta.ts::readString
+src/render.ts::precedenceFindings
+src/selection.ts::glyphsOf
+src/server.ts::fetch
+src/textfont.ts::parseW
+src/tjmerge.ts::mergeBlock
+src/tjmerge.ts::parseW
+src/tjmerge.ts::replay
+src/tounicode.ts::unresolvedLigatures
+src/verify.ts::verify

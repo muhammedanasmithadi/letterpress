@@ -50,13 +50,13 @@ Measured with `baseline2.ts`. Every workload's page count was **measured, not
 assumed** — the first attempt labelled its workloads 1p/20p/200p and they turned
 out to be 1, 12 and 113 pages.
 
-| workload | pages | KB | cold p50 | warm p50 | repair p50 | repair as % of warm |
-|---|---|---|---|---|---|---|
-| letter | 1 | 14 | 220 ms | 193 ms | 2 ms | 1.0% |
-| resume | 1 | 54 | 482 ms | 355 ms | 7 ms | 2.0% |
-| 20p | 21 | 121 | 282 ms | 228 ms | 6 ms | 2.6% |
-| 100p | 106 | 554 | 489 ms | 477 ms | 20 ms | 4.2% |
-| 400p | 421 | 2,182 | 1,812 ms | 1,874 ms | 60 ms | 3.2% |
+| workload | pages | KB    | cold p50 | warm p50 | repair p50 | repair as % of warm |
+| -------- | ----- | ----- | -------- | -------- | ---------- | ------------------- |
+| letter   | 1     | 14    | 220 ms   | 193 ms   | 2 ms       | 1.0%                |
+| resume   | 1     | 54    | 482 ms   | 355 ms   | 7 ms       | 2.0%                |
+| 20p      | 21    | 121   | 282 ms   | 228 ms   | 6 ms       | 2.6%                |
+| 100p     | 106   | 554   | 489 ms   | 477 ms   | 20 ms      | 4.2%                |
+| 400p     | 421   | 2,182 | 1,812 ms | 1,874 ms | 60 ms      | 3.2%                |
 
 Cold means a fresh browser per render; warm is one browser reused, which is how
 the server and the viewer run. Three cold and five warm runs each, p50 reported.
@@ -69,12 +69,12 @@ argument for restructuring it on speed grounds is unfounded.
 
 `scale.ts`, against the real server, after a warm-up request:
 
-| concurrent | wall | throughput | ok | refused | latency p50 |
-|---|---|---|---|---|---|
-| 1 | 258 ms | 3.88/s | 1/1 | 0 | 258 ms |
-| 2 | 353 ms | 5.67/s | 2/2 | 0 | 353 ms |
-| 4 | 648 ms | 6.18/s | 4/4 | 0 | 646 ms |
-| 8 | 795 ms | — | 4/8 | **4** | 761 ms |
+| concurrent | wall   | throughput | ok  | refused | latency p50 |
+| ---------- | ------ | ---------- | --- | ------- | ----------- |
+| 1          | 258 ms | 3.88/s     | 1/1 | 0       | 258 ms      |
+| 2          | 353 ms | 5.67/s     | 2/2 | 0       | 353 ms      |
+| 4          | 648 ms | 6.18/s     | 4/4 | 0       | 646 ms      |
+| 8          | 795 ms | —          | 4/8 | **4**   | 761 ms      |
 
 Throughput rises 1.46x from 1 to 2 and then flattens: the cap of 4 sits close to
 where the curve stops paying. At 8 the server **refuses half the requests**
@@ -129,7 +129,7 @@ layout fidelity, and the no-dependency rule rules out Prince and WeasyPrint.
 Rendering to canvas and wrapping in a PDF would destroy text selection,
 extraction and search, which is disqualifying for the stated use case.
 
-The finding is that it cannot be *configured* into correctness, only repaired.
+The finding is that it cannot be _configured_ into correctness, only repaired.
 That is now evidenced rather than assumed.
 
 ### CDP over the DevTools HTTP/WS API — retain, with one gap
@@ -161,11 +161,11 @@ correctness-surface argument, not a performance one.
 ### F1 — The repair layer has no verification gate. Confidence: high, measured.
 
 **Status: closed.** `src/verify.ts` now gates every repair. A repair is kept only if the
-file stays structurally whole *and* every page's content stream is byte-identical to
+file stays structurally whole _and_ every page's content stream is byte-identical to
 Chromium's own; otherwise Chromium's bytes are shipped unchanged and a `repair-rejected`
 finding says so. Its own proof is a test that injects corruption into a rendered PDF and
 asserts the shipped file is the unrepaired one. Six defects have been found and fixed
-*through* the gate since it was written, including four in the parsers it depends on --
+_through_ the gate since it was written, including four in the parsers it depends on --
 see "Closed since this section was written" in §9 and §11.
 
 The evidence below is what was true when the assessment was made.
@@ -271,12 +271,12 @@ structure alone cannot do this job.
 
 ### A queue instead of refusal — `3b07868`
 
-| burst | before | after |
-|---|---|---|
-| 8 | 4 ok, 4 refused | **8 ok**, 0 refused |
-| 12 | 4 ok, 8 refused | **12 ok** |
-| 24 | — | 20 ok, 4 refused |
-| 40 | — | 20 ok, 20 refused |
+| burst | before          | after               |
+| ----- | --------------- | ------------------- |
+| 8     | 4 ok, 4 refused | **8 ok**, 0 refused |
+| 12    | 4 ok, 8 refused | **12 ok**           |
+| 24    | —               | 20 ok, 4 refused    |
+| 40    | —               | 20 ok, 20 refused   |
 
 Twenty is the designed ceiling: 4 running plus 16 queued. What protects the
 machine — never more than 4 at once — is unchanged.
@@ -300,10 +300,10 @@ The 2,000-page claim was never tested. It is now. Both documents were calibrated
 by measuring page count, not by assuming one: a first guess of 2,353 sections
 produced 1,177 pages, and 3,999 produced 2,000.
 
-| document | pages | PDF | render | peak RSS | gate | `Suspects` |
-|---|---|---|---|---|---|---|
-| calibrated | 2,000 | 15.5 MB | 25.7 s | 820 MB | ok | no |
-| trimmed to fit the body cap | 3,664 | 28.6 MB | 76.5 s | 1,262 MB | ok | no |
+| document                    | pages | PDF     | render | peak RSS | gate | `Suspects` |
+| --------------------------- | ----- | ------- | ------ | -------- | ---- | ---------- |
+| calibrated                  | 2,000 | 15.5 MB | 25.7 s | 820 MB   | ok   | no         |
+| trimmed to fit the body cap | 3,664 | 28.6 MB | 76.5 s | 1,262 MB | ok   | no         |
 
 Both are correct at scale, not merely produced: ghostscript reports zero errors,
 `pdftotext` extracts from page 1 and from page 2,000, the gate passes in 376 ms
@@ -335,12 +335,12 @@ over-long render, and it does so with a message that names the flag.
 
 ### What actually bounds a document
 
-| bound | value | notes |
-|---|---|---|
-| body size | 8 MB | ~3,700 pages of text |
-| page count | 6,000 | measured, enforced after the print |
-| timeout | 120 s | ~9,000 pages at 12.9 ms/page, so pages bind first |
-| memory | ~340 KB/page | 2 GB at 6,000 pages |
+| bound      | value        | notes                                             |
+| ---------- | ------------ | ------------------------------------------------- |
+| body size  | 8 MB         | ~3,700 pages of text                              |
+| page count | 6,000        | measured, enforced after the print                |
+| timeout    | 120 s        | ~9,000 pages at 12.9 ms/page, so pages bind first |
+| memory     | ~340 KB/page | 2 GB at 6,000 pages                               |
 
 The body cap binds before the page cap for text, which is worth knowing: raising
 `MAX_PAGES` without raising `MAX_BODY_BYTES` changes nothing for HTML input.
@@ -395,7 +395,7 @@ is why the tool uses poppler.
    is reported as `subresource-failed` rather than passing silently, so this is a
    limitation rather than a defect, but it is one.
 
-   What this item was worth hiding: the same refusal applied to a *relative* `../assets`
+   What this item was worth hiding: the same refusal applied to a _relative_ `../assets`
    reference, which is ordinary layout and how most sites are laid out. Measured on a real
    ten-page site on this machine, eight of its pages rendered with no stylesheet at all,
    and the only symptom was a failed subresource naming a stylesheet that had loaded
@@ -420,6 +420,7 @@ is why the tool uses poppler.
    checked lexically, so a symlink inside the document's directory read a file outside it;
    and the finding probed for existence, which turned it into a yes/no oracle over
    arbitrary paths that the render server hands to whoever asked.
+
 4. **The default render deadline is 30 seconds.** A representative document measured
    555ms on two cores, so the headroom is large; a very large document on a cold shared
    machine is where it would bite.
@@ -440,7 +441,6 @@ is worse than no list.
   out as `Quarterly-R`. The title is set through the gated chain now, which has no such
   limit.
 
-
 ## 10. How success would be verified
 
 - The gate: inject a known corruption into a rendered PDF and assert the shipped
@@ -451,6 +451,7 @@ is worse than no list.
   succeed, with a bounded wait.
 - The audit: re-run all twelve findings' reproductions against the fixed build
   and record which are fixed, retracted, or still open.
+
 ## 11. Conformance, measured against an independent implementation
 
 Everything above reasons from mechanism. veraPDF is an independent implementation of
@@ -461,13 +462,13 @@ runs it; `tools/structure-tree.ts` prints the tree and the MCID census behind a 
 
 ### The calibration that matters
 
-| document | rules failed, of 106 |
-|---|---|
-| text, heading, list, table, blockquote | 1 |
-| link | 1 |
-| figure | 2 |
-| the full sample | 2 |
-| **ISO 32000-2 spec, 1,023 pages** | **16** |
+| document                               | rules failed, of 106 |
+| -------------------------------------- | -------------------- |
+| text, heading, list, table, blockquote | 1                    |
+| link                                   | 1                    |
+| figure                                 | 2                    |
+| the full sample                        | 2                    |
+| **ISO 32000-2 spec, 1,023 pages**      | **16**               |
 
 The ISO's own publication fails every one of the 16 rules it evaluates, across 12
 clauses and at least 666 objects, and 10 of those failures are fonts it does not embed.

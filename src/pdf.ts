@@ -1,4 +1,4 @@
-const dec = new TextDecoder("latin1");
+const dec = new TextDecoder('latin1');
 
 export type PdfInfo = {
   bytes: number;
@@ -37,7 +37,7 @@ function pageCount(raw: string): number {
 function bodyOf(raw: string, num: string): string | undefined {
   const start = raw.search(new RegExp(`(?:^|[^0-9])${num}\\s+0\\s+obj`));
   if (start < 0) return undefined;
-  const end = raw.indexOf("endobj", start);
+  const end = raw.indexOf('endobj', start);
   return raw.slice(start, end < 0 ? undefined : end);
 }
 
@@ -50,7 +50,7 @@ export function inspect(pdf: Uint8Array): PdfInfo {
   const pageSizes: string[] = [];
   for (const m of raw.matchAll(/\/Type\s*\/Page[^s][\s\S]{0,400}?/g)) {
     const box = m[0].match(/\/MediaBox\s*\[[^\]]*\]/);
-    pageSizes.push(box ? box[0] : "");
+    pageSizes.push(box ? box[0] : '');
   }
 
   return {
@@ -71,24 +71,22 @@ export function inspect(pdf: Uint8Array): PdfInfo {
 
 function declaredPageProp(html: string, prop: string): string | null {
   for (const rule of pageRules(html)) {
-    const m = new RegExp(`\\b${prop}\\s*:\\s*([^;}]+)`, "i").exec(rule);
-    if (m) return m[1]!.trim().replace(/\s+/g, " ").toLowerCase();
+    const m = new RegExp(`\\b${prop}\\s*:\\s*([^;}]+)`, 'i').exec(rule);
+    if (m) return m[1]!.trim().replace(/\s+/g, ' ').toLowerCase();
   }
   return null;
 }
 
 export function declaredPageSize(html: string): string | null {
-  return declaredPageProp(html, "size");
+  return declaredPageProp(html, 'size');
 }
 
 export function declaredPageMargin(html: string): string | null {
-  return declaredPageProp(html, "margin");
+  return declaredPageProp(html, 'margin');
 }
 
 export function pageRules(html: string): string[] {
-  const withoutComments = html
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
+  const withoutComments = html.replace(/\/\*[\s\S]*?\*\//g, ' ');
 
-    ;
   return [...withoutComments.matchAll(/@page[^{]*\{[^}]*\}/gi)].map((m) => m[0]);
 }

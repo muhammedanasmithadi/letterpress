@@ -1,6 +1,6 @@
-import { dictCode, maskStrings, streamDict, streamRange, trySplit, type Obj } from "./pdfparts.ts";
+import { dictCode, maskStrings, streamDict, streamRange, trySplit, type Obj } from './pdfparts.ts';
 
-const LATIN1 = "latin1" as BufferEncoding;
+const LATIN1 = 'latin1' as BufferEncoding;
 
 export type Verification = { ok: boolean; failures: string[] };
 
@@ -18,10 +18,12 @@ export function contentPayloads(pdf: Uint8Array): string[] {
   const out: string[] = [];
   for (const o of parts.objs) {
     if (!/\/Type\s*\/Page\b/.test(o.bytes.toString(LATIN1))) continue;
-    for (const m of o.bytes.toString(LATIN1).matchAll(/\/Contents\s*(?:(\d+)\s+0\s+R|\[([^\]]*)\])/g)) {
+    for (const m of o.bytes
+      .toString(LATIN1)
+      .matchAll(/\/Contents\s*(?:(\d+)\s+0\s+R|\[([^\]]*)\])/g)) {
       const nums: number[] = m[1]
         ? [Number(m[1])]
-        : [...(m[2] ?? "").matchAll(/(\d+)\s+0\s+R/g)].map((x) => Number(x[1]));
+        : [...(m[2] ?? '').matchAll(/(\d+)\s+0\s+R/g)].map((x) => Number(x[1]));
       for (const n of nums) {
         const target = byNum.get(n);
         if (!target) continue;
@@ -40,18 +42,18 @@ export function verify(pdf: Uint8Array, original?: Uint8Array): Verification {
 
   const pointers = text.match(/startxref/g);
   if (!pointers) {
-    failures.push("no startxref");
+    failures.push('no startxref');
   } else if (pointers.length > 1) {
     failures.push(`${pointers.length} startxref lines: readers disagree which one is current`);
   }
   const sx = Number(text.match(/startxref\s+(\d+)/)?.[1] ?? -1);
   let size = -1;
-  if (sx < 0 || text.slice(sx, sx + 4) !== "xref") {
-    failures.push("startxref does not point at a cross-reference table");
+  if (sx < 0 || text.slice(sx, sx + 4) !== 'xref') {
+    failures.push('startxref does not point at a cross-reference table');
   } else {
     const header = text.slice(sx).match(/^xref\s+0\s+(\d+)\s/);
     if (!header) {
-      failures.push("cross-reference table has no subsection header");
+      failures.push('cross-reference table has no subsection header');
     } else {
       size = Number(header[1]);
       const table = text.slice(sx + header[0].length);
@@ -62,7 +64,7 @@ export function verify(pdf: Uint8Array, original?: Uint8Array): Verification {
           failures.push(`cross-reference entry ${n} is truncated`);
           break;
         }
-        if (entry[17] !== "n") continue;
+        if (entry[17] !== 'n') continue;
         const off = Number(entry.slice(0, 10));
         if (!text.startsWith(`${n} 0 obj`, off)) {
           failures.push(`cross-reference entry ${n} points at the wrong object`);
@@ -77,7 +79,7 @@ export function verify(pdf: Uint8Array, original?: Uint8Array): Verification {
 
   const parts = trySplit(pdf);
   const defined = index(pdf);
-  for (const m of text.matchAll(/(?:^|[^0-9])(\d+) \d+ obj\b/g)) defined.set(Number(m[1]), "");
+  for (const m of text.matchAll(/(?:^|[^0-9])(\d+) \d+ obj\b/g)) defined.set(Number(m[1]), '');
   const codeRegions: string[] = parts
     ? [...parts.objs.map((o) => dictCode(o)), maskStrings(parts.trailer.toString(LATIN1))]
     : [maskStrings(text)];
@@ -88,11 +90,10 @@ export function verify(pdf: Uint8Array, original?: Uint8Array): Verification {
         break;
       }
     }
-    if (failures.some((f) => f.startsWith("a reference to"))) break;
+    if (failures.some((f) => f.startsWith('a reference to'))) break;
   }
 
   for (const o of parts?.objs ?? []) {
-
     const len = streamDict(o).match(/\/Length\s+(\d+)/);
     if (!len) continue;
     const range = streamRange(o.bytes);
@@ -111,11 +112,15 @@ export function verify(pdf: Uint8Array, original?: Uint8Array): Verification {
     const before = contentPayloads(original);
     const after = contentPayloads(pdf);
     if (before.length !== after.length) {
-      failures.push(`the document has ${after.length} content streams where it had ${before.length}`);
+      failures.push(
+        `the document has ${after.length} content streams where it had ${before.length}`,
+      );
     } else {
       for (let i = 0; i < before.length; i++) {
         if (before[i] !== after[i]) {
-          failures.push(`content stream ${i + 1} was rewritten, and no repair in this layer may do that`);
+          failures.push(
+            `content stream ${i + 1} was rewritten, and no repair in this layer may do that`,
+          );
           break;
         }
       }
@@ -133,7 +138,11 @@ export function repairOrKeep(
   try {
     candidate = repair(original);
   } catch (e) {
-    return { pdf: original, applied: false, failures: [`the repair threw: ${e instanceof Error ? e.message : String(e)}`] };
+    return {
+      pdf: original,
+      applied: false,
+      failures: [`the repair threw: ${e instanceof Error ? e.message : String(e)}`],
+    };
   }
 
   if (candidate.length === original.length && candidate.every((v, i) => v === original[i])) {

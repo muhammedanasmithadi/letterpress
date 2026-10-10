@@ -34,9 +34,9 @@
  * that has not been modelled. So `breaks` is an upper estimate and `widest` is the number
  * to act on.
  */
-import { inflateSync } from "node:zlib";
-import { LATIN1, dictOf, streamRange, trySplit, type Parts } from "./pdfparts.ts";
-import { cmapStreams, fontTables, type FontTable } from "./textfont.ts";
+import { inflateSync } from 'node:zlib';
+import { LATIN1, dictOf, streamRange, trySplit, type Parts } from './pdfparts.ts';
+import { cmapStreams, fontsByContent, type FontTable } from './textfont.ts';
 
 /** pdf.js `TRACKING_SPACE_FACTOR` and `SPACE_IN_FLOW_MIN_FACTOR`. */
 const MIN_FLOW = 0.102;
@@ -49,31 +49,49 @@ const VERTICAL = 0.25;
 
 export type TextFlow = {
   glyphs: number;
-  /** Gaps between two visible glyphs on the same line. */
+  /** Gaps between two visible glyphs that did not move to another line. */
   gaps: number;
   /** Of those, the ones a reader will end a text item on. */
   breaks: number;
+  /** Gaps past the band but no larger than this, which is what a stretched word space looks like. */
   tooWide: number;
+  /** Gaps larger than that, which are jumps between blocks rather than between words. */
+  jump: number;
   tooThin: number;
   backwards: number;
   lines: number;
-  /** The widest gap, in em, so the message can name how far out of range it went. */
+  /** The widest word-sized gap, in em, which is the one worth acting on. */
   widest: number;
   /** The narrowest gap treated as a space, in em. */
   thinest: number;
 };
 
+/**
+ * Above this the gap is not a word space any more. A stretched word runs to roughly an em;
+ * anything several times that is the reader moving from one block, column or cell to the
+ * next, which ends a text item just the same but has nothing to do with justification.
+ */
+const WORD_GAP_MAX = 3;
+
 const EMPTY: TextFlow = {
-  glyphs: 0, gaps: 0, breaks: 0, tooWide: 0, tooThin: 0, backwards: 0, lines: 0,
-  widest: 0, thinest: Number.POSITIVE_INFINITY,
+  glyphs: 0,
+  gaps: 0,
+  breaks: 0,
+  tooWide: 0,
+  jump: 0,
+  tooThin: 0,
+  backwards: 0,
+  lines: 0,
+  widest: 0,
+  thinest: Number.POSITIVE_INFINITY,
 };
 
 /** Whether a CID stands for a character no reader draws. */
 function invisible(table: FontTable, cid: number): boolean {
   const u = table.unicodeOf(cid);
-  if (u === "") return false;
+  if (u === '') return false;
   for (const ch of u) {
-    if (ch !== " " && ch !== " " && ch !== " " && ch !== " ") return false;
+    if (ch !== ' ' && ch !== '\u00a0' && ch !== '\u2009' && ch !== '\u202f') return false;
   }
   return true;
 }
@@ -135,23 +153,27 @@ function glyphsOf(stream: string, fonts: Map<string, FontTable>): Placed[] | nul
   };
 
   for (let m = tok.exec(stream); m; m = tok.exec(stream)) {
-    if (m[0] === "BT") {
+    if (m[0] === 'BT') {
       x = lx = y = ly = 0;
       table = null;
       continue;
     }
-    if (m[0] === "ET") continue;
-    if (m[0] === "q") {
+    if (m[0] === 'ET') continue;
+    if (m[0] === 'q') {
       stack.push(ctm.slice());
       continue;
     }
-    if (m[0] === "Q") {
+    if (m[0] === 'Q') {
       ctm = stack.pop() ?? [1, 0, 0, 1, 0, 0];
       continue;
     }
     if (m[1] !== undefined) {
-      const a = Number(m[1]), b = Number(m[2]), c = Number(m[3]);
-      const dd = Number(m[4]), e = Number(m[5]), f = Number(m[6]);
+      const a = Number(m[1]),
+        b = Number(m[2]),
+        c = Number(m[3]);
+      const dd = Number(m[4]),
+        e = Number(m[5]),
+        f = Number(m[6]);
       ctm = [
         a * ctm[0]! + b * ctm[2]!,
         a * ctm[1]! + b * ctm[3]!,
@@ -203,17 +225,17 @@ const NOT_A_SPACE = 0.03;
 
 /** pdf.js's two-character window, which decides whether a thin gap ends an item. */
 class LastChars {
-  private two = [" ", " "];
+  private two = [' ', ' '];
   private pos = 0;
 
   reset(): void {
-    this.two = [" ", " "];
+    this.two = [' ', ' '];
     this.pos = 0;
   }
 
   /** Mirrors `shouldAddWhitespace`: a space, then a non-space, then this thin gap. */
   due(): boolean {
-    return this.two[this.pos] !== " " && this.two[(this.pos + 1) % 2] === " ";
+    return this.two[this.pos] !== ' ' && this.two[(this.pos + 1) % 2] === ' ';
   }
 
   save(ch: string): void {
@@ -233,7 +255,7 @@ export function textFlow(pdf: Uint8Array): TextFlow | null {
   const parts: Parts | undefined = trySplit(pdf);
   if (!parts) return null;
   const cmaps = cmapStreams(pdf);
-  const fonts = fontTables(parts, (num) => cmaps.get(num) ?? null);
+  const fonts = fontsByContent(parts, (num) => cmaps.get(num) ?? null);
   if (!fonts.size) return null;
 
   const flow: TextFlow = { ...EMPTY };
@@ -251,7 +273,9 @@ export function textFlow(pdf: Uint8Array): TextFlow | null {
     }
     if (!/\bBT\b/.test(text)) continue;
 
-    const glyphs = glyphsOf(text, fonts);
+    const pageFonts = fonts.get(o.num);
+    if (!pageFonts) continue;
+    const glyphs = glyphsOf(text, pageFonts);
     if (!glyphs) continue;
     flow.lines++;
 
@@ -261,7 +285,7 @@ export function textFlow(pdf: Uint8Array): TextFlow | null {
     for (const g of glyphs) {
       if (g.blank) {
         flow.glyphs++;
-        last.save(" ");
+        last.save(' ');
         continue;
       }
       flow.glyphs++;
@@ -289,7 +313,10 @@ export function textFlow(pdf: Uint8Array): TextFlow | null {
         } else {
           flow.gaps++;
           const em = gap / size;
-          if (em > flow.widest) flow.widest = em;
+          // Only a gap that could be a word space is worth quoting: the widest one on a
+          // table is the jump to the next column, and naming that as a stretched word
+          // space would send whoever reads the finding to the wrong CSS property.
+          if (em > flow.widest && em <= WORD_GAP_MAX) flow.widest = em;
           if (em < flow.thinest) flow.thinest = em;
           if (em <= NOT_A_SPACE) last.reset();
           if (em <= MIN_FLOW) {
@@ -303,7 +330,8 @@ export function textFlow(pdf: Uint8Array): TextFlow | null {
             }
           } else if (em > MAX_FLOW) {
             flow.breaks++;
-            flow.tooWide++;
+            if (em <= WORD_GAP_MAX) flow.tooWide++;
+            else flow.jump++;
           }
         }
       }
@@ -318,5 +346,5 @@ export function textFlow(pdf: Uint8Array): TextFlow | null {
 /** The character a placed glyph stands for, for the two-character window. */
 function glyphText(g: Placed): string {
   const u = g.table.unicodeOf(g.cid);
-  return u === "" ? " " : u[0]!;
+  return u === '' ? ' ' : u[0]!;
 }

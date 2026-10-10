@@ -1,4 +1,4 @@
-export const CHROMIUM = process.env.HTML2PDF_CHROMIUM ?? "chromium";
+export const CHROMIUM = process.env.HTML2PDF_CHROMIUM ?? 'chromium';
 
 export function resolveChromium(): string {
   try {

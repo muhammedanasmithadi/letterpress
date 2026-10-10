@@ -1,35 +1,31 @@
-import { deflateSync, inflateSync } from "node:zlib";
-import { insertIntoDict, join, LATIN1, streamRange, trySplit, type Obj } from "./pdfparts.ts";
+import { deflateSync, inflateSync } from 'node:zlib';
+import { insertIntoDict, join, LATIN1, streamRange, trySplit, type Obj } from './pdfparts.ts';
 
 export function pdfString(value: string): string {
-
   if ([...value].some((ch) => ch.codePointAt(0)! < 32 || ch.codePointAt(0)! > 126)) {
-
-    let hex = "FEFF";
+    let hex = 'FEFF';
     for (let i = 0; i < value.length; i++) {
-      hex += value.charCodeAt(i).toString(16).toUpperCase().padStart(4, "0");
+      hex += value.charCodeAt(i).toString(16).toUpperCase().padStart(4, '0');
     }
     return `<${hex}>`;
   }
-  let out = "";
+  let out = '';
   for (const ch of value) {
-
-    if (ch === "(" || ch === ")" || ch === "\\") out += `\\${ch}`;
+    if (ch === '(' || ch === ')' || ch === '\\') out += `\\${ch}`;
     else out += ch;
   }
   return out;
 }
 
 export function xmlText(value: string): string {
-  let out = "";
+  let out = '';
   for (const ch of value) {
     const code = ch.codePointAt(0)!;
-    if (ch === "&") out += "&amp;";
-    else if (ch === "<") out += "&lt;";
-    else if (ch === ">") out += "&gt;";
-    else if (ch === '"') out += "&quot;";
-    else if (ch === "'") out += "&apos;";
-
+    if (ch === '&') out += '&amp;';
+    else if (ch === '<') out += '&lt;';
+    else if (ch === '>') out += '&gt;';
+    else if (ch === '"') out += '&quot;';
+    else if (ch === "'") out += '&apos;';
     else if (code === 9 || code === 10 || code === 13) out += ch;
     else if (code < 32) continue;
     else out += ch;
@@ -55,33 +51,37 @@ function readString(body: string, key: string): string | undefined {
 
     if (hex.length >= 4 && /^FEFF/i.test(hex)) {
       hex = hex.slice(4);
-      let out = "";
-      for (let i = 0; i + 4 <= hex.length; i += 4) out += String.fromCharCode(parseInt(hex.slice(i, i + 4), 16));
+      let out = '';
+      for (let i = 0; i + 4 <= hex.length; i += 4)
+        out += String.fromCharCode(parseInt(hex.slice(i, i + 4), 16));
       return out;
     }
 
-    let out = "";
-    for (let i = 0; i + 2 <= hex.length; i += 2) out += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
+    let out = '';
+    for (let i = 0; i + 2 <= hex.length; i += 2)
+      out += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
     return out;
   }
   const m = body.match(new RegExp(`/${key}\\s*\\(((?:[^()\\\\]|\\\\.)*)\\)`));
   if (!m) return undefined;
-  let out = "";
+  let out = '';
   const raw = m[1]!;
   for (let i = 0; i < raw.length; i++) {
-    if (raw[i] !== "\\") { out += raw[i]; continue; }
+    if (raw[i] !== '\\') {
+      out += raw[i];
+      continue;
+    }
     const next = raw[++i];
-    if (next === "n") out += "\n";
-    else if (next === "r") out += "\r";
-    else if (next === "t") out += "\t";
-    else if (next === "b") out += "\b";
-    else if (next === "f") out += "\f";
+    if (next === 'n') out += '\n';
+    else if (next === 'r') out += '\r';
+    else if (next === 't') out += '\t';
+    else if (next === 'b') out += '\b';
+    else if (next === 'f') out += '\f';
     else if (next && /[0-7]/.test(next)) {
-
       let oct = next;
-      while (oct.length < 3 && /[0-7]/.test(raw[i + 1] ?? "")) oct += raw[++i];
+      while (oct.length < 3 && /[0-7]/.test(raw[i + 1] ?? '')) oct += raw[++i];
       out += String.fromCharCode(parseInt(oct, 8));
-    } else out += next ?? "";
+    } else out += next ?? '';
   }
   return out;
 }
@@ -97,14 +97,14 @@ export function readDocInfo(pdf: Uint8Array): DocInfo {
   if (!obj) return empty;
   const body = obj.bytes.toString(LATIN1);
   return {
-    title: readString(body, "Title"),
-    author: readString(body, "Author"),
-    subject: readString(body, "Subject"),
-    keywords: readString(body, "Keywords"),
-    creator: readString(body, "Creator"),
-    producer: readString(body, "Producer"),
-    created: readString(body, "CreationDate"),
-    modified: readString(body, "ModDate"),
+    title: readString(body, 'Title'),
+    author: readString(body, 'Author'),
+    subject: readString(body, 'Subject'),
+    keywords: readString(body, 'Keywords'),
+    creator: readString(body, 'Creator'),
+    producer: readString(body, 'Producer'),
+    created: readString(body, 'CreationDate'),
+    modified: readString(body, 'ModDate'),
   };
 }
 
@@ -116,8 +116,8 @@ export function setDocTitle(pdf: Uint8Array, title: string): Uint8Array {
   const obj = parts.objs.find((o) => o.num === Number(ref[1]));
   if (!obj) return pdf;
   const current = obj.bytes.toString(LATIN1);
-  if (readString(current, "Title") === title) return pdf;
-  obj.bytes = Buffer.from(setKey(current, "Title", title), LATIN1);
+  if (readString(current, 'Title') === title) return pdf;
+  obj.bytes = Buffer.from(setKey(current, 'Title', title), LATIN1);
   return new Uint8Array(join(parts.head, parts.objs, parts.trailer));
 }
 
@@ -128,27 +128,27 @@ export function isVolatileTitle(title: string): boolean {
 export function buildXmp(info: DocInfo): string {
   const alt = (tag: string, value?: string) =>
     value === undefined
-      ? ""
+      ? ''
       : `<dc:${tag}><rdf:Alt><rdf:li xml:lang="x-default">${xmlText(value)}</rdf:li></rdf:Alt></dc:${tag}>\n`;
   const bag = (tag: string, value?: string) =>
     value === undefined
-      ? ""
+      ? ''
       : `<dc:${tag}><rdf:Bag><rdf:li>${xmlText(value)}</rdf:li></rdf:Bag></dc:${tag}>\n`;
   const simple = (ns: string, tag: string, value?: string) =>
-    value === undefined ? "" : `<${ns}:${tag}>${xmlText(value)}</${ns}:${tag}>\n`;
+    value === undefined ? '' : `<${ns}:${tag}>${xmlText(value)}</${ns}:${tag}>\n`;
 
   const iso = (pdfDate?: string) => {
     const m = pdfDate?.match(/^D:(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?(\d{2})?/);
     if (!m) return undefined;
-    const [, y, mo = "01", d = "01", h = "00", mi = "00", s = "00"] = m;
+    const [, y, mo = '01', d = '01', h = '00', mi = '00', s = '00'] = m;
     return `${y}-${mo}-${d}T${h}:${mi}:${s}`;
   };
 
-return `<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>
+  return `<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="letterpress">
 <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
 <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:pdf="http://ns.adobe.com/pdf/1.3/">
-${alt("title", info.title)}${alt("description", info.subject)}${bag("creator", info.author)}${bag("subject", info.keywords)}${simple("xmp", "CreatorTool", info.creator)}${simple("pdf", "Producer", info.producer)}${simple("xmp", "CreateDate", iso(info.created))}${simple("xmp", "ModifyDate", iso(info.modified))}</rdf:Description>
+${alt('title', info.title)}${alt('description', info.subject)}${bag('creator', info.author)}${bag('subject', info.keywords)}${simple('xmp', 'CreatorTool', info.creator)}${simple('pdf', 'Producer', info.producer)}${simple('xmp', 'CreateDate', iso(info.created))}${simple('xmp', 'ModifyDate', iso(info.modified))}</rdf:Description>
 </rdf:RDF>
 </x:xmpmeta>
 <?xpacket end="w"?>`;
@@ -156,7 +156,7 @@ ${alt("title", info.title)}${alt("description", info.subject)}${bag("creator", i
 
 export function pdfValue(value: string): string {
   const escaped = pdfString(value);
-  return escaped.startsWith("<") ? `<${escaped.slice(1, -1)}>` : `(${escaped})`;
+  return escaped.startsWith('<') ? `<${escaped.slice(1, -1)}>` : `(${escaped})`;
 }
 
 function setKey(body: string, key: string, value: string): string {
@@ -177,7 +177,6 @@ export function addMetadata(
   pdf: Uint8Array,
   declared: { author?: string; subject?: string; keywords?: string } = {},
 ): Uint8Array {
-
   const wanted = {
     Author: declared.author?.trim() || undefined,
     Subject: declared.subject?.trim() || undefined,
@@ -203,7 +202,7 @@ export function addMetadata(
   const epoch = process.env.SOURCE_DATE_EPOCH;
   if (epoch && /^\d+$/.test(epoch)) {
     const d = new Date(Number(epoch) * 1000);
-    const p = (n: number) => String(n).padStart(2, "0");
+    const p = (n: number) => String(n).padStart(2, '0');
     const pinned =
       `D:${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}` +
       `${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
@@ -223,13 +222,16 @@ export function addMetadata(
   const root = rootRef ? byNum.get(Number(rootRef[1])) : undefined;
   if (!root) return pdf;
 
-  const packet = deflateSync(Buffer.from(buildXmp(packetInfo), "utf8"));
+  const packet = deflateSync(Buffer.from(buildXmp(packetInfo), 'utf8'));
   const metadataObj: Obj = {
     num: next,
     bytes: Buffer.concat([
-      Buffer.from(`${next} 0 obj\n<< /Type /Metadata /Subtype /XML /Filter /FlateDecode /Length ${packet.length} >>\nstream\n`, LATIN1),
+      Buffer.from(
+        `${next} 0 obj\n<< /Type /Metadata /Subtype /XML /Filter /FlateDecode /Length ${packet.length} >>\nstream\n`,
+        LATIN1,
+      ),
       packet,
-      Buffer.from("\nendstream\nendobj\n", LATIN1),
+      Buffer.from('\nendstream\nendobj\n', LATIN1),
     ]),
   };
 
@@ -265,23 +267,32 @@ function xmpPayload(pdf: Uint8Array): string | undefined {
   const range = streamRange(stream.bytes);
   if (!range) return undefined;
   const raw = stream.bytes.subarray(range.start, range.end);
-  if (!/\/FlateDecode/.test(stream.bytes.toString(LATIN1))) return raw.toString("utf8");
-  try { return inflateSync(raw).toString("utf8"); } catch { return raw.toString("utf8"); }
+  if (!/\/FlateDecode/.test(stream.bytes.toString(LATIN1))) return raw.toString('utf8');
+  try {
+    return inflateSync(raw).toString('utf8');
+  } catch {
+    return raw.toString('utf8');
+  }
 }
 
 export function readXmpPacket(pdf: Uint8Array): string {
-  return xmpPayload(pdf) ?? "";
+  return xmpPayload(pdf) ?? '';
 }
 
 export function readXmp(pdf: Uint8Array): { present: boolean; creator?: string } {
   const payload = xmpPayload(pdf);
   if (payload === undefined) return { present: false };
-  const creator = payload.match(/<dc:creator>[\s\S]*?<rdf:li(?:\s[^>]*)?>([\s\S]*?)<\/rdf:li>/)?.[1];
+  const creator = payload.match(
+    /<dc:creator>[\s\S]*?<rdf:li(?:\s[^>]*)?>([\s\S]*?)<\/rdf:li>/,
+  )?.[1];
   return { present: true, creator: creator ? unescapeXml(creator) : undefined };
 }
 
 function unescapeXml(value: string): string {
   return value
-    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'").replace(/&amp;/g, "&");
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
 }

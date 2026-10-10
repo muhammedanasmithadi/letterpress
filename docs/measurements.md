@@ -9,13 +9,13 @@ unmodified on all three runtimes and prints one JSON line per phase.
 The renderer is Chromium's own print pipeline, reached over CDP. A 400-page
 document with a 24-row table per page:
 
-| property | value |
-|---|---|
-| print time, warm browser | ~65 ms |
-| print time, 400 pages | ~5.2–5.7 s |
-| print time, 2,000 pages | 25.7 s, 820 MB peak RSS |
-| print time, 3,664 pages | 76.5 s, 1,262 MB peak RSS |
-| PDF size, 400 pages | 16.9 MB (18.5 MB base64) |
+| property                    | value                                         |
+| --------------------------- | --------------------------------------------- |
+| print time, warm browser    | ~65 ms                                        |
+| print time, 400 pages       | ~5.2–5.7 s                                    |
+| print time, 2,000 pages     | 25.7 s, 820 MB peak RSS                       |
+| print time, 3,664 pages     | 76.5 s, 1,262 MB peak RSS                     |
+| PDF size, 400 pages         | 16.9 MB (18.5 MB base64)                      |
 | base64 frame over WebSocket | 22.5 MB, handled intact by all three runtimes |
 
 Output quality, verified by parsing the PDF: zero `/Subtype /Image` objects, four
@@ -29,18 +29,18 @@ boxes with `counter(page)`, which work natively and reserve nothing.
 
 ## Runtime comparison
 
-| metric | Node 22 | Bun 1.4.0 | Deno 2.9.5 |
-|---|---|---|---|
-| spawn to DevTools endpoint | 464 ms | 634 ms | 470 ms |
-| spawn to first PDF | 1307 ms | 1516 ms | 1323 ms |
-| warm render each | ~670 ms | ~670 ms | ~665 ms |
-| 2 concurrent renders, wall | 663 ms | 700 ms | 691 ms |
-| 4 concurrent renders, wall | 783 ms | 747 ms | 770 ms |
-| 8 concurrent renders, wall | 1054 ms | 1087 ms | 1167 ms |
-| 400 pages, serial | 5509 ms | 5391 ms | 5224 ms |
-| RSS at cold start | 60 MB | **28 MB** | 49 MB |
-| RSS after concurrency | 80 MB | **40 MB** | 59 MB |
-| RSS after 400-page render | 155 MB | 116 MB | 110 MB |
+| metric                     | Node 22 | Bun 1.4.0 | Deno 2.9.5 |
+| -------------------------- | ------- | --------- | ---------- |
+| spawn to DevTools endpoint | 464 ms  | 634 ms    | 470 ms     |
+| spawn to first PDF         | 1307 ms | 1516 ms   | 1323 ms    |
+| warm render each           | ~670 ms | ~670 ms   | ~665 ms    |
+| 2 concurrent renders, wall | 663 ms  | 700 ms    | 691 ms     |
+| 4 concurrent renders, wall | 783 ms  | 747 ms    | 770 ms     |
+| 8 concurrent renders, wall | 1054 ms | 1087 ms   | 1167 ms    |
+| 400 pages, serial          | 5509 ms | 5391 ms   | 5224 ms    |
+| RSS at cold start          | 60 MB   | **28 MB** | 49 MB      |
+| RSS after concurrency      | 80 MB   | **40 MB** | 59 MB      |
+| RSS after 400-page render  | 155 MB  | 116 MB    | 110 MB     |
 
 Each warm-render figure includes a 600 ms settle sleep inside the timed region,
 so the true render cost is the ~65 ms above, not the ~670 ms.
@@ -63,12 +63,12 @@ absorbs a viewer page, an agent and a CLI at the same time.
 
 Attributed to a single profile, summing RSS across its 10 processes:
 
-| state | RSS |
-|---|---|
-| idle after launch | 1068 MB |
-| after 20 warm renders | 1179 MB |
-| after 30 s idle | 989 MB |
-| after SIGTERM to the process group | 0 |
+| state                              | RSS     |
+| ---------------------------------- | ------- |
+| idle after launch                  | 1068 MB |
+| after 20 warm renders              | 1179 MB |
+| after 30 s idle                    | 989 MB  |
+| after SIGTERM to the process group | 0       |
 
 RSS double-counts pages shared between the browser, GPU and network processes, so
 the unique cost is lower than 1 GB. The order of magnitude stands, and it is the

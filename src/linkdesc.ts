@@ -1,5 +1,14 @@
-import { dictCode, insertIntoDict, join, LATIN1, structElementsInOrder, trySplit, type Obj, type Parts } from "./pdfparts.ts";
-import { pdfValue } from "./meta.ts";
+import {
+  dictCode,
+  insertIntoDict,
+  join,
+  LATIN1,
+  structElementsInOrder,
+  trySplit,
+  type Obj,
+  type Parts,
+} from './pdfparts.ts';
+import { pdfValue } from './meta.ts';
 
 export const LINK_DESC_JS = `(() => {
   const out = [];
@@ -18,7 +27,7 @@ export const LINK_DESC_JS = `(() => {
 })()`;
 
 export function parseLinkDescs(returned: unknown): string[] | null {
-  if (typeof returned !== "string") return null;
+  if (typeof returned !== 'string') return null;
   let value: unknown;
   try {
     value = JSON.parse(returned);
@@ -26,12 +35,12 @@ export function parseLinkDescs(returned: unknown): string[] | null {
     return null;
   }
   if (!Array.isArray(value)) return null;
-  for (const v of value) if (typeof v !== "string") return null;
+  for (const v of value) if (typeof v !== 'string') return null;
   return value as string[];
 }
 
 export function linkOrder(parts: Parts): number[] {
-  return structElementsInOrder(parts, "Link");
+  return structElementsInOrder(parts, 'Link');
 }
 
 export function linkAnnotations(parts: Parts, linkNum: number): number[] {
@@ -60,7 +69,7 @@ export function fixLinkDescs(pdf: Uint8Array, descs: string[]): Uint8Array {
   const byNum = new Map(parts.objs.map((o) => [o.num, o]));
   let changed = 0;
   links.forEach((linkNum, index) => {
-    const desc = (descs[index] ?? "").trim();
+    const desc = (descs[index] ?? '').trim();
     if (!desc) return;
     for (const annotNum of linkAnnotations(parts, linkNum)) {
       const obj = byNum.get(annotNum);

@@ -1,5 +1,5 @@
-import type { Finding } from "./render.ts";
-import type { Tab } from "./browser.ts";
+import type { Finding } from './render.ts';
+import type { Tab } from './browser.ts';
 
 const AUDIT = String.raw`
 (() => {
@@ -222,26 +222,34 @@ const AUDIT = String.raw`
 
 export async function audit(tab: Tab, timeoutMs: number): Promise<Finding[]> {
   try {
-    const res = await tab.send("Runtime.evaluate", {
-      expression: AUDIT,
-      returnByValue: true,
-      awaitPromise: false,
-    }, timeoutMs);
+    const res = await tab.send(
+      'Runtime.evaluate',
+      {
+        expression: AUDIT,
+        returnByValue: true,
+        awaitPromise: false,
+      },
+      timeoutMs,
+    );
     const value = res?.result?.value;
     if (!Array.isArray(value)) {
-
-      return [{
-        code: "audit-failed",
-        severity: "warn",
-        message: "the document checks could not run, so no layout, text or font findings are available. this is a bug in letterpress, not in the document.",
-      }];
+      return [
+        {
+          code: 'audit-failed',
+          severity: 'warn',
+          message:
+            'the document checks could not run, so no layout, text or font findings are available. this is a bug in letterpress, not in the document.',
+        },
+      ];
     }
     return value as Finding[];
   } catch (e) {
-    return [{
-      code: "audit-failed",
-      severity: "warn",
-      message: `the document checks could not run, so no layout, text or font findings are available: ${e instanceof Error ? e.message : String(e)}`,
-    }];
+    return [
+      {
+        code: 'audit-failed',
+        severity: 'warn',
+        message: `the document checks could not run, so no layout, text or font findings are available: ${e instanceof Error ? e.message : String(e)}`,
+      },
+    ];
   }
 }

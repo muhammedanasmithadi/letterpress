@@ -1,48 +1,57 @@
-import { readFileSync } from "node:fs";
-import { inflateSync } from "node:zlib";
-import { dictOf, inflatedStream, trySplit } from "../src/pdfparts.ts";
+import { readFileSync } from 'node:fs';
+import { inflateSync } from 'node:zlib';
+import { dictOf, inflatedStream, trySplit } from '../src/pdfparts.ts';
 
 const K_FORMS = /\/K\s*(\[[\s\S]*?\]|\d+\s+0\s+R|\d+)(?![\d.])/g;
 
 export function structureTree(pdf: Uint8Array): string[] {
   const parts = trySplit(pdf);
-  if (!parts) return ["not a linear pdf"];
+  if (!parts) return ['not a linear pdf'];
   const byNum = new Map(parts.objs.map((o) => [o.num, o]));
   const lines: string[] = [];
 
   let rootNum: number | undefined;
   for (const o of parts.objs) {
     const m = /\/StructTreeRoot\s+(\d+) 0 R/.exec(dictOf(o));
-    if (m) { rootNum = Number(m[1]); break; }
+    if (m) {
+      rootNum = Number(m[1]);
+      break;
+    }
   }
-  if (rootNum === undefined) return ["no /StructTreeRoot: the document is untagged"];
+  if (rootNum === undefined) return ['no /StructTreeRoot: the document is untagged'];
 
   const seen = new Set<number>();
   const show = (num: number, depth: number): void => {
-    const pad = "  ".repeat(depth);
+    const pad = '  '.repeat(depth);
     const text = dictOf(byNum.get(num) ?? { num, bytes: Buffer.alloc(0) });
-    const role = /\/S\s*\/(\w+)/.exec(text)?.[1] ?? "?";
-    const alt = /\/(?:Alt|ActualText)\s*(\((?:[^()\\]|\\.)*\)|<[0-9A-Fa-f\s]*>)/.exec(text)?.[1] ?? "";
+    const role = /\/S\s*\/(\w+)/.exec(text)?.[1] ?? '?';
+    const alt =
+      /\/(?:Alt|ActualText)\s*(\((?:[^()\\]|\\.)*\)|<[0-9A-Fa-f\s]*>)/.exec(text)?.[1] ?? '';
     const k = K_FORMS.exec(text)?.[1];
     K_FORMS.lastIndex = 0;
 
-    let kind = "";
+    let kind = '';
     if (k !== undefined) {
       if (/^\d+$/.test(k)) kind = `MCID ${k}`;
       else if (/^\d+\s+0\s+R$/.test(k)) kind = `child ${Number(/^(\d+)/.exec(k)![1])}`;
       else {
         const mcids = [...k.matchAll(/\/MCID\s+(\d+)/g)].map((m) => m[1]);
         const refs = [...k.matchAll(/(\d+) 0 R/g)].map((m) => m[1]);
-        kind = `[ mcids=${mcids.join(",") || "-"} refs=${refs.join(",") || "-"} ]`;
+        kind = `[ mcids=${mcids.join(',') || '-'} refs=${refs.join(',') || '-'} ]`;
       }
     }
-    lines.push(`${pad}${num} ${role.padEnd(11)} ${kind.padEnd(30)} ${alt ? `Alt=${alt.slice(0, 48)}` : ""}`.trimEnd());
+    lines.push(
+      `${pad}${num} ${role.padEnd(11)} ${kind.padEnd(30)} ${alt ? `Alt=${alt.slice(0, 48)}` : ''}`.trimEnd(),
+    );
 
     if (seen.has(num)) return;
     seen.add(num);
     if (k === undefined) return;
     if (/^\d+$/.test(k)) return;
-    if (/^\d+\s+0\s+R$/.test(k)) { show(Number(/^(\d+)/.exec(k)![1]), depth + 1); return; }
+    if (/^\d+\s+0\s+R$/.test(k)) {
+      show(Number(/^(\d+)/.exec(k)![1]), depth + 1);
+      return;
+    }
     for (const ref of k.matchAll(/(\d+) 0 R/g)) show(Number(ref[1]), depth + 1);
   };
   show(rootNum, 1);
@@ -58,9 +67,11 @@ export function markedContent(pdf: Uint8Array): string[] {
     const text = dictOf(o);
     if (!/\/Type\s*\/Page\b/.test(text)) continue;
     const ref = Number(/\/Contents\s+(\d+) 0 R/.exec(text)?.[1]);
-    const body = ref ? inflatedStream(byNum.get(ref) ?? { num: -1, bytes: Buffer.alloc(0) }, (b) => inflateSync(b)) : undefined;
+    const body = ref
+      ? inflatedStream(byNum.get(ref) ?? { num: -1, bytes: Buffer.alloc(0) }, (b) => inflateSync(b))
+      : undefined;
     if (!body) continue;
-    const rows = body.toString("latin1").split(/\r?\n/);
+    const rows = body.toString('latin1').split(/\r?\n/);
     for (let i = 0; i < rows.length; i++) {
       const m = /\/(\w+)\s*<<\s*\/MCID\s+(\d+)/.exec(rows[i]!);
       if (!m) continue;
@@ -69,13 +80,17 @@ export function markedContent(pdf: Uint8Array): string[] {
         if (/\b(Tj|TJ|Do|f|S)\b/.test(rows[j]!)) wrapped.push(rows[j]!.trim());
         if (wrapped.length >= 3) break;
       }
-      lines.push(`    MCID ${m[2]} tag=/${m[1]}  wraps: ${wrapped.join(" ; ").slice(0, 68)}`);
+      lines.push(`    MCID ${m[2]} tag=/${m[1]}  wraps: ${wrapped.join(' ; ').slice(0, 68)}`);
     }
   }
   return lines;
 }
 
-export function mcidCensus(pdf: Uint8Array): { present: string[]; named: Set<string>; role: Map<string, string> } {
+export function mcidCensus(pdf: Uint8Array): {
+  present: string[];
+  named: Set<string>;
+  role: Map<string, string>;
+} {
   const parts = trySplit(pdf);
   const present: string[] = [];
   const named = new Set<string>();
@@ -86,26 +101,37 @@ export function mcidCensus(pdf: Uint8Array): { present: string[]; named: Set<str
     const text = dictOf(o);
     if (!/\/Type\s*\/Page\b/.test(text)) continue;
     const ref = Number(/\/Contents\s+(\d+) 0 R/.exec(text)?.[1]);
-    const body = ref ? inflatedStream(byNum.get(ref) ?? { num: -1, bytes: Buffer.alloc(0) }, (b) => inflateSync(b)) : undefined;
-    if (body) for (const m of body.toString("latin1").matchAll(/\/MCID\s+(\d+)/g)) present.push(m[1]!);
+    const body = ref
+      ? inflatedStream(byNum.get(ref) ?? { num: -1, bytes: Buffer.alloc(0) }, (b) => inflateSync(b))
+      : undefined;
+    if (body)
+      for (const m of body.toString('latin1').matchAll(/\/MCID\s+(\d+)/g)) present.push(m[1]!);
   }
   let rootNum: number | undefined;
   for (const o of parts.objs) {
     const m = /\/StructTreeRoot\s+(\d+) 0 R/.exec(dictOf(o));
-    if (m) { rootNum = Number(m[1]); break; }
+    if (m) {
+      rootNum = Number(m[1]);
+      break;
+    }
   }
   const seen = new Set<number>();
   const walk = (num: number, depth: number): void => {
     if (depth > 64 || seen.has(num)) return;
     seen.add(num);
     const text = dictOf(byNum.get(num) ?? { num, bytes: Buffer.alloc(0) });
-    const r = /\/S\s*\/(\w+)/.exec(text)?.[1] ?? "?";
+    const r = /\/S\s*\/(\w+)/.exec(text)?.[1] ?? '?';
     for (const m of text.matchAll(K_FORMS)) {
       const block = m[1]!;
-      if (/^\d+$/.test(block)) { named.add(block); if (!role.has(block)) role.set(block, r); }
-      else if (/^\d+\s+0\s+R$/.test(block)) walk(Number(/^(\d+)/.exec(block)![1]), depth + 1);
+      if (/^\d+$/.test(block)) {
+        named.add(block);
+        if (!role.has(block)) role.set(block, r);
+      } else if (/^\d+\s+0\s+R$/.test(block)) walk(Number(/^(\d+)/.exec(block)![1]), depth + 1);
       else {
-        for (const id of block.matchAll(/\/MCID\s+(\d+)/g)) { named.add(id[1]!); if (!role.has(id[1]!)) role.set(id[1]!, r); }
+        for (const id of block.matchAll(/\/MCID\s+(\d+)/g)) {
+          named.add(id[1]!);
+          if (!role.has(id[1]!)) role.set(id[1]!, r);
+        }
         for (const ref of block.matchAll(/(\d+) 0 R/g)) walk(Number(ref[1]), depth + 1);
       }
     }
@@ -117,7 +143,7 @@ export function mcidCensus(pdf: Uint8Array): { present: string[]; named: Set<str
 if (import.meta.main) {
   const files = process.argv.slice(2);
   if (files.length === 0) {
-    console.error("usage: bun tools/structure-tree.ts <file.pdf> ...");
+    console.error('usage: bun tools/structure-tree.ts <file.pdf> ...');
     process.exit(2);
   }
   for (const file of files) {
@@ -126,14 +152,17 @@ if (import.meta.main) {
     for (const line of structureTree(pdf)) console.log(`  ${line}`);
     const blocks = markedContent(pdf);
     if (blocks.length) {
-      console.log("\n  marked content in the page stream:");
+      console.log('\n  marked content in the page stream:');
       for (const l of blocks) console.log(l);
     }
     const census = mcidCensus(pdf);
     const orphans = census.present.filter((m) => !census.named.has(m));
     const ghosts = [...census.named].filter((m) => !census.present.includes(m));
-    console.log(`\n  MCIDs present [${census.present.join(",")}]  named [${[...census.named].sort((a, b) => Number(a) - Number(b)).join(",")}]`);
-    if (orphans.length) console.log(`  in the stream, named by nothing: ${orphans.join(",")}`);
-    if (ghosts.length) console.log(`  named by the tree, absent from the stream: ${ghosts.join(",")}`);
+    console.log(
+      `\n  MCIDs present [${census.present.join(',')}]  named [${[...census.named].sort((a, b) => Number(a) - Number(b)).join(',')}]`,
+    );
+    if (orphans.length) console.log(`  in the stream, named by nothing: ${orphans.join(',')}`);
+    if (ghosts.length)
+      console.log(`  named by the tree, absent from the stream: ${ghosts.join(',')}`);
   }
 }

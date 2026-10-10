@@ -1,3 +1,4 @@
+import { deflateSync, inflateSync } from "node:zlib";
 import { insertIntoDict, join, LATIN1, streamRange, trySplit, type Obj } from "./pdfparts.ts";
 
 export function pdfString(value: string): string {
@@ -194,6 +195,22 @@ export function addMetadata(
     keywords: wanted.Keywords,
   };
 
+  // Honour SOURCE_DATE_EPOCH here rather than leaving it to the later in-place rewrite.
+  // That rewrite matched the packet as plain text, which stopped working when the packet
+  // became compressed: the dates came out as wall-clock time and two runs of the same
+  // document stopped being byte-identical. Setting them now also makes the packet and the
+  // information dictionary agree by construction.
+  const epoch = process.env.SOURCE_DATE_EPOCH;
+  if (epoch && /^\d+$/.test(epoch)) {
+    const d = new Date(Number(epoch) * 1000);
+    const p = (n: number) => String(n).padStart(2, "0");
+    const pinned =
+      `D:${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}` +
+      `${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
+    packetInfo.created = pinned;
+    packetInfo.modified = pinned;
+  }
+
   const byNum = new Map(parts.objs.map((o) => [o.num, o]));
   const trailer = parts.trailer.toString(LATIN1);
   const infoRef = trailer.match(/\/Info\s+(\d+)\s+0\s+R/);
@@ -206,11 +223,11 @@ export function addMetadata(
   const root = rootRef ? byNum.get(Number(rootRef[1])) : undefined;
   if (!root) return pdf;
 
-  const packet = Buffer.from(buildXmp(packetInfo), "utf8");
+  const packet = deflateSync(Buffer.from(buildXmp(packetInfo), "utf8"));
   const metadataObj: Obj = {
     num: next,
     bytes: Buffer.concat([
-      Buffer.from(`${next} 0 obj\n<< /Type /Metadata /Subtype /XML /Length ${packet.length} >>\nstream\n`, LATIN1),
+      Buffer.from(`${next} 0 obj\n<< /Type /Metadata /Subtype /XML /Filter /FlateDecode /Length ${packet.length} >>\nstream\n`, LATIN1),
       packet,
       Buffer.from("\nendstream\nendobj\n", LATIN1),
     ]),
@@ -234,21 +251,31 @@ export function addMetadata(
   return join(parts.head, objs, parts.trailer);
 }
 
-export function readXmp(pdf: Uint8Array): { present: boolean; creator?: string } {
+function xmpPayload(pdf: Uint8Array): string | undefined {
   const parts = trySplit(pdf);
-  if (!parts) return { present: false };
+  if (!parts) return undefined;
   const byNum = new Map(parts.objs.map((o) => [o.num, o]));
   const rootRef = parts.trailer.toString(LATIN1).match(/\/Root\s+(\d+)\s+0\s+R/);
   const root = rootRef ? byNum.get(Number(rootRef[1])) : undefined;
-  if (!root) return { present: false };
+  if (!root) return undefined;
   const ref = root.bytes.toString(LATIN1).match(/\/Metadata\s+(\d+)\s+0\s+R/);
-  if (!ref) return { present: false };
+  if (!ref) return undefined;
   const stream = byNum.get(Number(ref[1]));
-  if (!stream) return { present: false };
+  if (!stream) return undefined;
   const range = streamRange(stream.bytes);
-  if (!range) return { present: false };
+  if (!range) return undefined;
+  const raw = stream.bytes.subarray(range.start, range.end);
+  if (!/\/FlateDecode/.test(stream.bytes.toString(LATIN1))) return raw.toString("utf8");
+  try { return inflateSync(raw).toString("utf8"); } catch { return raw.toString("utf8"); }
+}
 
-  const payload = Buffer.from(stream.bytes.subarray(range.start, range.end)).toString("utf8");
+export function readXmpPacket(pdf: Uint8Array): string {
+  return xmpPayload(pdf) ?? "";
+}
+
+export function readXmp(pdf: Uint8Array): { present: boolean; creator?: string } {
+  const payload = xmpPayload(pdf);
+  if (payload === undefined) return { present: false };
   const creator = payload.match(/<dc:creator>[\s\S]*?<rdf:li(?:\s[^>]*)?>([\s\S]*?)<\/rdf:li>/)?.[1];
   return { present: true, creator: creator ? unescapeXml(creator) : undefined };
 }

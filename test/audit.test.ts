@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { Browser } from "../src/browser.ts";
 import { render } from "../src/render.ts";
+import { readXmpPacket } from "../src/meta.ts";
 
 function widePng(width: number, height: number): Buffer {
   const raw = Buffer.alloc(height * (1 + width * 3));
@@ -305,9 +306,10 @@ test("SOURCE_DATE_EPOCH makes output byte-reproducible", async () => {
     expect(text).toMatch(/D:20231114\d{6}Z/);
     expect(text).toContain("document");
 
-    expect(text).toContain("<xmp:CreateDate>2023-11-14T");
-    expect(text).toContain("<xmp:ModifyDate>2023-11-14T");
-    expect(text).not.toMatch(/<xmp:(?:Create|Modify)Date>(?!2023-11-14)/);
+    const packet = readXmpPacket(a.pdf);
+    expect(packet).toContain("<xmp:CreateDate>2023-11-14T");
+    expect(packet).toContain("<xmp:ModifyDate>2023-11-14T");
+    expect(packet).not.toMatch(/<xmp:(?:Create|Modify)Date>(?!2023-11-14)/);
   } finally {
     if (previous === undefined) delete process.env.SOURCE_DATE_EPOCH;
     else process.env.SOURCE_DATE_EPOCH = previous;

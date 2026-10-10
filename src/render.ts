@@ -786,6 +786,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           ? new URL(req.url).hostname
           : "document";
 
+      const rejected = new Set<string>();
       const gated = (
         input: Uint8Array,
         label: string,
@@ -793,6 +794,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       ): Uint8Array => {
         const attempt = repairOrKeep(input, repair);
         if (attempt.failures.length) {
+          rejected.add(label);
           findings.push({
             code: "repair-rejected",
             severity: "warn",
@@ -845,7 +847,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       }));
       const pdf = stampPdf(described, pdfTitle);
 
-      if (docMeta.author && !req.author?.trim()) {
+      if (docMeta.author && !req.author?.trim() && !rejected.has("metadata")) {
         findings.push({
           code: "metadata-authored",
           severity: "info",

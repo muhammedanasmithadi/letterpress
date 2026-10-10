@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Browser } from "../src/browser.ts";
-import { addMetadata, buildXmp, pdfString, readDocInfo, readXmp, xmlText } from "../src/meta.ts";
+import { addMetadata, buildXmp, pdfString, readDocInfo, readXmp, readXmpPacket, xmlText } from "../src/meta.ts";
 import { render } from "../src/render.ts";
 
 const LATIN1 = "latin1" as BufferEncoding;
@@ -300,7 +300,7 @@ describe("addMetadata", () => {
   test("the packet survives a name that would close an element", () => {
     const out = addMetadata(pdfFixture(), { author: "</rdf:li></dc:creator></rdf:RDF></x:xmpmeta>" });
     expect(readXmp(out).creator).toContain("</rdf:li>");
-    const text = Buffer.from(out).toString(LATIN1);
+    const text = readXmpPacket(out);
 
     expect(text.match(/<x:xmpmeta/g)).toHaveLength(1);
   });
@@ -447,7 +447,7 @@ describe("rendered output", () => {
     const text = Buffer.from(r.pdf).toString(LATIN1);
 
     expect(text.match(/\/Metadata \d+ 0 R/g)).toHaveLength(1);
-    expect(text.match(/<x:xmpmeta/g)).toHaveLength(1);
+    expect(readXmpPacket(r.pdf).match(/<x:xmpmeta/g)).toHaveLength(1);
     expect(r.info.pages).toBe(1);
   });
 });

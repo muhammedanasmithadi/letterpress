@@ -32,7 +32,7 @@ export class Tab {
     }
     if (msg.method) {
       for (const fn of this.#listeners.get(msg.method) ?? []) {
-        try { fn(msg.params as Record<string, unknown> ?? {}); } catch { /* one bad listener must not break the socket */ }
+        try { fn(msg.params as Record<string, unknown> ?? {}); } catch {  }
       }
     }
   }
@@ -64,7 +64,6 @@ export class Tab {
     return () => { set!.delete(fn); };
   }
 
-  /** Resolve on the next occurrence of an event, with a way to cancel. */
   once(method: string): { promise: Promise<any>; cancel: () => void } {
     let off: (() => void) | undefined;
     const promise = new Promise<any>((res) => { off = this.on(method, (p) => { off!(); res(p); }); });
@@ -72,7 +71,7 @@ export class Tab {
   }
 
   close() {
-    if (!this.#closed) { this.#closed = true; try { this.#ws.close(); } catch { /* already gone */ } }
+    if (!this.#closed) { this.#closed = true; try { this.#ws.close(); } catch {  } }
   }
 }
 
@@ -95,13 +94,6 @@ export class Browser {
     return browser;
   }
 
-  /**
-   * @param headless false runs a real windowed browser. `--headless=new` is
-   *   omitted rather than overridden, because a flag appended after it cannot
-   *   cancel it: Chromium takes the last occurrence of a switch, so passing
-   *   `--headless=new=false` or `--no-headless` still launched headless, which is
-   *   why headful parity was untested rather than merely unverified.
-   */
   async #start(extraArgs: string[], headless: boolean) {
     const bin = resolveChromium();
     const proc = Bun.spawn([
@@ -128,11 +120,6 @@ export class Browser {
     await this.#awaitSession();
   }
 
-  /**
-   * Chromium prints its DevTools endpoint before a page session will accept
-   * commands, so a socket opened immediately can succeed and then never be
-   * answered. Poll until a command actually round-trips.
-   */
   async #awaitSession(deadlineMs = 30_000) {
     const started = Bun.nanoseconds();
     let last: unknown;
@@ -150,15 +137,6 @@ export class Browser {
 
   get port() { return this.#port; }
 
-  /**
-   * Whether the browser is still there.
-   *
-   * A crashed Chromium keeps answering nothing while every caller sees a
-   * connection error, so a health check that reports "chromium: true" as a
-   * literal turns a dead browser into a service that looks healthy and fails
-   * every render forever. This asks the DevTools endpoint, with a short deadline
-   * so a wedged process cannot hang the check.
-   */
   async alive(timeoutMs = 2_000): Promise<boolean> {
     if (!this.#proc || this.#closing) return false;
     try {
@@ -190,15 +168,6 @@ export class Browser {
     await fetch(`http://127.0.0.1:${this.#port}/json/close/${tab.id}`).catch(() => {});
   }
 
-  /**
-   * Ask Chromium to close itself over CDP. It then tears down its own zygote,
-   * renderer, gpu and network children, which is the only reliable teardown.
-   *
-   * Process-group signalling is deliberately not used: under Bun.spawn the child
-   * shares the parent's group, so kill(-pid) signals the caller's whole process
-   * tree. That was measured killing the calling shell, and signalling only the
-   * direct parent leaves the browser's children orphaned.
-   */
   async close() {
     if (this.#closing) return;
     this.#closing = true;
@@ -217,8 +186,8 @@ export class Browser {
       });
       ws.send(JSON.stringify({ id: 1, method: "Browser.close" }));
       await Promise.race([proc.exited, Bun.sleep(5_000)]);
-      try { ws.close(); } catch { /* socket already torn down with the browser */ }
-    } catch { /* fall through to the direct kill */ }
+      try { ws.close(); } catch {  }
+    } catch {  }
 
     if (!proc.killed) {
       const exited = await Promise.race([proc.exited.then(() => true), Bun.sleep(4_000).then(() => false)]);
@@ -230,7 +199,6 @@ export class Browser {
   }
 }
 
-/** Chromium announces its port on stderr; read it natively from the stream. */
 export async function readDevToolsPort(proc: Subprocess, timeoutMs: number): Promise<number> {
   const stream = proc.stderr as ReadableStream<Uint8Array>;
   const reader = stream.getReader();
@@ -247,8 +215,7 @@ export async function readDevToolsPort(proc: Subprocess, timeoutMs: number): Pro
       if (m) return Number(m[1]);
     }
   } catch {
-    /* fall through to the error below */
+
   }
   throw new Error(`chromium exposed no DevTools endpoint in ${timeoutMs}ms:\n${buf.slice(0, 400)}`);
 }
-

@@ -1,10 +1,3 @@
-/**
- * Does transfer: "stream" actually beat base64 at 2,000 pages?
- *
- * The claim to test is that base64 costs one enormous allocation. Measured on
- * peak RSS of the whole render process tree, and on wall time, because the second
- * is what a caller waiting on a request actually experiences.
- */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,7 +27,7 @@ async function run(browser: Browser, mode: "base64" | "stream", samples: number)
   const times: number[] = [];
   let bytes = 0;
   for (let i = 0; i < samples; i++) {
-    // Watch RSS from inside, since the browser is a child of this process.
+
     let peak = 0;
     const t0 = Bun.nanoseconds();
     const watch = setInterval(() => { const r = rssTree(process.pid); if (r > peak) peak = r; }, 120);

@@ -3,24 +3,6 @@ import { deflateSync } from "node:zlib";
 import { dictCode, dictOf, insertIntoDict, kidsOf, maskStrings, streamDict, streamRange, structElementsInOrder, trySplit, join as joinParts, LATIN1, type Obj } from "../src/pdfparts.ts";
 import { contentPayloads, verify } from "../src/verify.ts";
 
-/**
- * The whole-file helpers, tested against the inputs that make each one look wrong.
- *
- * Every case here is one where the obvious implementation returns something plausible
- * and incorrect. The parsers are the part of this codebase that no amount of reading
- * convinces you about: `lastIndexOf` on a delimiter looks reckless, and here it is
- * right, and the reason is not obvious from the code.
- */
-
-/**
- * A linear PDF whose one content stream holds `contents`, compressed or not.
- *
- * Offsets are derived from the accumulated bytes rather than tracked by hand. The first
- * version of this fixture did the arithmetic by hand, recorded the file header as if it
- * were an object, and produced a file whose cross-reference table pointed nowhere --
- * which `verify()` reported before the question this file exists to answer was ever
- * asked.
- */
 function build(contents: string, compress = true): Buffer {
   const chunks: Buffer[] = [];
   const offsets: number[] = [];
@@ -71,19 +53,6 @@ describe("streamRange", () => {
     expect(verify(build(PLAIN)).ok).toBe(true);
   });
 
-  // streamRange ends a payload with lastIndexOf("\nendstream"), which looks reckless
-  // and is correct: the terminator is always written after the payload, so the last
-  // occurrence inside the object is the real one. split() excludes anything past
-  // endobj, which is what makes "last" mean "the terminator" rather than "some later
-  // decoy".
-  //
-  // Measured, because this is the reasoning most likely to be undone by a reader who
-  // decides the lastIndexOf is a bug:
-  //
-  //   payload names endstream once, uncompressed     agrees
-  //   payload names it twice, uncompressed            agrees
-  //   payload ENDS with the bytes, uncompressed       agrees
-  //   the same three, compressed                      agrees
   test.each([
     ["names it once", `${PLAIN}\nendstream\nmore text`],
     ["names it twice", `${PLAIN}\n% endstream\nmore\nendstream\nstill going`],
@@ -104,8 +73,7 @@ describe("streamRange", () => {
   });
 
   test("a zero-length payload is a range, not a missing one", () => {
-    // start === end is legal, and returning undefined here would make a reader treat an
-    // empty stream as an unreadable object.
+
     const empty = Buffer.from("7 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n", LATIN1);
     const range = streamRange(empty);
     expect(range).toBeDefined();
@@ -114,24 +82,19 @@ describe("streamRange", () => {
 });
 
 describe("kidsOf", () => {
-  // The three shapes /K takes. A bare integer is an MCID resolved against the element's
-  // /Pg, so treating it as a reference would walk to whichever unrelated object happens
-  // to share that number.
+
   test("a bare reference", () => {
     expect(kidsOf("<</Type /StructElem /K 15 0 R>>")).toEqual([15]);
   });
 
   test("an array of references and MCIDs, with an object reference dictionary", () => {
-    // 13 and 19 are children. The inline dictionary names an annotation (/Obj 5) and a
-    // page (/Pg 2) -- neither is a child structure element, and 2 in particular is a page
-    // object, which a walk would treat as an element and stop descending inside.
+
     expect(kidsOf("<</Type /StructElem /K [13 0 R <</Type /OBJR /Obj 5 0 R /Pg 2 0 R>> 19 0 R]>>"))
       .toEqual([13, 19]);
   });
 
   test("a nested dictionary is skipped to its matching close, not the first one", () => {
-    // The inner dictionary's own >> must not be taken for the group's end, or the rest
-    // of the array is parsed as though it were still inside it.
+
     expect(kidsOf("<</K [4 0 R <</A <</B 1 0 R>> /Obj 9 0 R>> 5 0 R]>>")).toEqual([4, 5]);
   });
 
@@ -143,24 +106,6 @@ describe("kidsOf", () => {
     expect(kidsOf("<</Type /StructElem>>")).toEqual([]);
   });
 
-  /* ---------------------------------------------------------------- *
-   * Arrays nest, and a nested array is descended into
-   *
-   * The array used to be extracted with a non-greedy `\[([\s\S]*?)\]`, which stops
-   * at the first `]`. Measured on these inputs:
-   *
-   *   /K [[1 0 R] [2 0 R]]   ->  [1]     2 lost
-   *   /K [1 0 R [2 0 R] 3 0 R] -> [1, 2] 3 lost
-   *
-   * A lost child is a missed descendant, which is the same failure the inline-dictionary
-   * case above was written for: the walk stops short and the repair decides the figure
-   * below is undescribed.
-   *
-   * Chromium emits no nested arrays -- checked against its own output -- so this is
-   * robustness rather than a live defect. A nested array is descended into rather than
-   * skipped, because unlike an inline dictionary it holds references and nothing else.
-   * ---------------------------------------------------------------- */
-
   test("a nested array is descended into, not cut at its first bracket", () => {
     expect(kidsOf("<</K [[1 0 R] [2 0 R]]>>")).toEqual([1, 2]);
     expect(kidsOf("<</K [1 0 R [2 0 R] 3 0 R]>>")).toEqual([1, 2, 3]);
@@ -168,7 +113,7 @@ describe("kidsOf", () => {
   });
 
   test("an inline dictionary inside a nested array is still skipped", () => {
-    // Nested array holding a child, an object reference dictionary, then a sibling.
+
     expect(kidsOf("<</K [[1 0 R <</Type /OBJR /Obj 7 0 R /Pg 2 0 R>>] [3 0 R]]>>")).toEqual([1, 3]);
   });
 
@@ -179,17 +124,15 @@ describe("kidsOf", () => {
   });
 
   test("nesting deeper than the bound terminates and returns nothing", () => {
-    // Bounded on purpose: the recursion carries its own limit so a file that opens more
-    // brackets than it closes cannot spin. Returning nothing is the safe answer -- it
-    // stops the walk short, which under-reports rather than inventing a descendant.
+
     expect(kidsOf("<</K " + "[".repeat(200) + "1 0 R" + "]".repeat(200) + ">>")).toEqual([]);
-    // And the bound is far above anything a producer emits, so real nesting is unaffected.
+
     expect(kidsOf("<</K " + "[".repeat(16) + "1 0 R" + "]".repeat(16) + ">>")).toEqual([1]);
   });
 });
 
 describe("structElementsInOrder", () => {
-  /** A structure tree whose nesting and object order disagree, as Chromium's does. */
+
   function tree(bodies: Record<number, string>): Buffer {
     const parts: string[] = ["%PDF-1.4\n"];
     const offsets: number[] = [];
@@ -211,8 +154,7 @@ describe("structElementsInOrder", () => {
   }
 
   test("document order, not the order objects are written in", () => {
-    // 4 is the outer Figure and 5 the inner one. The inner is written first, which is
-    // how Chromium emits nested structure elements, so a file-order scan reverses them.
+
     const pdf = tree({
       3: "<</Type /StructElem /S /Document /K [4 0 R]>>",
       4: "<</Type /StructElem /S /Figure /K 5 0 R>>",
@@ -224,8 +166,7 @@ describe("structElementsInOrder", () => {
   });
 
   test("matches only the role asked for, with the slash", () => {
-    // The file holds `/S /Figure`. A pattern of `/S\s*Figure` matches nothing and looks
-    // exactly like a document with no figures at all.
+
     const pdf = tree({
       3: "<</Type /StructElem /S /Document /K [4 0 R 5 0 R]>>",
       4: "<</Type /StructElem /S /Figure>>",
@@ -264,24 +205,6 @@ describe("insertIntoDict", () => {
   });
 });
 
-/* ------------------------------------------------------------------ *
- * A literal string is arbitrary text sitting inside a dictionary
- *
- * Every one of these found a real defect, and all of them had the same cause: something
- * searching a dictionary for structure found the structure in a string value instead.
- *
- * Measured before the fix:
- *   - alt text reading "see object 999 0 R" made the gate's reference scan find a
- *     reference to an object that does not exist, so every gated repair was rejected and
- *     the document shipped with no author and no XMP packet;
- *   - alt text reading "a stream of monthly revenue" cut the Figure element's dictionary
- *     at the word inside it, so it looked undescribed and the repair silently did nothing;
- *   - a link whose URL contained "stream" was cut before its /Contents, so the
- *     idempotence guard missed and a second pass wrote a duplicate key.
- *
- * Each test below fails with maskStrings neutered. That was checked, not assumed.
- * ------------------------------------------------------------------ */
-
 describe("maskStrings", () => {
   const O = (bytes: string) => ({ num: 1, bytes: Buffer.from(bytes, LATIN1) }) as Obj;
 
@@ -290,7 +213,7 @@ describe("maskStrings", () => {
     const masked = maskStrings(src);
     expect(masked).not.toContain("hello");
     expect(masked.length).toBe(src.length);
-    // An offset found in the masked text must index into the original.
+
     const at = masked.indexOf("/K");
     expect(src.slice(at)).toBe(masked.slice(at));
   });
@@ -300,13 +223,11 @@ describe("maskStrings", () => {
   });
 
   test("an escaped close parenthesis does not end the string", () => {
-    // The classic failure: `\)` closes the string early, so everything after it is read
-    // as code -- and here what follows is a real reference, so it must survive as code
-    // while the string's own contents do not.
+
     const masked = maskStrings(String.raw`<</A (a \) b) /K [9 0 R]>>`);
-    expect(masked).toContain(String.raw`\)`);   // the escape is left verbatim
-    expect(masked).not.toContain(" b)");        // the rest of the string is blanked
-    expect(masked).toContain("/K [9 0 R]");     // and the dictionary after it is intact
+    expect(masked).toContain(String.raw`\)`);
+    expect(masked).not.toContain(" b)");
+    expect(masked).toContain("/K [9 0 R]");
   });
 
   test("an escaped open parenthesis is not an open", () => {
@@ -319,13 +240,12 @@ describe("maskStrings", () => {
   });
 
   test("a hex string is left alone, because a caller may need to read it", () => {
-    // /Alt is written as UTF-16BE hex by some producers. Masking it would stop the value
-    // being read, which is the opposite of what this function is for.
+
     expect(maskStrings("<</Alt <00480065006C006C006F> /K [1 0 R]>>")).toContain("<00480065006C006C006F>");
   });
 
   test("dictOf reads values; dictCode hides them", () => {
-    // The distinction the whole fix rests on: one reads, one searches.
+
     const o = O("<< /URI (https://x.example/stream/) /Contents (a) >>");
     expect(dictOf(o)).toContain("https://x.example/stream/");
     expect(dictCode(o)).not.toContain("https://x.example/stream/");
@@ -338,8 +258,7 @@ describe("maskStrings", () => {
   });
 
   test("streamDict does not stop at a string carrying the keyword and a newline", () => {
-    // `(upstream)` alone does not fool streamDict, which needs a newline after the
-    // keyword. `(foo stream\nbar)` does, and only masking catches that one.
+
     const o = O("<< /Alt (foo stream\nbar) /Length 99 >> stream\nxxxx\nendstream");
     expect(/\/Length\s+(\d+)/.exec(streamDict(o))?.[1]).toBe("99");
   });
@@ -349,12 +268,9 @@ describe("maskStrings", () => {
   });
 
   test("insertIntoDict is not derailed by an unbalanced << inside a string", () => {
-    // An unbalanced `<<` drove the depth negative, `close` stayed -1, and the function
-    // returned the body unchanged -- so the caller believed it had written a key and had
-    // not. Chromium percent-encodes `<<` to `%3C%3C`, so this was reachable only through
-    // a document whose own text carried the characters.
+
     expect(insertIntoDict("<< /URI (a << b) >>", "/Contents (x)")).toContain("/Contents (x)");
-    // And the entry lands inside the dictionary, not after it.
+
     expect(insertIntoDict("<< /URI (a << b) >>", "/Contents (x)")).toBe("<< /URI (a << b) /Contents (x)\n>>");
   });
 });
@@ -366,24 +282,6 @@ describe("streamDict", () => {
   });
 });
 
-/* ------------------------------------------------------------------ *
- * An object ends at its own `endobj` -- unless it is a stream
- *
- * `split()` used to search for the first `endobj` after an object's header, which is
- * wrong twice over: the dictionary may carry those bytes as a value, and the payload may
- * start with them. Either way the object came back truncated with no stream at all.
- *
- * The consequence was not just a missed check. The repair layer operates on the bytes
- * `split()` returns and `join()` writes them back, so a repair touching such an object
- * would have written a truncated object and destroyed the payload. And the verification
- * gate, whose whole job is to catch that, saw no payload on either side and compared
- * `[]` to `[]`.
- *
- * Measured on the fixtures below: the gate reports 1 content payload with this fixed and
- * 0 without it, for both the dictionary and the payload case.
- * ------------------------------------------------------------------ */
-
-/** A linear PDF whose object 4 is exactly `body`, everything else boilerplate. */
 function fileWithObject4(body: string): Buffer {
   const bodies = [
     "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
@@ -418,9 +316,9 @@ describe("split keeps a stream object whole", () => {
       const o = trySplit(pdf)!.objs.find((x) => x.num === 4)!;
       const range = streamRange(o.bytes);
       expect(range).toBeDefined();
-      // The payload is recovered exactly, and it is the payload the page names.
+
       expect(o.bytes.subarray(range!.start, range!.end).toString(LATIN1)).toBe(payload);
-      // And the object ends at its own endobj, not one further along.
+
       expect(o.bytes.toString(LATIN1).endsWith("\nendstream\nendobj")).toBe(true);
       expect(contentPayloads(pdf)).toEqual([payload]);
       expect(verify(pdf).ok).toBe(true);
@@ -428,36 +326,13 @@ describe("split keeps a stream object whole", () => {
   }
 
   test("a string carrying the keyword does not make a plain object a stream", () => {
-    // The keyword is searched for in the masked window. Unmasked, the newline inside the
-    // /Alt would match `stream\r?\n` and the object would be measured as a stream with no
-    // payload, ending at some other object's endobj.
+
     const pdf = fileWithObject4("<< /Alt (a stream\nof text) >>");
     const o = trySplit(pdf)!.objs.find((x) => x.num === 4)!;
     expect(streamRange(o.bytes)).toBeUndefined();
     expect(o.bytes.toString(LATIN1)).toBe("4 0 obj\n<< /Alt (a stream\nof text) >>\nendobj");
   });
 });
-
-/* ------------------------------------------------------------------ *
- * The keyword `endobj` appears in ordinary documents
- *
- * Found by an audit subagent reading this file, not by any test: the non-stream branch of
- * split() searched the raw text, while the stream branch had been taught to search the
- * masked window. Same bug, one branch over, and the branch that reached it far more often.
- *
- * A link to https://example.com/docs/endobject.html contains the six letters `endobj` as
- * the *prefix* of `endobject`, so a plain indexOf cut the annotation there:
- *
- *   /URI (https://example.com/docs/endobj
- *   6 0 obj
- *   <</Filter /FlateDecode
- *
- * verify() returned ok with no failures. There were no findings. pdftotext exited 0 while
- * printing three syntax errors, so a caller checking its exit code saw a success.
- *
- * Both halves of the fix are needed and neither is sufficient alone: a word boundary still
- * trips on `/URI (endobj)`, and masking still trips on `endobject`.
- * ------------------------------------------------------------------ */
 
 describe("split when a non-stream object carries the keyword", () => {
   const body = (extra: string) => `<< ${extra} /Type /Free >>`;
@@ -472,12 +347,11 @@ describe("split when a non-stream object carries the keyword", () => {
 
   for (const [name, extra] of cases) {
     test(name, () => {
-      // The trailing /Ref 99 0 R is the point: if the object is truncated at the
-      // keyword, that reference disappears and nothing notices.
+
       const pdf = fileWithObject4(body(extra));
       const o = trySplit(pdf)!.objs.find((x) => x.num === 4)!;
       expect(o.bytes.toString(LATIN1)).toBe(`4 0 obj\n${body(extra)}\nendobj`);
-      // And the dangling reference the truncation would have hidden is still seen.
+
       const dangling = fileWithObject4(body("/A (endobj) /Ref 99 0 R"));
       expect(verify(dangling).ok).toBe(false);
     });
@@ -491,24 +365,12 @@ describe("split when a non-stream object carries the keyword", () => {
   });
 });
 
-/* ------------------------------------------------------------------ *
- * A comment is arbitrary text too
- *
- * ISO 32000-1 §7.2.4: a comment runs to end of line and is not code. maskStrings knew
- * about literal strings and nothing else, so an unbalanced `(` inside a comment opened a
- * string that never closed and every byte after it was blanked.
- *
- * Measured on `<< /A % a comment ( unbalanced` -- entirely legal: the /Length two lines
- * down became invisible to the verification gate, and insertIntoDict returned its input
- * unchanged while reporting that it had written a key.
- * ------------------------------------------------------------------ */
-
 describe("maskStrings and comments", () => {
   test("an unbalanced parenthesis inside a comment does not swallow the rest", () => {
     const body = "<< /A % a comment ( unbalanced\n/Length 140 >> carrying";
     const masked = maskStrings(body);
     expect(masked.length).toBe(body.length);
-    // The comment's own text is gone, and what follows it is intact.
+
     expect(masked).not.toContain("comment");
     expect(/\/Length\s+(\d+)/.exec(masked)?.[1]).toBe("140");
   });
@@ -519,7 +381,7 @@ describe("maskStrings and comments", () => {
   });
 
   test("a percent sign inside a literal string is not a comment", () => {
-    // Otherwise the string's own contents would stop being masked.
+
     const masked = maskStrings("<< /Alt (100% (secret)) /Next 1 0 R >>");
     expect(masked).not.toContain("secret");
     expect(masked).toContain("/Next 1 0 R");
@@ -536,31 +398,15 @@ describe("maskStrings and comments", () => {
   });
 });
 
-/* ------------------------------------------------------------------ *
- * A literal string that spells an object header
- *
- * `alt="2 0 obj"` put `/Alt (2 0 obj)` into a Figure's dictionary, and split() read the
- * two characters `2 0` as the start of an object. The dictionary was cut there, `/P`,
- * `/Pg` and `/K` went with it, and the render shipped: verify() ok, no findings, and
- * poppler printing `Syntax Error: Illegal character ')'`.
- *
- * Headers must now begin a line. Masking the file before scanning was the obvious fix and
- * it is wrong -- maskStrings reads the text as syntax, and a stream payload is not syntax.
- * An unbalanced `(` in binary data blanks every header after it and objects merge. That
- * was measured too: a plain one-image document reported `/Length 293 but carries 860`.
- *
- * The scan is on the raw text with a line anchor, which has no payload problem.
- * ------------------------------------------------------------------ */
-
 describe("split when a dictionary spells an object header", () => {
   test("a string naming a header does not invent an object", () => {
     const pdf = fileWithObject4("<< /Alt (2 0 obj) /P 9 0 R >>");
     const parts = trySplit(pdf)!;
     expect(parts.objs.map((o) => o.num)).toEqual([1, 2, 3, 4, 5]);
     const o = parts.objs.find((x) => x.num === 4)!;
-    // Whole: the reference after the string is still in it, and check 3 can see it.
+
     expect(o.bytes.toString(LATIN1)).toBe("4 0 obj\n<< /Alt (2 0 obj) /P 9 0 R >>\nendobj");
-    expect(verify(pdf).ok).toBe(false); // 9 0 R genuinely dangles
+    expect(verify(pdf).ok).toBe(false);
   });
 
   test("a real header still found at the start of a line", () => {
@@ -571,8 +417,7 @@ describe("split when a dictionary spells an object header", () => {
   });
 
   test("a header after a stream payload is found, which a masked scan would miss", () => {
-    // The reason the scan is not masked: the payload below contains an unbalanced "(",
-    // which a syntax-aware mask reads as opening a string and blanks for 800 bytes.
+
     const payload = "x".repeat(400) + "(not a paren";
     const pdf = fileWithObject4(`<< /Length ${payload.length} >>\nstream\n${payload}\nendstream`);
     const parts = trySplit(pdf)!;
@@ -582,19 +427,6 @@ describe("split when a dictionary spells an object header", () => {
     expect(verify(pdf).ok).toBe(true);
   });
 });
-
-/* ------------------------------------------------------------------ *
- * A name is lexically identical to the keyword
- *
- * `<< /A endobj\n>>` -- a bare name at the end of a line -- is cut at the name by a rule
- * that only requires `endobj` to be followed by an end-of-line. What actually separates
- * them is position: an object's own `endobj` comes after its dictionary is closed.
- *
- * An audit subagent found this and correctly said the commit claiming otherwise
- * overstated its fix. Chromium emits no bare `endobj` name and `looksBinary` refuses PDF
- * input, so it was unreachable through the product; it is fixed here because the counting
- * is cheap and the alternative is a comment asserting a sufficiency that does not hold.
- * ------------------------------------------------------------------ */
 
 describe("split when a dictionary ends a line with the keyword's spelling", () => {
   const cases: Array<[string, string]> = [
@@ -609,15 +441,14 @@ describe("split when a dictionary ends a line with the keyword's spelling", () =
     test(name, () => {
       const pdf = fileWithObject4(body);
       const o = trySplit(pdf)!.objs.find((x) => x.num === 4)!;
-      // The whole dictionary, and the object's own endobj, or nothing useful was fixed.
+
       expect(o.bytes.toString(LATIN1)).toBe(`4 0 obj\n${body}\nendobj`);
       expect(trySplit(pdf)!.objs.map((x) => x.num)).toEqual([1, 2, 3, 4, 5]);
     });
   }
 
   test("an object with no dictionary is still delimited", () => {
-    // The round-trip test caught the bug here first: with no dictionary to close, the
-    // search offset was taken from -1 and every such object was cut one byte early.
+
     const pdf = fileWithObject4("<< /A 1 >>");
     const rejoined = trySplit(fileWithObject4("<< /A 1 >>"))!;
     expect(rejoined.objs.find((x) => x.num === 4)!.bytes.toString(LATIN1))

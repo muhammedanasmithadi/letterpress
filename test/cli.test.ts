@@ -44,36 +44,21 @@ afterAll(async () => {
 
 test("renders a file and reports where it went", async () => {
   const out = join(dir, "one.pdf");
-  // A deadline of its own. The default is 30s, which is ample here -- 555ms measured on
-  // two cores -- but this is the first thing the file does, so it pays for a cold
-  // Chromium launch on a shared runner, and the default is not what this test is about.
+
   const r = await run([doc, "-o", out, "--timeout", "120000"]);
-  // No error on stderr. An error and a warning both go there, so the absence of one is
-  // asserted here.
-  //
-  // This used to assert a warning appeared, which it did only because the fixture
-  // leaned on a face the local font set lacked, so Chromium fell back to a Type 3 font
-  // with no program behind it. That is an accident of one machine's fonts: the first CI
-  // run failed here with empty stderr on a run that was entirely correct.
+
   expect(r.stderr).not.toMatch(/error:/);
-  // The child's own output travels with the assertion. A bare `code === 0` told me
-  // nothing when CI failed it: the cli prints "render failed: ..." without the word
-  // "error:", so the stderr check above passed and the reason was lost.
+
   expect(r.code, `stdout:\n${r.stdout}\nstderr:\n${r.stderr}`).toBe(0);
   const bytes = await Bun.file(out).arrayBuffer();
   expect(bytes.byteLength).toBeGreaterThan(1000);
 
   const info = await pdfInfo(new Uint8Array(bytes));
-  // Checked against the document rather than written down. The claim under test is that
-  // the cli reports the truth; a hardcoded number is an assertion about the font set,
-  // and came out 2 here and 1 on CI for exactly that reason.
-  // The plural is optional: the cli prints "1 page" and "2 pages", and the first
-  // attempt at this required "pages" always -- failing on every one-page fixture.
+
   expect(r.stdout).toMatch(new RegExp(`one\\.pdf\\s+${info.pages} pages?\\s+[\\d.]+ KB\\s+\\d+ms`));
   expect(info.pages).toBeGreaterThan(0);
   expect(info.pageSize).toContain("594.96");
-  // Any findings the render did produce must be warnings, not errors: a warning is
-  // reported and the document is still written.
+
   const second = await run([doc, "-o", join(dir, "warn.json"), "--json"]);
   const codes = JSON.parse(second.stdout) as {
     ok: boolean; findings: Array<{ code: string; severity: string }>;
@@ -84,10 +69,7 @@ test("renders a file and reports where it went", async () => {
 }, 60_000);
 
 test("a finding is printed to stderr and the document is still written", async () => {
-  // The only coverage that findings reach stderr used to be an assertion that a
-  // Type 3 font fallback produced a warning, which happened solely because this
-  // machine lacks a face the fixture asked for. It is now provoked on purpose, so it
-  // holds wherever the suite runs.
+
   const broken = join(dir, "broken.html");
   await writeFile(broken,
     `<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:10mm}</style>` +
@@ -97,7 +79,7 @@ test("a finding is printed to stderr and the document is still written", async (
   expect(r.code).toBe(0);
   expect(r.stderr).toMatch(/^warn:/m);
   expect(r.stderr).not.toMatch(/error:/);
-  // A warning is not a failure: the file exists and is a pdf.
+
   expect((await Bun.file(out).arrayBuffer()).byteLength).toBeGreaterThan(1000);
 }, 60_000);
 
@@ -108,9 +90,7 @@ test("json output is machine readable", async () => {
   const parsed = JSON.parse(r.stdout);
   expect(parsed.ok).toBe(true);
   expect(parsed.path).toBe(out);
-  // Derived from the document, for the same reason as above: this fixture's page count
-  // came out 2 on the machine that wrote it and 1 on a CI runner with a different font
-  // set, so writing the number down was an assertion about fonts.
+
   expect(parsed.pages).toBe((await pdfInfo(new Uint8Array(await Bun.file(out).arrayBuffer()))).pages);
   expect(parsed.bytes).toBeGreaterThan(1000);
   expect(typeof parsed.ms).toBe("number");
@@ -129,8 +109,7 @@ test("derives the output name from the input", async () => {
 test("reads HTML from stdin", async () => {
   const out = join(dir, "piped.pdf");
   const r = await run(["-", "-o", out, "--json"], "<!doctype html><style>@page{size:A4;margin:10mm}</style><h1>From stdin</h1>");
-  // The exit code alone is not enough to debug this. It failed once in nine runs
-  // with a bare assertion failure, which says nothing about why.
+
   expect(r.code, `exit ${r.code}\nstdout: ${r.stdout.slice(0, 400)}\nstderr: ${r.stderr.slice(0, 600)}`).toBe(0);
   const parsed = JSON.parse(r.stdout);
   expect(parsed.ok).toBe(true);
@@ -182,8 +161,7 @@ test("help exits 0 and documents the formats", async () => {
 }, 30_000);
 
 test("--root lets a document in a subdirectory reach its assets", async () => {
-  // The default refuses a ../ reference and says so; naming the root fixes it. Both halves
-  // are asserted, because a finding that does not name the flag is a count, not a diagnosis.
+
   await mkdir(join(dir, "sub"), { recursive: true });
   await mkdir(join(dir, "assets"), { recursive: true });
   await writeFile(join(dir, "assets", "print.css"), "@page { size: A5; margin: 5mm }");

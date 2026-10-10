@@ -4,13 +4,13 @@ export type PdfInfo = {
   bytes: number;
   header: string;
   producer: string | null;
-  /** Page count, resolved from the document catalog's page tree. */
+
   pages: number;
-  /** Every distinct MediaBox, in points. */
+
   mediaBoxes: string[];
-  /** MediaBox per page, in page order. Same length as `pages`. */
+
   pageSizes: string[];
-  /** Count of image XObjects. Vector output has none. */
+
   imageObjects: number;
   fontFiles: number;
   type0Fonts: number;
@@ -19,15 +19,6 @@ export type PdfInfo = {
   outlineTitles: string[];
 };
 
-/**
- * Resolve the page count through trailer -> catalog -> page tree root.
- *
- * Taking the first "/Count" in byte order reads an interior node of the tree,
- * which is how this reported 8 pages for every document of 9 or more. Interior
- * nodes hold the size of their own subtree, so the root must be followed by
- * object number. Falling back to the largest Count seen is still correct,
- * because no interior node can exceed the total.
- */
 function pageCount(raw: string): number {
   const rootRef = raw.match(/\/Root\s+(\d+)\s+\d+\s+R/);
   if (rootRef) {
@@ -43,7 +34,6 @@ function pageCount(raw: string): number {
   return (raw.match(/\/Type\s*\/Page[^s]/g) ?? []).length;
 }
 
-/** The body of an indirect object, e.g. "12 0 obj ... endobj". */
 function bodyOf(raw: string, num: string): string | undefined {
   const start = raw.search(new RegExp(`(?:^|[^0-9])${num}\\s+0\\s+obj`));
   if (start < 0) return undefined;
@@ -57,7 +47,6 @@ export function inspect(pdf: Uint8Array): PdfInfo {
 
   const pages = pageCount(raw);
 
-  // /Type /Page objects appear in page order, so their MediaBoxes do too.
   const pageSizes: string[] = [];
   for (const m of raw.matchAll(/\/Type\s*\/Page[^s][\s\S]{0,400}?/g)) {
     const box = m[0].match(/\/MediaBox\s*\[[^\]]*\]/);
@@ -80,13 +69,6 @@ export function inspect(pdf: Uint8Array): PdfInfo {
   };
 }
 
-/**
- * A declaration from the first `@page` rule that carries it.
- *
- * One function rather than one per property, because the two callers were the same
- * loop over `pageRules` differing only in the property name, and the normalisation at
- * the end is the part that has to agree.
- */
 function declaredPageProp(html: string, prop: string): string | null {
   for (const rule of pageRules(html)) {
     const m = new RegExp(`\\b${prop}\\s*:\\s*([^;}]+)`, "i").exec(rule);
@@ -95,28 +77,18 @@ function declaredPageProp(html: string, prop: string): string | null {
   return null;
 }
 
-/** True when the PDF declares a page size in CSS via an @page size rule. */
 export function declaredPageSize(html: string): string | null {
   return declaredPageProp(html, "size");
 }
 
-/** The declared @page margin, if any. */
 export function declaredPageMargin(html: string): string | null {
   return declaredPageProp(html, "margin");
 }
 
-/**
- * Every @page rule in the document, with CSS comments stripped first.
- *
- * A commented-out `@page { size: A5 }` is not a declaration, but reading it as
- * one made the tool report a landscape PDF as portrait. Stripping comments
- * before matching is what keeps the reported conflict real.
- */
 export function pageRules(html: string): string[] {
   const withoutComments = html
     .replace(/\/\*[\s\S]*?\*\//g, " ")
-    // a <style> or <script> body is not markup, but @page inside one is still
-    // live css; only comment stripping applies here.
+
     ;
   return [...withoutComments.matchAll(/@page[^{]*\{[^}]*\}/gi)].map((m) => m[0]);
 }

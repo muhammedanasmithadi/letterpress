@@ -6,19 +6,6 @@ import { Browser } from "../src/browser.ts";
 import { render } from "../src/render.ts";
 import { pdfText, pdfToPng } from "./poppler.ts";
 
-/**
- * Headless and headful must produce the same document.
- *
- * This is the only test that needs a display, so it skips without one. It exists
- * because everything else in the suite runs headless, which means the whole test
- * suite would pass on a machine where the windowed path produced a different
- * document — and the docs claimed parity that was never actually checked.
- *
- * Bytes are deliberately not compared. `/CreationDate` differs between two runs, so
- * "the files are identical" is false even when the documents are the same. What is
- * compared is what a reader sees.
- */
-
 const display = process.env.DISPLAY;
 const canRunHeadful = Boolean(display);
 
@@ -33,7 +20,6 @@ h2 { break-before: page }
 <h2>Three</h2><ul><li>Alpha</li><li>Beta</li></ul>
 <table><tr><th>Head</th></tr><tr><td>Cell</td></tr></table>`;
 
-/** Every role the structure tree uses, with counts, in a stable order. */
 function roles(pdf: Uint8Array): string {
   const counts = new Map<string, number>();
   for (const m of Buffer.from(pdf).toString("latin1").matchAll(/\/Type \/StructElem\s*\/S\s*\/(\w+)/g)) {
@@ -47,7 +33,7 @@ async function run(headless: boolean) {
   const browser = await Browser.launch({
     profile,
     headless,
-    // Wayland prints the DevTools endpoint and then exits; X11 stays up.
+
     extraArgs: headless ? [] : ["--ozone-platform=x11", "--window-size=1280,1700"],
   });
   try {
@@ -68,10 +54,7 @@ describe.skipIf(!canRunHeadful)("headful parity", () => {
   }, 180_000);
 
   test("a headful browser is really launched, not a headless one with a flag after it", async () => {
-    // `--headless=new` is omitted rather than overridden. Chromium takes the last
-    // occurrence of a switch, so `--headless=new=false` and `--no-headless` both
-    // still launch headless -- which is why this was untested rather than merely
-    // unverified.
+
     const profile = await mkdtemp(join(tmpdir(), "letterpress-parity-probe-"));
     const browser = await Browser.launch({ profile, headless: false, extraArgs: ["--ozone-platform=x11"] });
     const r = await render(browser, { html: "<p>probe</p>" });
@@ -95,8 +78,7 @@ describe.skipIf(!canRunHeadful)("headful parity", () => {
   });
 
   test("the same structure tree, role for role", () => {
-    // The strongest of these. Identical roles means a screen reader walks the same
-    // tree either way, which is the whole point of tagging.
+
     expect(roles(headful.pdf)).toBe(roles(headless.pdf));
     expect(roles(headless.pdf)).toContain("H1=1");
     expect(roles(headless.pdf)).toContain("Table=1");
@@ -106,14 +88,12 @@ describe.skipIf(!canRunHeadful)("headful parity", () => {
     const a = await pdfText(headless.pdf);
     const b = await pdfText(headful.pdf);
     expect(b).toBe(a);
-    // The footer is a margin box, which is where page numbers belong and where a
-    // parity gap would hide.
+
     expect(a).toContain("page 3 of 3");
   });
 
   test("a comparable file size", () => {
-    // Not byte equality: /CreationDate differs between runs. A large gap would
-    // mean the windowed path laid the document out differently.
+
     const delta = Math.abs(headful.pdf.byteLength - headless.pdf.byteLength);
     expect(delta).toBeLessThanOrEqual(64);
   });
@@ -128,9 +108,7 @@ describe.skipIf(!canRunHeadful)("headful parity", () => {
         const left = await Bun.file(a[i]!).arrayBuffer();
         const right = await Bun.file(b[i]!).arrayBuffer();
         expect(new Uint8Array(right).length).toBe(new Uint8Array(left).length);
-        // Compared on decoded pixels rather than encoded file headers: the PNG
-        // magic number and IHDR are identical for every image of the same size,
-        // which is how an animation check passed while the frames all differed.
+
         expect(Buffer.from(right).equals(Buffer.from(left))).toBe(true);
       }
     } finally {
@@ -141,8 +119,7 @@ describe.skipIf(!canRunHeadful)("headful parity", () => {
 
 describe.skipIf(canRunHeadful)("headful parity", () => {
   test("is skipped without a display", () => {
-    // Named rather than silently absent, so a skipped run is visible in the output
-    // instead of looking like a passing suite.
+
     expect(process.env.DISPLAY).toBeFalsy();
   });
 });

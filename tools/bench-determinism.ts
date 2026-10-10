@@ -1,11 +1,3 @@
-/**
- * Byte-identity across two renders, with and without a pinned clock.
- *
- * /CreationDate has one-second resolution, so two renders a second apart differ
- * even when nothing else does. That is not a defect — it is what SOURCE_DATE_EPOCH
- * exists for — but it means "two renders are identical" is only a true claim when
- * the clock is pinned.
- */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,7 +10,7 @@ const b = await Browser.launch({ profile });
 
 async function pair(label: string) {
   const a = Buffer.from((await render(b, { html, author: "Someone" })).pdf);
-  await Bun.sleep(1100); // straddle a second boundary on purpose
+  await Bun.sleep(1100);
   const c = Buffer.from((await render(b, { html, author: "Someone" })).pdf);
   const same = a.equals(c);
   let diffAt = -1;

@@ -14,11 +14,6 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
-/**
- * A minimal PDF with an information dictionary and a nested catalog, in the shape
- * chromium writes. The catalog nests `/MarkInfo << ... >>`, which is what an
- * insertion that finds the wrong `>>` lands inside.
- */
 function pdfFixture(infoExtra = ""): Buffer {
   const objs: string[] = [
     "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Type /MarkInfo /Marked true >> /Lang (en) >>",
@@ -46,28 +41,18 @@ function pdfFixture(infoExtra = ""): Buffer {
   return Buffer.concat(chunks);
 }
 
-/**
- * The object number the trailer names as /Root.
- *
- * Read from the trailer rather than from the first `/Root N 0 R` in the file: an
- * author's name may well contain that text, and a document that declares a
- * hostile one makes the first match point somewhere else entirely.
- */
 function rootOf(text: string): number {
   const trailer = /trailer([\s\S]*?)startxref/.exec(text)![1]!;
   return Number(/\/Root (\d+) 0 R/.exec(trailer)![1]);
 }
 
-/** Every dictionary in a file, so nesting can be checked rather than assumed. */
 function dictionaries(text: string): Array<{ obj: string; body: string; balanced: boolean; depthZero: number }> {
   const out: Array<{ obj: string; body: string; balanced: boolean; depthZero: number }> = [];
   for (const m of text.matchAll(/(?:^|[^0-9])(\d+) 0 obj([\s\S]*?)endobj/g)) {
     const body = m[2]!;
     let depth = 0;
     let depthZero = -1;
-    // A literal string is skipped, because an author name may well contain `>>`
-    // as text — `) >> /Root 9 0 R (` is exactly such a name — and counting it as a
-    // dictionary close reports a file that is perfectly fine as unbalanced.
+
     let inString = false;
     for (let i = 0; i < body.length - 1; i++) {
       const ch = body[i]!;
@@ -89,13 +74,8 @@ function dictionaries(text: string): Array<{ obj: string; body: string; balanced
   return out;
 }
 
-/* ------------------------------------------------------------------ *
- * Escaping
- * ------------------------------------------------------------------ */
-
 describe("pdfString", () => {
-  // The return value is the encoded value, not a wrapped one: the caller decides
-  // the delimiters, because the two forms need different ones.
+
   test("printable ascii needs no escaping at all", () => {
     expect(pdfString("Ahammed Sahad")).toBe("Ahammed Sahad");
     expect(pdfString("curriculum vitae")).toBe("curriculum vitae");
@@ -107,8 +87,7 @@ describe("pdfString", () => {
   });
 
   test("a value that would close the string early cannot", () => {
-    // The whole reason the delimiters are escaped: without this the value ends
-    // the string and the rest of it becomes PDF syntax.
+
     expect(pdfString(") /Root 9 0 R (")).toBe("\\) /Root 9 0 R \\(");
   });
 
@@ -117,8 +96,7 @@ describe("pdfString", () => {
   });
 
   test("the hex replaces the parentheses rather than sitting inside them", () => {
-    // `/Author (<FEFF...>)` is a literal string whose characters are angle
-    // brackets, and pdfinfo printed the whole hex out as the name.
+
     const encoded = pdfString("東京");
     expect(encoded.startsWith("<")).toBe(true);
     expect(encoded.endsWith(">")).toBe(true);
@@ -126,7 +104,7 @@ describe("pdfString", () => {
   });
 
   test("a character outside the basic plane keeps its surrogate pair", () => {
-    // U+1F600 is D83D DE00 in UTF-16BE. Writing one code point writes half of it.
+
     expect(pdfString("\u{1f600}")).toBe("<FEFFD83DDE00>");
   });
 });
@@ -144,7 +122,7 @@ describe("xmlText", () => {
   });
 
   test("a control character is dropped, since XML has no way to carry it", () => {
-    // A bare one makes the packet unparseable, which is worse than losing it.
+
     expect(xmlText("a\u0000\u0007b")).toBe("ab");
   });
 
@@ -152,10 +130,6 @@ describe("xmlText", () => {
     expect(xmlText("a\tb\nc\rd")).toBe("a\tb\nc\rd");
   });
 });
-
-/* ------------------------------------------------------------------ *
- * The packet
- * ------------------------------------------------------------------ */
 
 describe("buildXmp", () => {
   test("every field comes from the dictionary it is given", () => {
@@ -179,8 +153,7 @@ describe("buildXmp", () => {
   });
 
   test("a title is a language alternative and an author is a list", () => {
-    // How Dublin Core models them: a title is one value per language, an author
-    // is a person whose position carries meaning.
+
     const xmp = buildXmp({ title: "T", author: "A" });
     expect(xmp).toContain("<dc:title><rdf:Alt><rdf:li");
     expect(xmp).toContain("<dc:creator><rdf:Bag><rdf:li>A</rdf:li></rdf:Bag>");
@@ -195,16 +168,13 @@ describe("buildXmp", () => {
   });
 
   test("the begin marker carries a real byte order mark", () => {
-    // Encoded as latin1 it became a question mark, since U+FEFF has no latin1
-    // representation, and that is a malformed packet rather than a wrong one.
+
     const bytes = Buffer.from(buildXmp({ title: "T" }), "utf8");
     expect(bytes.subarray(0, 30).toString("latin1")).toContain("\xef\xbb\xbf");
   });
 
   test("every element the packet opens, it also closes", () => {
-    // Checked by nesting depth rather than by parsing, because bun has no
-    // XML parser. A name carrying markup would open an element that never closes,
-    // and the count would not come back to zero.
+
     const xmp = buildXmp({ title: "A & B <c>", author: "X > Y", created: "D:20260101120000" });
     const body = xmp.replace(/<\?xpacket[^?]*\?>/g, "");
     let depth = 0;
@@ -218,17 +188,12 @@ describe("buildXmp", () => {
 
   test("a name carrying markup cannot add an element", () => {
     const xmp = buildXmp({ title: "</dc:title><dc:subject>injected" });
-    // The injected close is escaped, so the only dc:title in the packet is the
-    // real one and there is no dc:subject at all.
+
     expect(xmp.match(/<dc:title>/g)).toHaveLength(1);
     expect(xmp).not.toContain("<dc:subject>injected");
     expect(xmp).toContain("&lt;/dc:title&gt;");
   });
 });
-
-/* ------------------------------------------------------------------ *
- * Reading back
- * ------------------------------------------------------------------ */
 
 describe("readDocInfo", () => {
   test("reads the values chromium wrote", () => {
@@ -250,10 +215,6 @@ describe("readDocInfo", () => {
   });
 });
 
-/* ------------------------------------------------------------------ *
- * Applying it
- * ------------------------------------------------------------------ */
-
 describe("addMetadata", () => {
   test("the author lands in the information dictionary", () => {
     const out = addMetadata(pdfFixture(), { author: "Ahammed Sahad" });
@@ -266,15 +227,13 @@ describe("addMetadata", () => {
   });
 
   test("the reference goes into the catalog and not into a nested dictionary", () => {
-    // Chromium's catalog nests /MarkInfo. Finding the wrong `>>` produced
-    // `/Marked true/Metadata 27 0 R`, a key in a dictionary that does not have it
-    // and a catalog with no /Metadata at all.
+
     const out = addMetadata(pdfFixture(), { author: "A" });
     const text = Buffer.from(out).toString(LATIN1);
     const catalog = dictionaries(text).find((d) => d.body.includes("/Type /Catalog"))!;
     const ref = /\/Metadata (\d+) 0 R/.exec(catalog.body)!;
     expect(ref).not.toBeNull();
-    // It has to sit before the dictionary's own closing `>>`.
+
     expect(ref!.index).toBeLessThan(catalog.depthZero);
     expect(catalog.body).not.toContain("/Marked true/Metadata");
   });
@@ -283,8 +242,7 @@ describe("addMetadata", () => {
     for (const info of [{ author: "A" }, { subject: "S" }, { keywords: "K" },
       { author: "A", subject: "S", keywords: "K" }]) {
       const text = Buffer.from(addMetadata(pdfFixture(), info)).toString(LATIN1);
-      // Guarded: a loop over zero dictionaries would report balanced output for a file
-      // whose dictionaries were never examined.
+
       const found = dictionaries(text);
       expect(found.length).toBeGreaterThan(0);
       for (const d of found) expect(d.balanced).toBe(true);
@@ -299,8 +257,7 @@ describe("addMetadata", () => {
   });
 
   test("a document that states no author gets no invented one", () => {
-    // Not the title, not the file name: a guessed author is worse than a missing
-    // one, because it is wrong and it looks right.
+
     const out = addMetadata(pdfFixture(), {});
     expect(readDocInfo(out).author).toBeUndefined();
     expect(readXmp(out).present).toBe(false);
@@ -324,19 +281,17 @@ describe("addMetadata", () => {
     const hostile = `A ) >> /Root 9 0 R (evil) ( \\101 & <script> ]]>`;
     const out = addMetadata(pdfFixture(), { author: hostile });
     const text = Buffer.from(out).toString(LATIN1);
-    // The value round-trips whole, so the escapes carry it rather than a
-    // truncated prefix, and every dictionary is still balanced.
+
     expect(readDocInfo(out).author).toBe(hostile);
     for (const d of dictionaries(text)) expect(d.balanced).toBe(true);
-    // The `/Root` inside the author's text did not become a real reference: the
-    // trailer still names the catalog, and only the trailer names one.
+
     expect(rootOf(text)).toBeTypeOf("number");
     expect(dictionaries(text).find((d) => d.obj === String(rootOf(text)))!.body)
       .toContain("/Type /Catalog");
-    // Only the trailer carries a /Root, so the injected one is inert text.
+
     const trailer = /trailer([\s\S]*?)startxref/.exec(text)![1]!;
     expect(trailer.match(/\/Root /g)).toHaveLength(1);
-    // And the author's own string holds it as escaped text, not as a reference.
+
     const info = dictionaries(text).find((d) => d.body.includes("/Title (Fixture)"))!;
     expect(info.body).toContain("\\) >> /Root 9 0 R \\(");
     expect(info.body).not.toContain(") >> /Root 9 0 R (");
@@ -346,7 +301,7 @@ describe("addMetadata", () => {
     const out = addMetadata(pdfFixture(), { author: "</rdf:li></dc:creator></rdf:RDF></x:xmpmeta>" });
     expect(readXmp(out).creator).toContain("</rdf:li>");
     const text = Buffer.from(out).toString(LATIN1);
-    // Exactly one packet, not two: the injected close did not terminate it early.
+
     expect(text.match(/<x:xmpmeta/g)).toHaveLength(1);
   });
 
@@ -389,10 +344,6 @@ describe("addMetadata", () => {
     expect(streams).toBe(1);
   });
 });
-
-/* ------------------------------------------------------------------ *
- * End to end
- * ------------------------------------------------------------------ */
 
 describe("rendered output", () => {
   let browser: Browser;
@@ -452,7 +403,7 @@ describe("rendered output", () => {
     const finding = r.findings.find((f) => f.code === "metadata-authored");
     expect(finding).toBeDefined();
     expect(finding!.message).toContain("Ahammed Sahad");
-    // The flag suppresses it: the document did not supply this author.
+
     const viaFlag = await render(browser, {
       html: `<!doctype html><meta name="author" content="Ahammed Sahad"><p>x</p>`,
       author: "Override",
@@ -464,10 +415,7 @@ describe("rendered output", () => {
     const html = `<!doctype html><style>@page{size:A4;margin:10mm}</style><h1>Heading</h1><p>body text</p>`;
     const plain = await render(browser, { html });
     const withMeta = await render(browser, { html, author: "Ahammed Sahad", subject: "CV" });
-    // Metadata lives in the dictionary and the catalog, so the content stream is
-    // byte-identical.
-    // The XMP packet is a stream of its own, so it is excluded rather than
-    // compared: the claim is that the page's streams are untouched.
+
     const contentOf = (pdf: Uint8Array) =>
       [...Buffer.from(pdf).toString(LATIN1).matchAll(/(\d+) 0 obj([\s\S]*?)endobj/g)]
         .filter((m) => !m[2]!.includes("/Subtype /XML"))
@@ -484,8 +432,7 @@ describe("rendered output", () => {
     });
     expect(readDocInfo(r.pdf).author).toContain("/Root 9 0 R");
     expect(r.info.pages).toBe(1);
-    // The injected /Root did not become a reference: the trailer's own /Root
-    // still names the catalog.
+
     const text = Buffer.from(r.pdf).toString(LATIN1);
     expect(dictionaries(text).find((d) => d.obj === String(rootOf(text)))!.body)
       .toContain("/Type /Catalog");
@@ -498,7 +445,7 @@ describe("rendered output", () => {
       <title>Metadata Fixture</title><p>text</p>`, "utf8");
     const r = await render(browser, { path: html, author: "Ahammed Sahad" });
     const text = Buffer.from(r.pdf).toString(LATIN1);
-    // One catalog, one /Metadata reference, one packet.
+
     expect(text.match(/\/Metadata \d+ 0 R/g)).toHaveLength(1);
     expect(text.match(/<x:xmpmeta/g)).toHaveLength(1);
     expect(r.info.pages).toBe(1);

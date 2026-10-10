@@ -1,8 +1,3 @@
-/**
- * Verification through poppler rather than hand-rolled PDF parsing. Poppler is
- * an independent implementation, so agreement between it and the renderer's own
- * output is real evidence rather than a regex agreeing with itself.
- */
 import { readdir, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
@@ -19,7 +14,7 @@ export type PopplerInfo = {
   pages: number;
   pageSize: string;
   encrypted: boolean;
-  /** Document title from the metadata. Chromium takes this from the page URL. */
+
   title: string;
 };
 
@@ -38,10 +33,7 @@ export async function pdfInfo(bytes: Uint8Array): Promise<PopplerInfo> {
 export async function pdfText(bytes: Uint8Array): Promise<string> {
   return withPdf(bytes, async (path) => {
     const proc = Bun.spawn(["pdftotext", "-layout", path, "-"], { stdout: "pipe", stderr: "ignore" });
-    // Drain the pipe and wait for exit. Reading the stream to end without
-    // awaiting the process races: under load pdftotext has not finished writing
-    // when the reader closes, which returns truncated text and fails a test for
-    // no reason.
+
     const [out] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
     return out;
   });
@@ -63,9 +55,7 @@ export async function pdfImages(bytes: Uint8Array): Promise<PdfImage[]> {
       if (m) {
         images.push({
           page: Number(m[1]),
-          // pdfimages lists a soft mask beside every picture with an alpha
-          // channel, at the same dimensions. Without the type a caller counting
-          // "how many images are in this pdf" gets two for one picture.
+
           type: m[3],
           width: Number(m[4]),
           height: Number(m[5]),
@@ -76,18 +66,11 @@ export async function pdfImages(bytes: Uint8Array): Promise<PdfImage[]> {
   });
 }
 
-/** Rasterise pages to PNG for visual checks. */
 export async function pdfToPng(bytes: Uint8Array, { dpi = 110, prefix }: { dpi?: number; prefix?: string } = {}) {
   const base = prefix ?? `${TMP}/letterpress-png-${process.pid}-${counter++}`;
   return withPdf(bytes, async (path) => {
     await Bun.$`pdftoppm -png -r ${dpi} ${path} ${base}`.quiet();
-    // The output files are found by matching, not by counting. An earlier version
-    // probed for `<base>-01.png`, `-02.png` and so on, which was how older poppler
-    // padded, but poppler 26.01 writes `<base>-1.png` with no padding. The probe
-    // therefore matched nothing and this function returned an empty list for every
-    // document, silently: a caller comparing two page-image lists compared nothing
-    // and passed. Padding also stops being two digits past page 99, so a count-based
-    // probe is wrong for a long document whichever way it is written.
+
     const dir = dirname(base);
     const stem = basename(base);
     const entries = await readdir(dir).catch(() => [] as string[]);

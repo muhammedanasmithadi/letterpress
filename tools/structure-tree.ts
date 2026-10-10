@@ -1,42 +1,7 @@
-/**
- * Dump a document's structure tree: what each element is, what it points at, and
- * which marked content blocks the page actually carries.
- *
- * Written to answer one question -- whether a Figure element names any content -- and
- * kept because that question recurs. The answer is not visible from the role names
- * alone. Measured on a figure document:
- *
- *   10 StructTreeRoot
- *     11 Document              -> 11, 13
- *       12 P                   -> 13 NonStruct (MCID 0)
- *       13 Figure              -> [14 Figure (MCID 1), 15 Caption]
- *         14 Figure  MCID 1    Alt=(A bar chart of quarterly revenue)
- *         15 Caption           -> 16 NonStruct (MCID 2)
- *
- * so the image is tagged as a Figure nested inside the Figure that came from the
- * <figure> element, and only the inner one carries the description.
- *
- * Two forms of /K have to be handled and both appear in Chromium's output:
- *
- *   /K 19                 a bare integer MCID, resolved against the element's /Pg
- *   /K [52 0 R 53 0 R]    a mix of child references and MCIDs
- *
- * An earlier version of this only understood the second, and reported no MCIDs at all
- * in any document, including ones known to be well formed.
- *
- * Usage: bun tools/structure-tree.ts <file.pdf> [more.pdf ...]
- */
 import { readFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
 import { dictOf, inflatedStream, trySplit } from "../src/pdfparts.ts";
 
-/**
- * `/K` as a bare integer, as a child reference, or as an array of either.
- *
- * Deliberately wider than the renderer's `kidsOf`, because this is a reader rather than
- * a repair: it has to show the MCID forms too, since an MCID the tree names but the
- * stream lacks is exactly what a reader is looking for.
- */
 const K_FORMS = /\/K\s*(\[[\s\S]*?\]|\d+\s+0\s+R|\d+)(?![\d.])/g;
 
 export function structureTree(pdf: Uint8Array): string[] {
@@ -84,7 +49,6 @@ export function structureTree(pdf: Uint8Array): string[] {
   return lines;
 }
 
-/** The marked content blocks of the first page, with a sample of what each wraps. */
 export function markedContent(pdf: Uint8Array): string[] {
   const parts = trySplit(pdf);
   if (!parts) return [];
@@ -111,7 +75,6 @@ export function markedContent(pdf: Uint8Array): string[] {
   return lines;
 }
 
-/** MCIDs the tree names, and MCIDs the stream carries, so gaps show up. */
 export function mcidCensus(pdf: Uint8Array): { present: string[]; named: Set<string>; role: Map<string, string> } {
   const parts = trySplit(pdf);
   const present: string[] = [];

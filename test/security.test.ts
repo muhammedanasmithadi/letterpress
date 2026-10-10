@@ -10,7 +10,7 @@ import { pdfText } from "./poppler.ts";
 type Running = Awaited<ReturnType<typeof startServer>>;
 let s: Running;
 let origin: string;
-/** Narrowed: port 0 means "any free port", so the bound one is only known after start. */
+
 const port = () => s.server.port as number;
 
 beforeAll(async () => {
@@ -32,12 +32,6 @@ const post = (body: unknown, headers: Record<string, string> = {}) =>
 
 const DOC = `<!doctype html><style>@page{size:A4;margin:8mm}</style><h1>SEC</h1>`;
 
-
-/**
- * Run a server in its own process, so its memory can be measured. The suite's
- * own server lives in this process, where a client that buffers 24MB and a
- * server that buffers 24MB are the same number.
- */
 async function childServer(env: Record<string, string> = {}): Promise<{
   port: number; pid: number; rss: () => number; kill: () => Promise<void>;
 }> {
@@ -62,8 +56,7 @@ async function childServer(env: Record<string, string> = {}): Promise<{
   return {
     port: bound,
     pid: child.pid,
-    // VmRSS from procfs, in MB. /proc is not portable, so a missing file reads
-    // as 0 rather than failing the test on a machine without it.
+
     rss: () => {
       try {
         return Number(
@@ -78,11 +71,6 @@ async function childServer(env: Record<string, string> = {}): Promise<{
   };
 }
 
-/**
- * Raw bytes over a socket, because curl normalises exactly the malformed
- * requests that matter here. node:net keeps types honest and needs no await
- * before write, unlike Bun.connect which resolves first.
- */
 function raw(request: string, waitMs = 4_000): Promise<{ status: number; text: string }> {
   return new Promise((resolve) => {
     const socket = connect({ host: "127.0.0.1", port: port() });
@@ -104,7 +92,6 @@ function raw(request: string, waitMs = 4_000): Promise<{ status: number; text: s
   });
 }
 
-/** The same, for a body streamed in pieces without a content-length. */
 function chunkedTo(target: number, chunks: string[], waitMs = 30_000): Promise<{ status: number; text: string }> {
   return new Promise((resolve) => {
     const socket = connect({ host: "127.0.0.1", port: target });
@@ -133,10 +120,7 @@ function chunkedTo(target: number, chunks: string[], waitMs = 30_000): Promise<{
 
 describe("no local file read", () => {
   test("a path is refused rather than rendered", async () => {
-    // This endpoint used to accept one, which made it an unauthenticated read of
-    // any file the user can open: {"path":"/etc/passwd"} returned a pdf whose
-    // text layer was the file, and {"path":"/proc/self/environ"} returned the
-    // server's own environment. The viewer sends html and has no use for a path.
+
     const r = await post({ path: "/etc/passwd" });
     expect(r.status).toBe(400);
     expect((await r.json() as { error: string }).error).toContain("html");
@@ -158,8 +142,7 @@ describe("no local file read", () => {
   });
 
   test("a path smuggled under another key is refused by the type check", async () => {
-    // Only html is read, and only as a string, so an object with a toString
-    // cannot become a filename.
+
     for (const html of [123, null, { toString: () => "/etc/passwd" }, ["/etc/passwd"], true]) {
       const r = await post({ html });
       expect(r.status, String(JSON.stringify(html))).toBe(400);
@@ -175,10 +158,7 @@ describe("another web origin cannot drive the renderer", () => {
   });
 
   test("a cross-site fetch-metadata header is refused", async () => {
-    // The Host check does not do this. Host names the destination, so a page on
-    // https://evil.example posting to 127.0.0.1 sends an acceptable Host and
-    // passes it; what was measured is that the render ran and came back opaque.
-    // Sec-Fetch-Site is set by the browser and cannot be forged by a page.
+
     for (const site of ["cross-site", "same-site"]) {
       const r = await post({ html: DOC }, { "sec-fetch-site": site });
       expect(r.status, site).toBe(403);
@@ -186,8 +166,7 @@ describe("another web origin cannot drive the renderer", () => {
   });
 
   test("a loopback Origin on a different port is still refused", async () => {
-    // The viewer and the renderer are the same origin. A second local service is
-    // not, and its page should not be able to spend renders.
+
     const r = await post({ html: DOC }, { origin: "http://127.0.0.1:9999" });
     expect(r.status).toBe(403);
   });
@@ -208,8 +187,7 @@ describe("a foreign page cannot read the response either", () => {
   }, 90_000);
 
   test("a preflight is refused, so the real request is never sent", async () => {
-    // Requiring application/json is what forces this preflight, and answering it
-    // without CORS headers is what stops the browser sending the real request.
+
     const r = await fetch(`${origin}/render`, {
       method: "OPTIONS",
       headers: {
@@ -222,7 +200,7 @@ describe("a foreign page cannot read the response either", () => {
   });
 
   test("a render needs application/json, so no simple request can carry one", async () => {
-    // text/plain is CORS-safelisted and would need no preflight at all.
+
     for (const type of ["text/plain", "application/x-www-form-urlencoded", "multipart/form-data", ""]) {
       const r = await fetch(`${origin}/render`, {
         method: "POST",
@@ -236,9 +214,7 @@ describe("a foreign page cannot read the response either", () => {
 
 describe("errors do not disclose the source", () => {
   test("an out-of-range port in Host is a 403, not a crash", async () => {
-    // Host: localhost:99999 satisfied the loopback regex, then new URL threw on
-    // the invalid port. Uncaught, that returned Bun's development error page,
-    // which contained this file's source and the server's absolute path.
+
     const r = await raw(`GET /health HTTP/1.1\r\nHost: localhost:99999\r\nConnection: close\r\n\r\n`);
     expect(r.status).toBe(403);
     expect(r.text).not.toContain("import.meta.dir");
@@ -247,16 +223,13 @@ describe("errors do not disclose the source", () => {
 
   test("an HTTP/1.0 request with no Host is answered, not crashed", async () => {
     const r = await raw("GET /health HTTP/1.0\r\n\r\n");
-    // HTTP/1.0 without Host is legal and must be answered. Bun answers 400 here,
-    // which is acceptable; what matters is that it is a response and not a
-    // thrown exception.
+
     expect(r.status).toBeGreaterThanOrEqual(200);
     expect(r.text).not.toContain("source_lines");
   });
 
   test("an absurdly long asset path is a 404, not a crash", async () => {
-    // 1000 encoded ../ segments reached Bun.file, which throws ENAMETOOLONG out
-    // of exists() and leaked lines 90-94 of the server.
+
     const r = await raw(
       `GET /assets/${"..%2f".repeat(1000)}etc/passwd HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`,
     );
@@ -299,12 +272,7 @@ describe("a body cannot exceed the cap in memory", () => {
   });
 
   test("a chunked body with no content-length is still capped", async () => {
-    // request.text() buffered the whole stream first, so a 300MB chunked upload
-    // reached 261MB of RSS before any check ran. The count now happens as bytes
-    // arrive, so the server is refused while the body is still small.
-    //
-    // Measured on a separate process, because the test client buffers the same
-    // 24MB and the two are otherwise the same number.
+
     const server = await childServer();
     try {
       const before = server.rss();
@@ -312,7 +280,7 @@ describe("a body cannot exceed the cap in memory", () => {
       const r = await chunkedTo(server.port, Array.from({ length: 400 }, () => part));
       expect(r.status).toBe(413);
       const grew = server.rss() - before;
-      // 24MB of body. Buffering it all would show at least that much here.
+
       expect(grew, `server rss grew ${grew.toFixed(0)}MB`).toBeLessThan(24);
     } finally {
       await server.kill();
@@ -323,16 +291,14 @@ describe("a body cannot exceed the cap in memory", () => {
     const html = `<!doctype html><style>@page{size:A4;margin:8mm}</style><p>${"x".repeat(6 * 1024 * 1024)}</p>`;
     const r = await post({ html });
     const body = await r.json() as { ok: boolean; error?: string };
-    // The message is asserted into the failure: this shape of input failed
-    // intermittently with a bare 500 and no clue why.
+
     expect(body.ok, body.error ?? `status ${r.status}`).toBe(true);
   }, 90_000);
 });
 
 describe("bounded resources", () => {
   test("a long deadline is clamped, not honoured", async () => {
-    // timeoutMs: 1000000000 pinned a tab, a work directory and a work server
-    // for the full duration. The clamp means the request ends within the cap.
+
     const started = Date.now();
     const r = await post({ html: DOC, timeoutMs: 1_000_000_000, settleMs: 1_000_000_000 });
     expect(r.status).toBe(200);
@@ -340,34 +306,22 @@ describe("bounded resources", () => {
   }, 150_000);
 
   test("a burst is bounded and the machine survives it", async () => {
-    // Thirty concurrent renders measured 4.7GB of chromium with no degradation on
-    // the way: every request succeeded and the machine simply died. That is the
-    // failure this guards against, and it is prevented by never running more than
-    // the cap at once — not by turning requests away.
-    //
-    // This test used to require that some of a burst of twelve came back 429,
-    // which asserted the fail-fast design. Twelve now queue and all succeed, and
-    // the bound that protects the machine is the queue depth, asserted in
-    // server.test.ts by a burst large enough to overflow it.
+
     const burst = await Promise.all(
       Array.from({ length: 12 }, (_, i) => post({ html: `${DOC}<p>burst ${i}</p>` })),
     );
     const codes = burst.map((r) => r.status);
-    // Every request got a definite answer. This assertion accepts a burst that was
-    // wholly refused as readily as one that was wholly served, which is the right
-    // property here -- the point is that nothing was dropped -- but it means the checks
-    // below are the ones that carry weight, and they must not be skipped.
+
     expect(codes.every((c) => c === 200 || c === 429)).toBe(true);
     const refused = burst.filter((r) => r.status === 429);
     const served = burst.filter((r) => r.status === 200);
-    // At least one of the two actually happened, and the split is total: nothing fell
-    // outside 200 and 429.
+
     expect(refused.length + served.length).toBe(burst.length);
     expect(refused.length > 0 || served.length > 0).toBe(true);
     for (const r of refused) {
       expect(Number(r.headers.get("retry-after"))).toBeGreaterThan(0);
     }
-    // Every accepted request produced a real pdf rather than being dropped.
+
     const ok = burst.filter((r) => r.status === 200);
     expect(ok.length).toBeGreaterThan(0);
     for (const r of ok.slice(0, 3)) {
@@ -397,8 +351,7 @@ describe("health reports the browser honestly", () => {
   });
 
   test("a dead browser reports 503 rather than green", async () => {
-    // The literal true it replaced kept answering healthy through a browser
-    // crash while every render failed: green, and useless.
+
     const dead = await startServer({ port: 0 });
     await dead.browser.close();
     try {
@@ -417,7 +370,7 @@ describe("shutdown does not strand work directories", () => {
   test("a server killed mid-render leaves no work directory", async () => {
     const before = await readdir(tmpdir());
     const server = await childServer();
-    // A render long enough to still be running when the signal lands.
+
     await fetch(`http://127.0.0.1:${server.port}/render`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -427,7 +380,7 @@ describe("shutdown does not strand work directories", () => {
     await server.kill();
     await Bun.sleep(1_500);
     const after = await readdir(tmpdir());
-    // render() names its directories letterpress-<pid>-<n>, so this is exact.
+
     const stranded = after.filter((n: string) => n.startsWith(`letterpress-${server.pid}-`) && !before.includes(n));
     expect(stranded).toEqual([]);
   }, 150_000);
@@ -438,12 +391,11 @@ describe("type confusion is a 400", () => {
     const cases: [unknown, RegExp][] = [
       [null, /JSON object/],
       [[], /JSON object/],
-      // "a string" is not JSON at all, so it fails one check earlier.
+
       ["a string", /not valid JSON/],
       [{ html: "<p>x</p>", pageRanges: ["1"] }, /pageRanges/],
       [{ html: "<p>x</p>", pageRanges: 1 }, /pageRanges/],
-      // A non-string format is named as the type error it is, rather than
-      // passed to the renderer and turned into a size the caller never asked for.
+
       [{ html: "<p>x</p>", format: { toString: () => "a4" } }, /format must be a string/],
       [{ html: "<p>x</p>", format: ["a4"] }, /format must be a string, got array/],
       [{ html: "<p>x</p>", format: "a9" }, /unknown format/],
@@ -461,7 +413,7 @@ describe("type confusion is a 400", () => {
   test("a nonsense deadline is ignored rather than crashing", async () => {
     for (const timeoutMs of ["1", 0, -1, null, {}]) {
       const r = await post({ html: DOC, timeoutMs, settleMs: timeoutMs });
-      // Whatever the answer, it must be a json error the client can read.
+
       expect([200, 400, 500]).toContain(r.status);
       const body = await r.json() as { ok?: boolean; error?: string };
       expect(typeof body.ok).toBe("boolean");
@@ -470,15 +422,13 @@ describe("type confusion is a 400", () => {
   }, 120_000);
 
   test("landscape is only true when it is true", async () => {
-    // "yes" is truthy in javascript, and an earlier version applied it, so a
-    // typo rotated the paper. The viewer now needs a real boolean and the
-    // server refuses the rest, which is stronger than quietly ignoring it.
+
     for (const bad of ["yes", 1, 0, null, {}]) {
       const r = await post({ html: DOC, landscape: bad });
       expect(r.status, JSON.stringify(bad)).toBe(400);
       expect((await r.json() as { error: string }).error).toContain("landscape must be");
     }
-    // And the real thing still works.
+
     const ok = await post({ html: DOC, format: "a4", landscape: true });
     expect(ok.status).toBe(200);
     expect((await ok.json() as { mediaBoxes: string[] }).mediaBoxes[0]).toContain("841");

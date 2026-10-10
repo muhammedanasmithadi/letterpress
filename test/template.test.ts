@@ -47,7 +47,7 @@ function document(items = ITEMS) {
     total: totals.total,
     currency: totals.currency,
     note: "Payment by bank transfer within 30 days.",
-    // The @page margin box takes CSS-escaped variants, supplied by the CLI.
+
     company_text: escapeCss("Northwind Instruments"),
     invoice_no_text: escapeCss("2026-014"),
   });
@@ -104,9 +104,7 @@ test("item text is escaped, so a description cannot inject markup", () => {
 });
 
 test("markup that could break the document is refused outright", () => {
-  // A description of <style>body{display:none}</style> renders a blank invoice
-  // that still reports success, and a script tag hangs the render on the modal
-  // dialog it opens. Neither is something to escape and print.
+
   for (const description of [
     "<script>alert(1)</script>",
     "<style>body{display:none}</style>",
@@ -127,9 +125,7 @@ test("non-numeric quantities are refused", () => {
 });
 
 test("a css string is escaped for css, not for markup", () => {
-  // HTML escaping inside a @page margin box prints a literal "&amp;" on every
-  // page, because a css string decodes no entities. An ampersand is fine in
-  // CSS; only a quote or a backslash would end the string.
+
   expect(escapeCss("Ruiz & Lark's Systems")).toBe("Ruiz & Lark's Systems");
   expect(escapeCss('say "hi"')).toBe('say \\"hi\\"');
   expect(escapeCss("back\\slash")).toBe("back\\\\slash");
@@ -158,7 +154,7 @@ test("a long invoice repeats the table header and keeps numbering", async () => 
   expect(r.info.pages).toBeGreaterThanOrEqual(3);
 
   const text = await pdfText(r.pdf);
-  // the column headings must appear on every page, not just the first
+
   const descriptionHeaders = text.match(/DESCRIPTION/g) ?? [];
   expect(descriptionHeaders.length).toBeGreaterThanOrEqual(r.info.pages);
 

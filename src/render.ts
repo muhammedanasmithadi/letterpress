@@ -10,11 +10,6 @@ import { repairOrKeep } from "./verify.ts";
 import { audit } from "./lint.ts";
 import { declaredPageMargin, declaredPageSize, inspect, pageRules, type PdfInfo } from "./pdf.ts";
 
-/**
- * Paper sizes in inches, as CDP expects. Metric sizes are exact conversions of
- * the millimetre dimensions, so `--format a4` and `@page { size: a4 }` produce
- * the same MediaBox instead of differing by a third of a millimetre.
- */
 export const FORMATS = {
   a3: [11.6929, 16.5354],
   a4: [8.2677, 11.6929],
@@ -26,14 +21,11 @@ export const FORMATS = {
 
 export type Format = keyof typeof FORMATS;
 
-/** Resolve a caller-supplied format name, rejecting anything not in the table. */
 export function parseFormat(value: unknown): Format | undefined {
   if (value == null || value === "") return undefined;
   if (typeof value !== "string") throw new Error(`format must be a string, got ${typeof value}`);
   const name = value.trim().toLowerCase();
-  // Object.hasOwn, not `in`: `in` walks the prototype chain, so "toString" and
-  // "__proto__" both passed the check and then reached FORMATS[name] as a
-  // function, which crashed the render instead of naming the bad input.
+
   if (!Object.hasOwn(FORMATS, name)) {
     throw new Error(
       `unknown format "${value}". try: ${Object.keys(FORMATS).join(", ")}`,
@@ -55,74 +47,30 @@ export type RenderRequest = {
   url?: string;
   format?: Format;
   landscape?: boolean;
-  /** CSS length, e.g. "15mm". Only consulted when format is set. */
+
   margin?: string;
-  /** Default false: remote http(s) requests are blocked and reported. */
+
   allowNetwork?: boolean;
-  /**
-   * Directory the document's assets may be read from.
-   *
-   * Defaults to the document's own directory, which is the narrowest boundary that lets
-   * a single page find its own images -- and too narrow for most sites. A document at
-   * `site/lessons/x.html` referencing `../assets/styles.css` is ordinary layout, and
-   * under the default it is refused: measured on a real ten-page site, eight of ten
-   * pages lost their stylesheet that way.
-   *
-   * Widening is the caller's decision rather than a heuristic, because guessing wrong
-   * either silently loses a document's assets or silently opens a filesystem boundary.
-   * The caller is the one who knows where the site root is. Relative paths resolve
-   * against the document either way; this only bounds where a resolved path may land.
-   */
+
   root?: string;
   printBackground?: boolean;
   settleMs?: number;
   timeoutMs?: number;
-  /**
-   * Cap on the effective resolution of raster images, in pixels per inch.
-   * Chromium prints images at their full stored resolution: a 4000px photo at
-   * 180mm lands at 565ppi and produces a PDF larger than the source file. 300
-   * is the print convention. 0 disables downsampling.
-   */
+
   maxImagePpi?: number;
-  /**
-   * Document author, written to the PDF's information dictionary and to an XMP
-   * packet generated from it. Overrides a `<meta name="author">` the document
-   * declares. Omitted means nothing is written rather than something guessed.
-   */
+
   author?: string;
-  /** Subject, same treatment as author. Overrides the document's own meta tag. */
+
   subject?: string;
-  /** Keywords, same treatment as author. Overrides the document's own meta tag. */
+
   keywords?: string;
-  /**
-   * Extra JavaScript evaluated in the page after fonts resolve and before the
-   * print. Used by the image cap; exposed for callers who need to settle a
-   * document that only mutates on interaction.
-   */
+
   beforePrint?: string;
-  /**
-   * Render only these 1-based pages, e.g. "3-5". Verified to select exactly
-   * those pages while leaving `counter(pages)` correct: pages "1-2" of a
-   * 3-page document still prints "page 2 of 3".
-   *
-   * Note that `info.pages` then reports how many pages were emitted, not the
-   * document's length, so a viewer must not present it as a total.
-   */
+
   pageRanges?: string;
-  /**
-   * Drain the PDF from the CDP stream instead of a single base64 JSON string.
-   * Worth it for large documents: a 400-page render encodes to about 22MB of
-   * base64, which is one enormous allocation and one enormous JSON parse.
-   */
+
   transfer?: "base64" | "stream";
-  /**
-   * Inject the document with Page.setDocumentContent and skip the work server.
-   * Only safe when the document references no relative assets, because
-   * setDocumentContent gives the page no origin to resolve them against: an
-   * `<img src="logo.png">` resolves to naturalWidth 0. The request is honoured
-   * automatically when a relative-reference scan comes back clean, and ignored
-   * otherwise, so this is a hint rather than a contract.
-   */
+
   preferFastPath?: boolean;
 };
 
@@ -138,18 +86,6 @@ export type RenderResult = {
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_BLOCKED_REPORTED = 20;
 
-/**
- * Parse a CSS length into inches. CSS uses 96 pixels per inch.
- *
- * Every absolute unit is here, and a leading minus: a negative margin is valid
- * CSS, and the regex without one rejected it as unparseable. The two units it
- * was missing are q (a quarter millimetre) and pc (picas).
- *
- * Relative units are refused with the reason rather than a bare rejection. em,
- * rem, ex and ch resolve against a font size, and vw and vh against a viewport,
- * so neither is knowable before the page has been laid out. printToPDF wants
- * inches. Guessing would be worse than saying so.
- */
 const ABSOLUTE_UNITS: Record<string, number> = {
   px: 96, in: 1, cm: 2.54, mm: 25.4, q: 101.6, pt: 72, pc: 6,
 };
@@ -175,9 +111,7 @@ export function toInches(len: string): number {
   if (!Number.isFinite(value)) {
     throw new Error(`margin "${len}" is not a number.`);
   }
-  // CSS allows a bare zero and nothing else. "20" was being read as 20px, which
-  // is a margin nobody asked for, and it disagreed with the server, which
-  // refuses a bare number.
+
   if (!m[2] && value !== 0) {
     throw new Error(
       `margin "${len}" needs a unit: a bare number is not a css length, only a bare 0 is. ` +
@@ -189,15 +123,6 @@ export function toInches(len: string): number {
 
 const close = (a: number, b: number) => Math.abs(a - b) < 0.05;
 
-/**
- * Report every place the request and the document disagree.
- *
- * Chromium honours the document's own @page whenever preferCSSPageSize is on,
- * which is the default so that @page is authoritative. The consequence is that
- * --landscape and --margin are silently dropped for any document that declares
- * a page size. Silence there is the worst outcome available: the caller asked
- * for landscape and received portrait.
- */
 function precedenceFindings(html: string, req: RenderRequest): Finding[] {
   const findings: Finding[] = [];
   const declared = declaredPageSize(html);
@@ -229,9 +154,7 @@ function precedenceFindings(html: string, req: RenderRequest): Finding[] {
         return d.length >= 2 && d[0] > d[1];
       })();
     if (!landscapeDeclared) {
-      // Either --format is also present, in which case the request wins and
-      // landscape is applied as transposed paper, or it is not, in which case
-      // the document's own orientation stands and the caller needs to know.
+
       findings.push(req.format
         ? {
             code: "orientation-overridden",
@@ -257,14 +180,6 @@ function precedenceFindings(html: string, req: RenderRequest): Finding[] {
   return findings;
 }
 
-/**
- * Redraw any image whose effective resolution exceeds the cap into a canvas at
- * the capped size, and point the element at the result.
- *
- * Done in the page because that is where the decoded bitmap and the laid-out
- * size both exist. Resizing the element instead would only change the display
- * size, not the pixels Chromium embeds.
- */
 async function capImageResolution(
   tab: Tab,
   maxPpi: number,
@@ -299,9 +214,6 @@ async function capImageResolution(
   try { entries = JSON.parse(raw); } catch { return []; }
   if (!entries.length) return [];
 
-  // A file:// or cross-origin image taints the canvas, so toDataURL throws and
-  // the whole expression returns nothing. Retry one image at a time with the
-  // CORS attribute set, and keep whatever succeeds.
   if (entries.length && raw === undefined) {
     const singles: typeof entries = [];
     for (const img of await tab.send("Runtime.evaluate", {
@@ -327,14 +239,13 @@ async function capImageResolution(
         returnByValue: true,
       }, timeoutMs).catch(() => null);
       const v = one?.result?.value;
-      if (v && v !== "null") { try { singles.push(JSON.parse(v)); } catch { /* skip this image */ } }
+      if (v && v !== "null") { try { singles.push(JSON.parse(v)); } catch {  } }
     }
     entries = singles;
   }
 
   if (!entries.length) return [];
 
-  // Swap the src, then wait for the replacement bitmap to decode.
   await tab.send("Runtime.evaluate", {
     expression: `(() => {
       const swap = ${JSON.stringify(entries.map((e) => e.url))};
@@ -352,52 +263,19 @@ async function capImageResolution(
   return entries.map(({ from, to, ppi }) => ({ from, to, ppi }));
 }
 
-/**
- * Copy the images a document references into the work directory so they can be
- * served over loopback alongside it.
- *
- * Paths are resolved relative to the source document and must land inside the
- * directory the caller named; an HTML file that references ../../etc/passwd as
- * an image must not become a way to read outside the workspace.
- */
-/**
- * Copy the assets a document references into the work directory, mirroring their
- * relative paths so the served document resolves them with no rewriting at all.
- *
- * An earlier version flattened every filename and then rewrote the document text
- * to match. Both halves were wrong: flattening made `sub/hide.css` and
- * `sub_hide.css` collide into one file, and rewriting the whole document changed
- * occurrences of a filename inside prose and inside scripts. Mirroring removes
- * both problems rather than working around them.
- */
-/** A relative filesystem path as the origin would see it: `..` clamps at the root. */
-/**
- * Whether a load failure is the render being torn down rather than an asset missing.
- * Chromium reports `net::ERR_ABORTED` for every request in flight when the tab closes, so
- * it arrived once per late asset. Safe to drop: a 404 arrives as a status, and a blocked
- * request carries `blockedReason`.
- */
 function isTeardownAbort(errorText: string | undefined): boolean {
   return /ERR_ABORTED/.test(errorText ?? "");
 }
 
-/** The work-directory names the document occupies. Staging must not write to either. */
 const SERVED_DOCUMENT = "input.html";
 const OVERRIDE_DOCUMENT = "override.html";
 
-/**
- * Whether a work-directory request stays inside it. The separator matters: a prefix check
- * without it accepts a sibling whose name begins with the directory's. Exported to be
- * tested, since the server binds a random port only Chromium reaches.
- */
 export function confinedTo(dir: string, name: string): boolean {
   return join(dir, name).startsWith(dir + "/");
 }
 
-/** Why a reference the document made was not staged. */
 export type RefusalReason = "outside-root" | "document";
 
-/** A reference that was not staged, and the path it named. */
 export type RefusedRef = { ref: string; abs: string; why: RefusalReason };
 
 function absRoot(root: string): string {
@@ -421,27 +299,20 @@ export async function stageAssets(
   rootArg?: string,
 ): Promise<RefusedRef[]> {
   if (!html || /^https?:/i.test(source)) return [];
-  // Relative paths always resolve against the document. `root` only bounds where the
-  // result may land, so widening it never changes what a relative reference means.
+
   const base = source.startsWith("/") ? dirname(source) : process.cwd();
   const root = rootArg ? absRoot(rootArg) : base;
-  // Both sides resolved, because the comparison below is between resolved paths and the
-  // root may itself be reached through a link.
+
   const rootReal = await realpath(root).catch(() => root);
   const insideRoot = (p: string) => p === rootReal || p.startsWith(rootReal + "/");
-  // Compared against the root as written rather than as resolved. This decides only what
-  // gets *reported*, never what may be read -- see the loop below for that.
+
   const lexicallyInside = (p: string) => p === root || p.startsWith(root + "/");
   const written = new Set<string>();
-  /** References found so far, each with the directory its own relative paths resolve from. */
+
   const queue: Array<{ ref: string; from: string; outside: boolean }> = [];
-  /**
-   * References deliberately not staged, and why. Two reasons, and they want different
-   * findings: one is a boundary the caller can widen, the other is a name that would
-   * overwrite the document.
-   */
+
   const refused: Array<{ ref: string; abs: string; why: RefusalReason }> = [];
-  /** Absolute paths already considered, so a file is read and reported once. */
+
   const seen = new Set<string>();
 
   const consider = (ref: string, from: string) => {
@@ -449,41 +320,24 @@ export async function stageAssets(
     if (!clean) return;
     if (/^(?:https?:|data:|blob:|file:|#|mailto:|\/\/)/i.test(clean)) return;
     const abs = isAbsolute(clean) ? clean : resolve(from, clean);
-    // Every quoted attribute matches two of the patterns above, and a stylesheet's own
-    // references are reached from more than one hop, so the same file arrives repeatedly.
-    // Resolving to a path and remembering it settles all three: one refusal per file
-    // rather than one per sighting, and one read rather than one per sighting.
+
     if (seen.has(abs)) return;
     seen.add(abs);
 
-    // Where the browser will look for it. Not the filesystem-root-relative path: the
-    // document is served at `<origin>/input.html`, so a relative reference resolves
-    // against `/` and not against the document's own directory. Measured with `--root`:
-    // `../assets/styles.css` happened to work, because `..` clamps to the same string
-    // either way, and `sibling.css` -- a file sitting beside the document, the common
-    // case -- was staged at `lessons/sibling.css` and requested as `/sibling.css`, so it
-    // 404'd. A page that named its parent's stylesheet lost its own.
     const urlPath = clampedUrlPath(relative(base, abs));
     if (!urlPath) return;
     const target = join(dir, urlPath);
     if (!target.startsWith(dir + "/") || written.has(target)) return;
-    // Never over the document itself. Two reserved names, both at the top level because
-    // the document is served from `/`.
+
     if (urlPath === SERVED_DOCUMENT || urlPath === OVERRIDE_DOCUMENT) {
       if (refused.length < 8) refused.push({ ref: clean, abs, why: "document" });
       return;
     }
     written.add(target);
-    // The boundary is *not* checked here. It is checked once, below, against the path
-    // the filesystem resolves to -- and checking it here as well is what broke a document
-    // reached through a symlink: `rootReal` was resolved and `abs` was not, so a sibling
-    // beside the document compared against a different spelling of the same directory and
-    // was refused. A page under `.../aslink/lessons/` lost its stylesheet and was told to
-    // pass `--root` for a path already inside the directory it had named.
+
     queue.push({ ref: clean, from: abs, outside: !lexicallyInside(abs) });
   };
 
-  /** Every reference a document or stylesheet makes. */
   const scan = (text: string, from: string) => {
     for (const m of text.matchAll(/(?:src|href)\s*=\s*["']([^"']+)["']/gi)) consider(m[1]!, from);
     for (const m of text.matchAll(/(?:src|href)\s*=\s*([^\s>]+)/gi)) consider(m[1]!.replace(/["']/g, ""), from);
@@ -492,14 +346,7 @@ export async function stageAssets(
     }
     for (const m of text.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)) consider(m[1]!, from);
     for (const m of text.matchAll(/@import\s+["']([^"']+)["']/gi)) consider(m[1]!, from);
-    // A staged script's own module imports, for the same reason CSS imports are followed:
-    // the renderer already stages `<script src>`, so it has decided that scripts affect
-    // the printed page, and a script that pulls in a sibling was being lost silently.
-    // Measured: `import './site.js'` at the top of a staged widget, and site.js 404'd.
-    //
-    // Only literal specifiers. A computed one cannot be resolved before the script runs,
-    // and guessing at it would be inventing a path. A miss here fails as a 404 the caller
-    // is already told about, which is the same outcome as before this change.
+
     for (const m of text.matchAll(/\b(?:import|export)\b[^;'"]*?\bfrom\s*["']([^"']+)["']/g)) consider(m[1]!, from);
     for (const m of text.matchAll(/\bimport\s*["']([^"']+)["']/g)) consider(m[1]!, from);
     for (const m of text.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g)) consider(m[1]!, from);
@@ -507,37 +354,17 @@ export async function stageAssets(
 
   scan(html, base);
 
-  // A staged stylesheet or module brings its own references. They resolve against the
-  // importing file's directory -- the directory it was copied from -- so the boundary
-  // still holds. `written` is marked before queueing, so two files importing each other
-  // stop.
   while (queue.length) {
     const { ref, from, outside } = queue.shift()!;
-    // The lexical check in `consider` reads the path as written. A symlink does not care:
-    // `site/assets/link.png` can point at `/tmp/elsewhere/secret`, the prefix test passes,
-    // and the file is read. Measured -- a symlink inside the document's own directory
-    // staged a file from outside the root and served its contents over loopback.
-    //
-    // So the boundary is checked against the resolved path, once the filesystem has
-    // answered what it actually points at. The root is resolved too, since a root that
-    // is itself reached through a link would otherwise never match its own contents.
+
     const real = await realpath(from).catch(() => null);
-    // The boundary, checked once and against the resolved path. An HTML file that
-    // references ../../etc/passwd as an image must not become a way to read outside the
-    // root: narrow by default, and widened only by a caller who named it.
+
     if (real && !insideRoot(real)) {
       if (refused.length < 8 && !refused.some((r) => r.abs === real)) refused.push({ ref, abs: real, why: "outside-root" });
       continue;
     }
     if (!real) {
-      // Nothing there: a broken link, or a name with no file. Reported only when the
-      // name was outside the root to begin with -- a document naming an image that is
-      // missing from inside its own directory is not a boundary problem, and
-      // `subresource-failed` already says so.
-      //
-      // Reporting on existence rather than on refusal would be the oracle this avoids:
-      // POST a document naming /etc/passwd and get a finding, name a path that is not
-      // there and get none. `server.ts` hands findings to whoever asked.
+
       if (outside && refused.length < 8 && !refused.some((r) => r.abs === from)) {
         refused.push({ ref, abs: from, why: "outside-root" });
       }
@@ -549,43 +376,23 @@ export async function stageAssets(
     if (!bytes.length) continue;
     const target = join(dir, clampedUrlPath(relative(base, from)));
     try { await Bun.write(target, bytes); } catch { continue; }
-    // Stylesheets and scripts only: those are the two kinds that name further files by a
-    // path that is knowable before they run. Re-reading an image as text finds nothing
-    // and costs a decode per asset.
+
     if (/\.(?:css|mjs|js)$/i.test(from)) {
-      try { scan(new TextDecoder("latin1").decode(bytes), dirname(real)); } catch { /* not text */ }
+      try { scan(new TextDecoder("latin1").decode(bytes), dirname(real)); } catch {  }
     }
   }
 
   return refused;
 }
 
-/**
- * True when the document references a file the browser would have to resolve
- * against a base URL: a relative src or href, and not a scheme or a fragment.
- *
- * Such a document cannot be printed through Page.setDocumentContent, which
- * serves the HTML with no origin, so this gates the fast path.
- */
 export function hasRelativeAssets(html: string): boolean {
-  // Quoted attributes, unquoted attributes, srcset, and CSS url() which covers
-  // background-image, @import and @font-face src. Missing any of these meant a
-  // document silently lost its image: the scan said "nothing relative here", the
-  // fast path was taken, and Page.setDocumentContent resolved the reference
-  // against about:blank where nothing exists.
+
   if (/(?:src|href)\s*=\s*["'](?!https?:|data:|blob:|file:|#|mailto:|\/\/)[^"']/i.test(html)) return true;
   if (/(?:src|href)\s*=\s*(?!["'])(?!https?:|data:|blob:|file:|#|mailto:|\/\/)[^\s>]+/i.test(html)) return true;
   if (/\bsrcset\s*=/i.test(html)) return true;
   return /url\(\s*(?!["']?(?:https?:|data:|blob:|file:|#|\/\/))\s*["']?[^)'"\s]/i.test(html);
 }
 
-/**
- * Read a CDP stream handle to completion.
- *
- * IO.read does not set eof on a read that exhausts the buffer, so a document
- * smaller than the chunk size comes back with eof false and a short payload.
- * The only safe test is to keep reading until eof or until a read yields nothing.
- */
 export async function drainStream(
   tab: Tab,
   handle: string,
@@ -604,24 +411,11 @@ export async function drainStream(
 
 let workDirCounter = 0;
 
-/**
- * Reject input that is not HTML, before it reaches Chromium.
- *
- * Chromium will happily print a JPEG: it decodes the bytes as a broken document
- * and lays the binary out as text, producing a full page of mojibake that pdftotext
- * recovers verbatim. Measured: a 200x150 JPEG rendered to one A4 page of
- * "PNG IHDR..." text, exit 0, with a summary line that reads like success. A typo'd
- * extension produced a confidently reported broken document.
- *
- * The sniff is deliberately narrow. It looks for a byte signature, not for the
- * absence of "<", because plenty of valid documents open with a comment, a doctype
- * with leading whitespace, or nothing at all.
- */
 function looksBinary(html: string): string | undefined {
   const head = html.slice(0, 1024);
-  // A NUL byte is the classic marker, and no text encoding of HTML contains one.
+
   if (head.includes("\u0000")) return "it contains a null byte";
-  // Signatures that mean the bytes are a different format entirely.
+
   const signatures: [RegExp, string][] = [
     [/^\s*%PDF-/, "it is a PDF"],
     [/^\s*[\u0080-\u00ff]{0,4}\xff[\u00d8\u00e0]/, "it is a JPEG"],
@@ -638,21 +432,16 @@ function looksBinary(html: string): string | undefined {
 }
 
 async function resolveSource(req: RenderRequest, dir: string): Promise<{ html: string; url: string; source: string }> {
-  // Validate before anything else. An unrecognised format used to reach
-  // FORMATS[x] and throw a TypeError from deep inside the precedence check,
-  // which is a crash, not a diagnosis.
+
   req.format = parseFormat(req.format);
   if (req.html != null) {
-    // Chromium will not print a string, and about:blank gives the document no
-    // origin for relative assets, so the HTML becomes a real file. The work
-    // server below is what actually loads it.
+
     await Bun.write(join(dir, SERVED_DOCUMENT), req.html);
     return { html: req.html, url: `${dir}/input.html`, source: "html" };
   }
   if (req.path) {
     const abs = req.path.startsWith("/") ? req.path : `${process.cwd()}/${req.path}`;
-    // Copy the source into the work directory so it is served, not opened from
-    // its original location: relative assets resolve against the served copy.
+
     const html = await Bun.file(abs).text();
     await Bun.write(join(dir, SERVED_DOCUMENT), html);
     return { html, url: abs, source: abs };
@@ -661,16 +450,6 @@ async function resolveSource(req: RenderRequest, dir: string): Promise<{ html: s
   throw new Error("render needs one of: html, path, url");
 }
 
-/**
- * Serve the work directory over loopback so the document and its images share
- * an origin.
- *
- * This is not a convenience. A file:// image taints the canvas, so toDataURL
- * throws and image downsampling becomes impossible; a document loaded over
- * http://127.0.0.1 can draw that same image and read it back. It also means
- * relative asset paths resolve, and it keeps Chromium's own file access out of
- * the picture. Bound to loopback with a random port and stopped with the render.
- */
 async function serveWorkDir(dir: string): Promise<{ origin: string; stop: () => void }> {
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -679,11 +458,7 @@ async function serveWorkDir(dir: string): Promise<{ origin: string; stop: () => 
     async fetch(request) {
       const path = new URL(request.url).pathname;
       const name = path === "/" ? SERVED_DOCUMENT : decodeURIComponent(path.slice(1));
-      // Confine to the work directory: a request must not be able to walk out.
-      // The separator matters. A prefix check without it accepts a *sibling* whose name
-      // begins with the work directory's -- `/tmp/letterpress-1-0` for `/tmp/letterpress-1`
-      // -- and the escape survives because WHATWG URL normalisation leaves `..%2f` as
-      // `..%2f` rather than decoding it, so it reaches `name` intact.
+
       const resolved = join(dir, name);
       if (!confinedTo(dir, name)) return new Response("forbidden", { status: 403 });
       const file = Bun.file(resolved);
@@ -697,18 +472,6 @@ async function serveWorkDir(dir: string): Promise<{ origin: string; stop: () => 
   };
 }
 
-/**
- * Make two runs of the same input byte-identical when SOURCE_DATE_EPOCH is set.
- *
- * Chromium varies two things between runs: /CreationDate, and the document
- * /Title, which it takes from the page URL. The work server runs on a random
- * port, so the title differs even with a fixed clock. Both are rewritten here
- * rather than suppressed, because the title carries provenance a reader may
- * want.
- *
- * Nothing changes when the variable is absent, so ordinary output keeps the
- * timestamp and title Chromium produced.
- */
 function stampPdf(pdf: Uint8Array, fallbackTitle: string): Uint8Array {
   const text = new TextDecoder("latin1").decode(pdf);
   const out = new Uint8Array(pdf);
@@ -723,48 +486,25 @@ function stampPdf(pdf: Uint8Array, fallbackTitle: string): Uint8Array {
     for (const m of text.matchAll(/D:\d{14}[+\-Z][\d'Z]{0,5}/g)) {
       if (m.index !== undefined) edits.push([m.index, m[0].length, pdfDate]);
     }
-    // The XMP packet carries the same two timestamps in ISO 8601, and pinning
-    // only the PDF form left the document disagreeing with itself: the
-    // information dictionary said the pinned epoch while `xmp:CreateDate` said
-    // the wall clock, so two renders a second apart still differed byte for byte
-    // and SOURCE_DATE_EPOCH did not make the output reproducible.
-    //
-    // Measured: with the epoch set, a pair of renders a second apart differed at
-    // `<xmp:CreateDate>2026-10-05T08:38:49` against `...:50`. Both are 19
-    // characters, so the fixed-width edit that keeps every offset valid still
-    // holds.
+
     const iso = `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}` +
       `T${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
     for (const m of text.matchAll(/<(xmp:(?:CreateDate|ModifyDate))>[^<]{0,40}<\/\1>/g)) {
       if (m.index === undefined) continue;
       const open = m[0].indexOf(">") + 1;
-      // The value runs from just after the opening tag to the start of the
-      // closing one. Deriving that as `length - open - lastIndexOf` gives zero,
-      // because the closing tag is at the end: the edit then had a zero-length
-      // slot and silently wrote nothing, which is why the packet kept the wall
-      // clock while the dictionary was correctly pinned.
+
       const closeAt = m[0].lastIndexOf("</");
       edits.push([m.index + open, closeAt - open, iso]);
     }
   }
 
-  // The title is no longer stamped here. This function edits in place at fixed widths,
-  // so it could only write a title into the slot the previous one occupied -- and that
-  // slot is however long "about:blank" is, because Chromium takes the title from the
-  // page URL. A 61-character filename came out as "Quarterly-R". setDocTitle rewrites
-  // the dictionary and has no such limit; it runs in the gated chain instead.
   void fallbackTitle;
 
-  // Patch from the end so earlier offsets stay valid.
   for (const [at, length, value] of edits.sort((a, b) => b[0] - a[0])) {
-    // Truncated to the slot. A longer replacement used to be written past the
-    // end of the title and into the rest of the file, which is exactly the
-    // corruption the fixed-width design exists to prevent. The old constant was
-    // short enough never to reach it, so nothing caught it.
+
     const fit = value.slice(0, length);
     for (let i = 0; i < fit.length; i++) out[at + i] = fit.charCodeAt(i);
-    // Pad with spaces when the replacement is shorter: lengths must not change
-    // or every byte offset after it would shift and corrupt the file.
+
     for (let i = fit.length; i < length; i++) out[at + i] = 0x20;
   }
   return out;
@@ -777,23 +517,16 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
   const dir = `${tmp}/letterpress-${process.pid}-${workDirCounter++}`;
   const findings: Finding[] = [];
   const blocked: string[] = [];
-  // Subresources that failed to load. A missing stylesheet does not stop the
-  // render, but it does mean the document is not what its author intended, so
-  // it is reported rather than swallowed.
+
   const failedSubresources: { kind: string; url: string }[] = [];
   let tab: Tab | undefined;
   let server: { origin: string; stop: () => void } | undefined;
 
-  // A document fetched over the network is served by someone else, so a missing
-  // file is their problem to report. Verified after the load, when there is
-  // something to check, and only for a non-loopback origin.
   const isRemote = /^https?:/i.test(req.url ?? "");
 
   try {
     const src = await resolveSource(req, dir);
-    // Not `if (src.html)`: an empty string is falsy, so the empty-input check
-    // below sat inside a branch that an empty document never entered. That is
-    // exactly the case it existed to catch.
+
     if (src.html != null) {
       const binary = looksBinary(src.html);
       if (binary) {
@@ -802,13 +535,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           `file extension produces a page of binary noise rather than an error. check the path.`,
         );
       }
-      // An empty document renders as a real blank page, which is indistinguishable
-      // from success by exit code, page count or the summary line. A truncated
-      // pipe or a curl that returned nothing looked like a working document.
-      //
-      // Local input only. A URL that fails to load also resolves to empty html,
-      // but it has its own diagnosis further down, and this message blames a
-      // 0-byte file, which is not what went wrong.
+
       if (!req.url && !src.html.trim()) {
         throw new Error(
           "the input is empty. a 0-byte file renders as one blank page and reports success; " +
@@ -818,13 +545,6 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       findings.push(...precedenceFindings(src.html, req));
     }
 
-    // Copy any local image the document references into the work directory, then
-    // serve the lot over loopback. Same-origin is what makes the canvas
-    // readable, and a file:// image cannot be downsampled at all.
-    //
-    // Skipped when the document references nothing relative: there is then no
-    // origin to solve, and Page.setDocumentContent prints without writing a
-    // file or opening a socket.
     let outsideRoot: RefusedRef[] = [];
     const relative = hasRelativeAssets(src.html ?? "");
     const fastPath = !isRemote && src.html != null && req.preferFastPath !== false &&
@@ -835,10 +555,6 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       server = await serveWorkDir(dir);
     }
 
-    // Chromium ignores paperWidth, paperHeight and landscape together while
-    // preferCSSPageSize is on. Honouring --format against a document that
-    // declares @page size therefore means removing the declaration first, and
-    // keeping the @page margin so the document still controls its own gutters.
     const override = req.format && src.html && declaredPageSize(src.html)
       ? src.html.replace(
           /(@page[^{]*\{)([^}]*)(\})/gi,
@@ -859,10 +575,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
     let timedOut = false;
     const deadline = setTimeout(() => {
       timedOut = true;
-      // Closing the tab aborts an in-flight printToPDF. Otherwise the command
-      // sits until its own timeout and leaves the renderer wedged. It also
-      // closes the socket, so the error it produces has to be replaced with
-      // the reason the deadline actually fired.
+
       void browser.closeTab(tab!).catch(() => {});
     }, timeoutMs);
 
@@ -870,16 +583,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       await tab.send("Page.enable");
       await tab.send("Runtime.enable");
       await tab.send("Network.enable");
-      // Intercept http(s) only, so the document itself still loads while every
-      // remote asset is both blocked and recorded. Loopback is exempt: the
-      // document and its staged images are served from 127.0.0.1, and treating
-      // our own origin as remote blocks the document's images.
-      // Exempt our own work server, and nothing else on loopback. Exempting all
-      // of loopback would let a document probe any local service: verified, a
-      // listener on 127.0.0.1 received the document's GET, query, method and
-      // body, with only the response unreadable. That is a blind SSRF handed to
-      // whoever can supply the HTML, and it is the document's own assets that
-      // need the exemption.
+
       const loopback = server
         ? new RegExp(`^${server.origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/`, "i")
         : /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$)/i;
@@ -897,11 +601,6 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         void proceed.catch(() => {});
       });
 
-      // A 404 or a DNS failure still "loads": Chromium renders its own error
-      // page, which would otherwise be printed and reported as a success.
-      // Only meaningful for a document fetched over the network. The local work
-      // server answers 404 for a missing staged asset, which says nothing about
-      // whether the document itself loaded.
       let mainStatus: number | undefined;
       let netError: string | undefined;
       if (isRemote) {
@@ -909,34 +608,16 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           if (p.type === "Document" && !mainStatus) mainStatus = p.response?.status;
         });
       }
-      // Only a failed *document* load means we have nothing to print. A 404
-      // stylesheet or an unreachable font produces the same event for a
-      // subresource, and treating that as a load failure refused to render
-      // perfectly good documents over one missing asset.
-      // A 404 is not a loading failure. The work server answers 404 for an asset
-      // that is not on disk, chromium treats that as a normal response, and the
-      // document renders with a hole in it. Status has to be watched as well as
-      // the failure event, or a missing image is silent.
+
       tab.on("Network.responseReceived", (p) => {
         const status = p.response?.status ?? 0;
-        // Chromium asks for /favicon.ico on every document whether or not one
-        // is declared, and the work server has none. It cannot affect print
-        // output, so reporting it would bury the real failures in noise.
+
         const isFavicon = /\/favicon\.ico(\?|$)/.test(p.response?.url ?? "");
         if (status >= 400 && p.type && p.type !== "Document" && !isFavicon) {
           failedSubresources.push({ kind: p.type, url: `${status} ${p.response?.url ?? ""}` });
         }
       });
-      // Which URL each in-flight request is for. Needed because `loadingFailed` does not
-      // carry one, and "the document failed to load" has to mean the *main* document.
-      //
-      // A subframe that fails is not fatal. Measured on `<iframe src="input.html">`,
-      // where the staged name is reserved so the document is not replaced: the frame asks
-      // the work server for the document, gets the document, and frames it again until
-      // Chromium aborts the top frame. Every intermediate failure was being reported as
-      // "could not load html: net::ERR_ABORTED" and the render threw -- no PDF, and no
-      // finding either, because findings are assembled after this point. A document that
-      // cannot load its own subframe can still print.
+
       const requestUrls = new Map<string, string>();
       tab.on("Network.requestWillBeSent", (p) => {
         if (p.requestId && p.request?.url) requestUrls.set(p.requestId, p.request.url);
@@ -946,22 +627,18 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         const isMainDocument = p.type === "Document" && url !== undefined && url === srcUrl;
         if (isMainDocument && !netError && !p.blockedReason) netError = p.errorText;
         else if (p.type === "Document" && !p.blockedReason) {
-          // A subframe that will not load is worth saying, and is not worth failing over.
+
           failedSubresources.push({ kind: "Subframe", url: url ?? p.errorText ?? "" });
         }
         else if (!p.blockedReason && !isTeardownAbort(p.errorText)) {
-          // Images are included. A missing image still "renders": Chromium draws
-          // its own broken-image placeholder and the pdf carries that glyph
-          // instead of the picture, which is worse than an obvious failure
-          // because nothing in the output says anything went wrong.
+
           failedSubresources.push({ kind: p.type ?? "unknown", url: p.errorText ?? "" });
         }
       });
 
       const loaded = tab.once("Page.loadEventFired");
       if (fastPath) {
-        // No navigation at all: the document is installed straight into the tab.
-        // Page.enable has already run above, which setDocumentContent requires.
+
         const frameId = (await tab.send("Page.getFrameTree")).frameTree.frame.id;
         await tab.send("Page.setDocumentContent", { frameId, html: override ?? src.html! });
       } else {
@@ -986,8 +663,6 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         throw new Error(`${src.source} returned HTTP ${mainStatus}; refusing to print the error page`);
       }
 
-      // Fonts must resolve before printToPDF, or glyphs fall back part way
-      // through the document and the PDF mixes typefaces.
       await tab.send("Runtime.evaluate", {
         expression: "document.fonts.ready.then(() => true)",
         awaitPromise: true,
@@ -1000,9 +675,6 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         }, timeoutMs);
       }
 
-      // An author the document states, read from the live page rather than the
-      // source string: the source is not always what is loaded, since a template
-      // fills it and setDocumentContent installs it.
       const stated = await tab.send("Runtime.evaluate", {
         expression: `(() => {
           const pick = (names) => {
@@ -1026,14 +698,11 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       try {
         docMeta = JSON.parse((stated as { result?: { value?: string } }).result?.value ?? "{}");
       } catch {
-        // A document with no meta tags, or an unparseable one. Neither is an error.
+
       }
-      // The flag wins over the document: it is the more specific statement of the
-      // same fact, and a caller supplying one on the command line expects it used.
+
       const author = req.author?.trim() || docMeta.author || "";
 
-      // Downsample before measuring, so the findings describe the PDF that was
-      // actually produced rather than the page as authored.
       const capped = req.maxImagePpi ? await capImageResolution(tab, req.maxImagePpi, timeoutMs) : [];
       for (const c of capped) {
         findings.push({
@@ -1045,18 +714,11 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
 
       findings.push(...await audit(tab, timeoutMs));
 
-      // The description of every link, read from the live document: Chromium writes a
-      // link annotation with no /Contents at all, and clause 7.18.5 fails every link
-      // because of it. Read from the live document before printing.
       const linkDescRaw = await tab.send("Runtime.evaluate", {
         expression: LINK_DESC_JS, returnByValue: true, awaitPromise: false,
       }, timeoutMs).then((r: { result?: { value?: unknown } }) => r.result?.value).catch(() => undefined);
       const linkDescs = parseLinkDescs(linkDescRaw);
 
-      // Does the document actually declare its own paper? A local file can be
-      // read before navigating, but a remote URL cannot, and Chromium's default
-      // is US Letter, so an undeclared remote page would print on Letter paper
-      // while every local document defaults to A4 by convention.
       let declaresPaper = src.html ? declaredPageSize(src.html) !== null : false;
       if (!req.format && !declaresPaper && req.url) {
         const probe = await tab.send("Runtime.evaluate", {
@@ -1072,20 +734,12 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         declaresPaper = probe?.result?.value === true;
       }
 
-      // The document's own @page is authoritative, which is what makes
-      // "@page { size: A4 }" produce an exactly 594.96 x 841.92pt page.
-      //
-      // Chromium ignores paperWidth, paperHeight and landscape together whenever
-      // preferCSSPageSize is on, so a --format cannot override a declared @page
-      // by asking nicely. To make the request win, the declaration has to go:
-      // the size is stripped from the document and the paper comes from CDP.
       const docOverridesPaper = declaresPaper;
       const preferCss = docOverridesPaper && !req.format;
       const paper = req.format ? FORMATS[req.format] : preferCss ? undefined : FORMATS.a4;
       const margin = req.margin ? toInches(req.margin) : undefined;
       if (margin !== undefined && margin < 0) {
-        // Checked here because printToPDF's own refusal comes back as "left
-        // margin is negative", which names neither the flag nor the value.
+
         throw new Error(
           `margin ${req.margin} is negative, and printToPDF refuses a negative page margin on all ` +
           `four sides. a negative margin bleeds content off the sheet, which is what @page margin does ` +
@@ -1106,12 +760,9 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         ...(paper && !preferCss
           ? { scale: 1, marginTop: margin ?? 0, marginBottom: margin ?? 0, marginLeft: margin ?? 0, marginRight: margin ?? 0 }
           : {}),
-        // Only pass landscape when the paper is not ours to choose. With
-        // preferCSSPageSize on, CDP ignores it and the document keeps its own
-        // orientation, which is why --landscape silently did nothing before.
+
         landscape: req.landscape && preferCss,
-        // CDP header and footer templates reserve space inside the page box and
-        // silently repaginate, so page numbers belong in CSS @page margin boxes.
+
         displayHeaderFooter: false,
         generateDocumentOutline: true,
         generateTaggedPDF: true,
@@ -1125,33 +776,16 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         throw e;
       }
 
-      // The stream handle arrives alongside an empty data field, so the payload
-      // has to be read back through IO before anything can inspect it.
       const raw = useStream && res.stream
         ? await drainStream(tab, res.stream, { timeoutMs })
         : new Uint8Array(Buffer.from(res.data, "base64"));
-      // A document that declares no <title> should be titled after the file it
-      // came from, not after the loopback port that served it.
-      //
-      // "document" and not "document.html" for the same reason: the slot can be
-      // as short as the eleven characters of "about:blank", the title chromium
-      // writes on the fast path, and a longer name is truncated mid-word.
+
       const pdfTitle = req.path
         ? basename(req.path)
         : req.url
           ? new URL(req.url).hostname
           : "document";
-      // Every repair goes through the gate, which keeps the result only if the
-      // file is still whole and its content streams are byte-identical to what
-      // Chromium emitted. No repair in this layer may move a glyph, so a changed
-      // content payload means one of them has done something it had no business
-      // doing — which is exactly how a TJ merge misplaced 192 of 2,613 glyphs and
-      // every structural check still passed.
-      //
-      // Each is gated separately rather than chained, because a chain that fails
-      // halfway would leave a partially repaired file with no way to say which
-      // step broke it. The input is passed in rather than closed over: `pdf` is
-      // declared further down, so reading it here is a temporal dead zone error.
+
       const gated = (
         input: Uint8Array,
         label: string,
@@ -1175,14 +809,6 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         described = gated(described, "link description", (p) => fixLinkDescs(p, linkDescs!));
       }
 
-      // Chromium tags a <figure> element and the <img> inside it as two nested Figure
-      // structure elements, and describes only the inner one. Clause 7.3 of PDF/UA-1
-      // requires every Figure to carry a description, so the container fails it while
-      // being nothing but a grouping. Re-tagging it Div is the fix that does not
-      // invent a description or repeat one.
-      //
-      // Reported rather than done quietly, because it changes what a screen reader
-      // walks and a caller reading the findings should know it happened.
       const redundant = redundantFigureCount(described);
       if (redundant > 0) {
         const attempt = repairOrKeep(described, fixRedundantFigures);
@@ -1205,10 +831,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           });
         }
       }
-      // Chromium titles a document from the page URL, which is a loopback address with
-      // a random port or "about:blank" depending on how it was loaded. Rewritten here
-      // rather than in stampPdf because the title is the one field whose length cannot
-      // be constrained: the old fixed-width edit cut it to fit whatever Chromium left.
+
       const currentTitle = readDocInfo(described).title ?? "";
       if (currentTitle && isVolatileTitle(currentTitle) && currentTitle !== pdfTitle) {
         described = gated(described, "document title", (p) => setDocTitle(p, pdfTitle));
@@ -1216,16 +839,12 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
 
       described = gated(described, "metadata", (p) => addMetadata(p, {
         author,
-        // A description is the subject in Dublin Core, which is where the subject
-        // is read from. A document that states both gets the explicit subject,
-        // since that is the narrower claim.
+
         subject: req.subject?.trim() || docMeta.subject || "",
         keywords: req.keywords?.trim() || docMeta.keywords || "",
       }));
       const pdf = stampPdf(described, pdfTitle);
-      // An author the document declared but that no flag supplied. Worth saying:
-      // Chromium drops every meta tag on the way into the PDF, so without this
-      // the fact exists in the source and nowhere in the output.
+
       if (docMeta.author && !req.author?.trim()) {
         findings.push({
           code: "metadata-authored",
@@ -1266,8 +885,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         });
       }
       if (outside.length) {
-        // Name the flag and the directory. A count sends the reader to the document to
-        // hunt for the cause, which is the work this finding exists to save them.
+
         const listed = outside
           .map((o) => `  ${o.ref} -> ${o.abs}`)
           .join("\n");
@@ -1286,9 +904,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       if (failedSubresources.length) {
         const kinds = [...new Set(failedSubresources.map((f) => f.kind))];
         const images = failedSubresources.filter((f) => f.kind === "Image").length;
-        // Name the assets. A count without a path sends the reader to the
-        // document to hunt for it, which is the work this finding should have
-        // saved them.
+
         const listed = [...new Set(failedSubresources.map((f) => f.url))]
           .slice(0, 5)
           .map((u) => `  ${u}`)
@@ -1310,11 +926,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           message: `rendering a remote URL blocks its own subresources and usually the document itself. Set allowNetwork to render ${req.url}.`,
         });
       }
-      // Reported rather than corrected. Chromium emits a Type 3 font when it
-      // cannot embed a face, and a Type 3 font's glyphs are drawing procedures
-      // with no font program to read a cap height out of. Every other descriptor
-      // was corrected from its own embedded font, so anything still negative here
-      // has nothing behind it to derive from.
+
       const unresolved = unresolvedFontMetrics(pdf);
       if (unresolved.length) {
         const named = [...new Set(unresolved.map((u) => u.fontName))].slice(0, 3);

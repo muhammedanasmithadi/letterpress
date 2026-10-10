@@ -1,21 +1,3 @@
-/**
- * What Chromium does with an image's alt text.
- *
- * This was a repair once. `src/figurealt.ts` wrote `/Alt` onto Figure structure
- * elements because ten measured forms said Chromium discarded the attribute. All ten
- * used a hand-written base64 string that was not valid base64 — 193 characters, not a
- * multiple of four — so Chromium rejected the image, drew its broken-image
- * placeholder, and painted the alt as untagged glyphs. What was measured was the
- * placeholder. With an image that loads, Chromium tags the image and carries the alt
- * itself, so the repair was a no-op in the ordinary case and has been deleted.
- *
- * Kept as a probe because the finding is worth being able to re-check, and because a
- * retraction that leaves no way to reproduce the evidence is just an assertion. Note
- * the first check: `naturalWidth` is 0 for an image the browser could not decode, and
- * reading that as "Chromium drops the alt" is the mistake this file exists to prevent.
- *
- * Usage: bun tools/probe-image-alt.ts
- */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,7 +5,6 @@ import { Browser } from "../src/browser.ts";
 import { render } from "../src/render.ts";
 import { dictOf, structElementsInOrder, trySplit } from "../src/pdfparts.ts";
 
-/** A real 1x1 PNG. A hand-written base64 string is the trap this file is about. */
 const PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
@@ -37,7 +18,6 @@ const CASES: Record<string, string> = {
   "svg role img": `<p><svg role="img" aria-label="svg label" width="20" height="20"><rect width="20" height="20" fill="#ccc"/></svg></p>`,
 };
 
-/** Is the fixture image actually decodable? The check that was missing for ten runs. */
 async function imageLoads(browser: Browser): Promise<{ w: number; h: number }> {
   const tab = await browser.newTab();
   try {

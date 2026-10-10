@@ -16,7 +16,6 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
-/** Every ToUnicode CMap in a file, decompressed. */
 function cmaps(pdf: Uint8Array): string[] {
   const text = Buffer.from(pdf).toString(LATIN1);
   const objs = new Map<number, string>();
@@ -35,18 +34,15 @@ function cmaps(pdf: Uint8Array): string[] {
     try {
       out.push(inflateSync(Buffer.from(cm, LATIN1).subarray(at.index + at[0].length, end)).toString(LATIN1));
     } catch {
-      // not a flate stream; nothing to check
+
     }
   }
   return out;
 }
 
-/** A PDF with one Type0 font whose ToUnicode holds the given CMap body. */
 function pdfWithCMap(cmap: string): Buffer {
   const body = deflateSync(Buffer.from(cmap, LATIN1));
-  // Object 4 is the CMap stream, and object 5 is the Type0 font that points at it.
-  // Object numbering is load-bearing: the font names the stream by number, so the
-  // two have to agree.
+
   const parts: Array<string | Buffer> = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -84,23 +80,17 @@ function pdfWithCMap(cmap: string): Buffer {
   return Buffer.concat(chunks);
 }
 
-/** A CMap with one bfchar block holding the given `glyph -> dest` pairs. */
 const cmapOf = (pairs: Array<[number, string]>) =>
   `/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CMapType 2 def\n` +
   `1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n` +
   `${pairs.length} beginbfchar\n${pairs.map(([g, d]) => `<${g.toString(16).toUpperCase().padStart(4, "0")}> <${d}>`).join("\n")}\nendbfchar\n` +
   `endcmap\nend\nend\n`;
 
-/** A CMap with one bfrange block, which is where chromium puts its ligatures. */
 const cmapOfRange = (lo: number, hi: number, base: number) =>
   `/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CMapType 2 def\n` +
   `1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n` +
   `1 beginbfrange\n<${lo.toString(16).toUpperCase().padStart(4, "0")}> <${hi.toString(16).toUpperCase().padStart(4, "0")}> ` +
   `<${base.toString(16).toUpperCase().padStart(4, "0")}>\nendbfrange\nendcmap\nend\nend\n`;
-
-/* ------------------------------------------------------------------ *
- * The rule
- * ------------------------------------------------------------------ */
 
 describe("ligatureExpansion", () => {
   test("the seven Latin ligatures expand to their component letters", () => {
@@ -120,9 +110,7 @@ describe("ligatureExpansion", () => {
       const e = ligatureExpansion(cp);
       if (e) hits.push([cp, e]);
     }
-    // Seven Latin (FB00-FB06), five Armenian (FB13-FB17), one Hebrew (FB4F):
-    // thirteen in the Alphabetic Presentation Forms block. Then eight Arabic
-    // lam-alef forms (FEF5-FEFC).
+
     expect(hits).toHaveLength(21);
     const alphabetic = hits.filter(([cp]) => cp >= 0xfb00 && cp <= 0xfb4f);
     expect(alphabetic.map(([cp]) => cp)).toEqual([
@@ -133,11 +121,10 @@ describe("ligatureExpansion", () => {
   });
 
   test("a single letter carrying a diacritic keeps its codepoint", () => {
-    // These are the cases NFKC alone would wrongly rewrite. Each is one letter,
-    // not a ligature, and decomposing them corrupts Arabic and Lao text.
+
     for (const cp of [0x0675, 0x0676, 0x0677, 0x0678, 0x0edc, 0x0edd]) {
       expect(ligatureExpansion(cp)).toBeUndefined();
-      // Each genuinely does expand under NFKC, so the block test is what saves it.
+
       expect(String.fromCodePoint(cp).normalize("NFKC").length).toBeGreaterThan(1);
     }
   });
@@ -156,10 +143,6 @@ describe("ligatureExpansion", () => {
   });
 });
 
-/* ------------------------------------------------------------------ *
- * Rewriting the CMap
- * ------------------------------------------------------------------ */
-
 describe("fixToUnicode", () => {
   test("a ligature in a bfchar destination becomes its expansion", () => {
     const out = fixToUnicode(pdfWithCMap(cmapOf([[0x0654, "FB01"], [0x0003, "0020"]])));
@@ -170,9 +153,7 @@ describe("fixToUnicode", () => {
   });
 
   test("a ligature hidden in a bfrange destination is found", () => {
-    // This is the shape chromium actually emits: three consecutive glyphs whose
-    // destinations increment from U+FB00. A pass reading only bfchar entries sees
-    // nothing at all here.
+
     const out = fixToUnicode(pdfWithCMap(cmapOfRange(0x0675, 0x0677, 0xfb00)));
     expect(unresolvedLigatures(out)).toEqual([]);
     const text = cmaps(out).join("");
@@ -182,8 +163,7 @@ describe("fixToUnicode", () => {
   });
 
   test("every glyph a rewritten range covered is still present", () => {
-    // A range replaced by a bfchar block must not drop the glyphs in it that had
-    // nothing to do with ligatures.
+
     const out = fixToUnicode(pdfWithCMap(cmapOfRange(0x0675, 0x0678, 0xfb00)));
     const text = cmaps(out).join("");
     for (const gid of ["0675", "0676", "0677", "0678"]) expect(text).toContain(`<${gid}>`);
@@ -192,9 +172,7 @@ describe("fixToUnicode", () => {
   test("a block header states the number of entries it actually contains", () => {
     const out = fixToUnicode(pdfWithCMap(cmapOfRange(0x0675, 0x0677, 0xfb00)));
     const text = cmaps(out).join("");
-    // The backreference is \2, the block keyword. As \1 it pointed at the digit group,
-    // so the pattern demanded the literal text "end3" and never matched: the loop body
-    // ran zero times and this test asserted nothing.
+
     const blocks = [...text.matchAll(/(\d+) begin(bfchar|bfrange)\n([\s\S]*?)\nend\2/g)];
     expect(blocks.length, "no cmap blocks were matched at all").toBeGreaterThan(0);
     for (const m of blocks) {
@@ -214,12 +192,7 @@ describe("fixToUnicode", () => {
   });
 
   test("a ligature in a bfchar is fixed even when a bfrange is also rewritten", () => {
-    // The two forms arrive from different fonts in the same document, and
-    // `fixRanges(cmap) ?? fixCMap(cmap)` short-circuits on the first result. So a
-    // CMap carrying one of each had only its range fixed: with a serif face the
-    // shipped file kept U+FB03, "efficient" was not findable, and a second pass
-    // over the same bytes changed it. A repair that is not a function of its
-    // input is the defect, and the fix is that both passes run.
+
     const withBoth = "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n" +
       "1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n" +
       "3 beginbfchar\n<0654> <FB03>\n<0003> <0020>\n<0014> <0031>\nendbfchar\n" +
@@ -286,10 +259,6 @@ describe("fixToUnicode", () => {
   });
 });
 
-/* ------------------------------------------------------------------ *
- * End to end
- * ------------------------------------------------------------------ */
-
 describe("rendered output", () => {
   let browser: Browser;
   let profile: string;
@@ -319,7 +288,7 @@ describe("rendered output", () => {
     for (const word of ["office", "efficient", "different", "flags", "finished"]) {
       expect(text.toLowerCase()).toContain(word);
     }
-    // The presentation forms must not be in the extracted text either.
+
     for (const cp of [0xfb00, 0xfb01, 0xfb02]) {
       expect(text).not.toContain(String.fromCodePoint(cp));
     }
@@ -332,11 +301,7 @@ describe("rendered output", () => {
   });
 
   test("no font family keeps a ligature, and no repair changes its own output", async () => {
-    // The property the short-circuit broke, and the one every repair in the layer
-    // needs: applying a repair to its own output must return those bytes
-    // untouched. With a serif face the two forms of the ligature arrive from
-    // different fonts, so a document can carry one of each — and the pass that
-    // fixed the range meant the bfchar pass never ran.
+
     for (const style of [
       "",
       "font-family:serif",
@@ -364,8 +329,7 @@ describe("rendered output", () => {
   }, 90_000);
 
   test("arabic letters carrying hamza keep their codepoints", async () => {
-    // The case a blind NFKC pass would corrupt: these are single letters, and
-    // decomposing them would insert a combining mark mid-word.
+
     const r = await render(browser, {
       html: `<!doctype html><p dir="rtl" lang="ar">الأ专著 والمكتبة</p>`,
     });
@@ -393,8 +357,7 @@ describe("rendered output", () => {
   });
 
   test("the fix composes with the descriptor fix in one pass", async () => {
-    // Both rewrite the file and rebuild the xref, so running them in sequence is
-    // the case most likely to corrupt the offsets.
+
     const r = await render(browser, {
       html: `<!doctype html><p style="font-family:sans-serif">office efficient</p>`,
     });

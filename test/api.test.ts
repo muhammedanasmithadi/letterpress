@@ -19,7 +19,6 @@ afterAll(async () => {
   await rm(profile, { recursive: true, force: true }).catch(() => {});
 });
 
-/** One page per sheet, each labelled, so page selection can be read back. */
 function paged(pages: number): string {
   return `<!doctype html><head><meta charset="utf-8"><style>
 @page { size: A4; margin: 6mm; @bottom-center { content: "page " counter(page) " of " counter(pages); font: 9pt sans-serif } }
@@ -47,15 +46,13 @@ test("pageRanges emits exactly the named pages", async () => {
 }, 120_000);
 
 test("pageRanges leaves total-page counters correct", async () => {
-  // The document is 3 pages. Rendering 1-2 must still print "of 3", because the
-  // counters come from the document, not from the emitted subset.
+
   const r = await render(browser, { html: paged(3), pageRanges: "1-2" });
   const text = await pdfText(r.pdf);
   expect(text).toContain("page 1 of 3");
   expect(text).toContain("page 2 of 3");
   expect(text).not.toContain("of 2\n");
-  // info.pages counts what was emitted, which is deliberately not the document
-  // length. A viewer must not present it as a total.
+
   expect(r.info.pages).toBe(2);
 }, 60_000);
 
@@ -71,8 +68,7 @@ test("the stream transfer produces bytes identical to base64", async () => {
   const viaBase64 = await render(browser, { html, transfer: "base64" });
   const viaStream = await render(browser, { html, transfer: "stream" });
   expect(viaStream.pdf.byteLength).toBe(viaBase64.pdf.byteLength);
-  // PDFs are not byte-reproducible run to run, so compare length and structure
-  // rather than bytes: the streamed document must be a real, complete PDF.
+
   expect(new TextDecoder("latin1").decode(viaStream.pdf).slice(0, 8)).toBe("%PDF-1.4");
   expect(viaStream.info.pages).toBe(viaBase64.info.pages);
   expect((await pdfInfo(viaStream.pdf)).pages).toBe(6);
@@ -80,8 +76,7 @@ test("the stream transfer produces bytes identical to base64", async () => {
 }, 120_000);
 
 test("the stream transfer handles a document smaller than one chunk", async () => {
-  // IO.read returned eof:false for a 14KB document on a 64KB read, so a short
-  // payload must not be mistaken for the end of the stream.
+
   const r = await render(browser, {
     html: `<!doctype html><style>@page{size:A4}</style><p>tiny</p>`,
     transfer: "stream",
@@ -111,7 +106,7 @@ test("the fast path prints a document with no relative assets", async () => {
 test("the fast path is skipped when a relative asset is present, and it still prints", async () => {
   const dir = await mkdtemp(join(tmpdir(), "letterpress-asset-"));
   try {
-    // A 1x1 PNG, so the image genuinely resolves when served.
+
     const png = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
       "base64",
@@ -122,10 +117,9 @@ test("the fast path is skipped when a relative asset is present, and it still pr
     await writeFile(join(dir, "doc.html"), html);
 
     const r = await render(browser, { path: join(dir, "doc.html") });
-    // The image must have loaded, which only happens via the work server.
+
     expect(await pdfText(r.pdf)).toContain("after the image");
-    // A PNG with an alpha channel is emitted as an image plus a soft mask, so
-    // two XObjects is correct and one would mean the image never loaded.
+
     const images = await pdfImages(r.pdf);
     expect(images.length).toBeGreaterThanOrEqual(1);
     expect(images.some((i) => i.width === 1 && i.height === 1)).toBe(true);

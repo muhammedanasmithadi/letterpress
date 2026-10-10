@@ -1,11 +1,3 @@
-/**
- * Can the pipeline tell the difference between "repaired" and "corrupted"?
- *
- * Three properties a verification gate would check, applied to what the pipeline
- * actually ships and to a deliberately corrupted file. If nothing distinguishes
- * them, then a repair that silently misplaces glyphs is indistinguishable from a
- * good one at runtime.
- */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,18 +32,6 @@ function refsResolve(pdf: Uint8Array): boolean {
   return [...text.matchAll(/(?:^|[^0-9])(\d+) 0 R\b/g)].every((m) => d.has(Number(m[1])));
 }
 
-/**
- * The check is written out rather than imported from `src/verify.ts`, which is the
- * point of this file: a gate that is asked whether it can tell a repair from a
- * corruption cannot ask the gate itself. Importing it would make the answer true by
- * construction.
- *
- * The stream-extent primitive *is* shared, though. "Which bytes are the payload" is a
- * parsing fact rather than a policy, and this file previously disagreed with verify.ts
- * about it at the boundary -- one compared `end` against the start of the payload, the
- * other against the start of the keyword. A disagreement there produces a false verdict
- * in either direction, which would make this tool's answer meaningless.
- */
 function lengthsMatch(pdf: Uint8Array): boolean {
   const text = Buffer.from(pdf).toString("latin1");
   for (const m of text.matchAll(/(?:^|[^0-9])(\d+) 0 obj\b([\s\S]*?)\bendobj/g)) {
@@ -71,7 +51,6 @@ const html = `<!doctype html><meta charset="utf-8"><title>T</title>
 <style>@page{size:A4;margin:18mm}</style><h1>Gate</h1><p>office efficient flags finished</p>`;
 const good = (await render(b, { html, author: "A Person" })).pdf;
 
-// Corrupt in the way a bad repair does: structurally valid, content wrong.
 const t = Buffer.from(good).toString("latin1");
 const i = t.search(/\[<[0-9A-Fa-f]{4}>/);
 const corrupted = i >= 0

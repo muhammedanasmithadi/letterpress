@@ -1,12 +1,6 @@
 import type { Finding } from "./render.ts";
 import type { Tab } from "./browser.ts";
 
-/**
- * Checks that need the live document, so they run in the page and come back as
- * findings rather than as regex guesses over the source HTML.
- *
- * All of it in one evaluate: a round trip costs more than the work.
- */
 const AUDIT = String.raw`
 (() => {
   const out = [];
@@ -235,8 +229,7 @@ export async function audit(tab: Tab, timeoutMs: number): Promise<Finding[]> {
     }, timeoutMs);
     const value = res?.result?.value;
     if (!Array.isArray(value)) {
-      // A syntax error in the audit expression evaluates to nothing, and
-      // swallowing that makes every diagnostic vanish at once. Report it.
+
       return [{
         code: "audit-failed",
         severity: "warn",

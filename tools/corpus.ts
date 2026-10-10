@@ -1,32 +1,3 @@
-/**
- * Render documents nobody designed these repairs against, and check every invariant
- * that is supposed to hold afterwards.
- *
- * The three repairs were written against the documents that exposed them: a resume, a
- * serif heading, a link. Every test since has been a document I chose. That is a sample
- * of one author's imagination, and generalisation was argued from the mechanism rather
- * than measured.
- *
- * This walks a directory of real HTML instead. The checks are the post-conditions of the
- * repair layer, not the repairs themselves:
- *
- *   1. verify() accepts the file. It is the gate, and a repair it rejected would have
- *      been reverted to Chromium's own bytes -- so a clean run also means no repair was
- *      thrown away.
- *   2. No `repair-rejected` finding, which says the same thing more directly.
- *   3. poppler reads it and reports a page count and a page size.
- *   4. ghostscript renders it with no error.
- *   5. pdftotext recovers text, and the text is a decent fraction of the source's.
- *   6. No font descriptor is left carrying a negative cap height.
- *   7. No unresolved ligature codepoints in any ToUnicode map.
- *   8. No image failed to load, unless the source itself references one that is absent.
- *
- * A failure here is not automatically a defect in the renderer. It is a place where a
- * document that was not considered has found something, which is the only way to find
- * those.
- *
- * Usage: bun tools/corpus.ts <dir-or-file> [...]
- */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -38,7 +9,6 @@ import { unresolvedLigatures } from "../src/tounicode.ts";
 import { verify } from "../src/verify.ts";
 import { pdfInfo, pdfText } from "../test/poppler.ts";
 
-/** Every .html file under a path, recursively, skipping obvious non-documents. */
 function collect(target: string, out: string[] = [], depth = 0): string[] {
   if (depth > 4) return out;
   let st;
@@ -54,7 +24,6 @@ function collect(target: string, out: string[] = [], depth = 0): string[] {
   return out;
 }
 
-/** Printable characters the source actually contains, for the text-retention check. */
 function sourceWords(html: string): number {
   const text = html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
@@ -91,13 +60,11 @@ for (const file of files) {
   }
   const ms = (Bun.nanoseconds() - t0) / 1e6;
 
-  // 1 and 2: the gate, and whether any repair was discarded.
   const v = verify(r.pdf);
   if (!v.ok) notes.push(`verify: ${v.failures.join("; ").slice(0, 70)}`);
   const rejected = r.findings.filter((f) => f.code === "repair-rejected");
   if (rejected.length) notes.push(`${rejected.length} repair(s) rejected`);
 
-  // 3: poppler.
   let info;
   try {
     info = await pdfInfo(r.pdf);
@@ -110,7 +77,6 @@ for (const file of files) {
     if (!/[\d.]/.test(info.pageSize)) notes.push(`no page size: "${info.pageSize}"`);
   }
 
-  // 4: ghostscript.
   const tmp = join(profile, "out.pdf");
   await Bun.write(tmp, r.pdf);
   const gs = await Bun.$`gs -o /dev/null -sDEVICE=nullpage ${tmp}`.quiet().nothrow();
@@ -118,7 +84,6 @@ for (const file of files) {
   if (gs.exitCode !== 0) notes.push(`ghostscript exit ${gs.exitCode}`);
   else if (/error/i.test(gsErr)) notes.push(`ghostscript: ${gsErr.split("\n").find((l) => /error/i.test(l))!.slice(0, 60)}`);
 
-  // 5: text retention.
   const words = sourceWords(html);
   let got = 0;
   try {
@@ -127,13 +92,11 @@ for (const file of files) {
   const ratio = words > 0 ? got / words : 1;
   if (ratio < 0.5) notes.push(`text retention ${(ratio * 100).toFixed(0)}% of ${words} source words`);
 
-  // 6 and 7: the post-conditions of the font and ligature repairs.
   const fontGaps = unresolvedFontMetrics(r.pdf);
   if (fontGaps.length) notes.push(`${fontGaps.length} font(s) with an underivable cap height`);
   const ligatures = unresolvedLigatures(r.pdf);
   if (ligatures.length) notes.push(`${ligatures.length} unresolved ligature(s)`);
 
-  // 8: assets the document wanted and did not get.
   const failedAssets = r.findings.filter((f) => f.code === "subresource-failed");
   if (failedAssets.length) notes.push(`${failedAssets.length} subresource(s) failed`);
 

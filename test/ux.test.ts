@@ -12,7 +12,6 @@ let browser: Browser;
 let profile: string;
 let dir: string;
 
-/** Run the CLI in-process and capture what a user would see. */
 async function cli(argv: string[]): Promise<{ code: number; out: string; err: string }> {
   const out: string[] = [];
   const err: string[] = [];
@@ -44,12 +43,9 @@ afterAll(async () => {
 const DOC = `<!doctype html><style>@page{size:A4;margin:9mm}</style><h1>Real</h1>`;
 
 describe("input that is not html", () => {
-  // Chromium will print a JPEG. It decodes the bytes as a broken document and
-  // lays the binary out as text, so a full page of mojibake came back with exit
-  // 0 and a summary line that read like success. A typo'd extension produced a
-  // confidently reported broken document.
+
   test("binary files are refused by signature", async () => {
-    // A 1x1 JPEG and a 1x1 PNG, byte for byte.
+
     const files = {
       "photo.jpg": Buffer.from(
         "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a" +
@@ -83,7 +79,7 @@ describe("input that is not html", () => {
 
   test("random binary is refused", async () => {
     const p = join(dir, "blob.dat");
-    // Deterministic, and guaranteed to contain a null byte.
+
     await writeFile(p, Buffer.from(Array.from({ length: 512 }, (_, i) => i % 7 === 0 ? 0 : 65 + (i % 26))));
     let message = "";
     try { await render(browser, { path: p }); } catch (e) { message = e instanceof Error ? e.message : String(e); }
@@ -101,8 +97,7 @@ describe("input that is not html", () => {
 
 describe("empty input", () => {
   test("an empty document is an error, not a blank page", async () => {
-    // 875 bytes, one page, exit 0: a truncated pipe or a curl that returned
-    // nothing looked exactly like a working render.
+
     for (const html of ["", "   \n\t  "]) {
       let message = "";
       try { await render(browser, { html }); } catch (e) { message = e instanceof Error ? e.message : String(e); }
@@ -117,8 +112,7 @@ describe("empty input", () => {
   });
 
   test("a url that fails to load keeps its own diagnosis", async () => {
-    // A failed fetch resolves to empty html too. The empty check has to stay off
-    // this path, or it blames a 0-byte file for a DNS failure.
+
     let message = "";
     try {
       await render(browser, {
@@ -140,8 +134,7 @@ describe("empty input", () => {
 
 describe("numeric flags are validated", () => {
   test("a non-numeric timeout names the flag, not the protocol", async () => {
-    // "render failed: cdp socket closed" told the user nothing, and Bun printed
-    // its own NaN warning to stderr alongside it.
+
     const p = join(dir, "t.html");
     await writeFile(p, DOC);
     const r = await cli([p, "--timeout", "abc", "-o", join(dir, "o.pdf")]);
@@ -164,7 +157,7 @@ describe("numeric flags are validated", () => {
   test("a non-numeric settle is refused", async () => {
     const p = join(dir, "t.html");
     await writeFile(p, DOC);
-    // --settle abc silently became NaN, which meant no extra wait at all.
+
     const r = await cli([p, "--settle", "abc", "-o", join(dir, "o.pdf")]);
     expect(r.code).toBe(2);
     expect(r.err).toContain("--settle needs a whole number");
@@ -180,8 +173,7 @@ describe("numeric flags are validated", () => {
   test("a negative margin is a value, not a missing argument", async () => {
     const p = join(dir, "t.html");
     await writeFile(p, DOC);
-    // need() rejects anything starting with "-", so a valid CSS margin reported
-    // "option --margin needs a value" for a value that was right there.
+
     const r = await cli([p, "--format", "a4", "--margin", "-5mm", "-o", join(dir, "o.pdf")]);
     expect(r.err).not.toContain("needs a value");
   }, 60_000);
@@ -191,23 +183,20 @@ describe("an error finding is not success", () => {
   test("an ignored --landscape exits non-zero", async () => {
     const p = join(dir, "psize.html");
     await writeFile(p, `<!doctype html><style>@page{size:a5;margin:8mm}</style><p>x</p>`);
-    // The finding said severity "error" while ok was true and the exit code 0,
-    // so a script grepping stderr or reading .ok saw success on a request the
-    // tool had just called a failure.
+
     const r = await cli([p, "--landscape", "--json", "-o", join(dir, "o.pdf")]);
     expect(r.code).toBe(1);
-    // The human line leads with "error:" and carries the message; the code is
-    // only in the json, which is the right split.
+
     expect(r.err).toContain("--landscape had no effect");
     expect(r.err).toContain("the pdf was written, but a finding above is an error");
-    // Every channel agrees: exit 1, ok false, and the finding is right there.
+
     const parsed = JSON.parse(r.out) as {
       ok: boolean; path: string; findings: Array<{ code: string; severity: string }>;
     };
     expect(parsed.ok).toBe(false);
     expect(parsed.path).toContain(".pdf");
     expect(parsed.findings.map((f) => f.code)).toContain("orientation-ignored");
-    // The pdf still exists, because it was written before the check.
+
     expect(await Bun.file(parsed.path).exists()).toBe(true);
   }, 60_000);
 
@@ -227,8 +216,7 @@ describe("an error finding is not success", () => {
 
 describe("a raw token given an array does not print commas", () => {
   test("an array joins with newlines, not commas", () => {
-    // String() on a JSON array joins with commas, and that reached the page as a
-    // visible "," printed above the table header of a customer-facing invoice.
+
     const tpl = "<table><tbody>{{{rows}}}</tbody></table>";
     const out = fillTemplate(tpl, { rows: ["<tr><td>a</td></tr>", "<tr><td>b</td></tr>"] });
     expect(out).not.toContain(",");
@@ -252,10 +240,7 @@ describe("a raw token given an array does not print commas", () => {
 
 describe("the template says what is wrong", () => {
   test("a rejected value is not reported as a missing one", async () => {
-    // "template is missing values for: vat_rate must be a number between 0 and 1"
-    // contradicted itself. The message either names the value as missing or
-    // describes what is wrong with it. A complete file, so the rate is the only
-    // thing wrong with it.
+
     const p = join(dir, "bad.json");
     await writeFile(p, JSON.stringify({
       paper: "A4", accent: "#1f4e79", font: "sans-serif", company: "Northwind",
@@ -283,7 +268,7 @@ describe("invoice data is checked before it is printed", () => {
     { description: "Replacement sensor window", qty: 4, unit: 96.4 },
     { description: "Vacuum gauge", qty: 2, unit: 512 },
   ];
-  // 4*96.4 + 2*512 = 1409.60, plus 20% vat.
+
   const base = {
     paper: "A4", accent: "#1f4e79", font: "sans-serif", company: "Northwind",
     company_lines: ["Manchester"], invoice_no: "2026-014", issued: "2026-10-03",
@@ -309,8 +294,7 @@ describe("invoice data is checked before it is printed", () => {
   }, 60_000);
 
   test("a non-numeric total says so, rather than reporting a mismatch", async () => {
-    // "abc" stripped of non-digits left "", and Number("") is 0, which produced
-    // "abc, but the line items add up to 1,409.60".
+
     const p = await write("nan_sub", { subtotal: "abc" });
     const r = await cli(["-t", "invoice", "-d", p, "-o", join(dir, "o.pdf")]);
     expect(r.code).toBe(1);
@@ -334,8 +318,7 @@ describe("invoice data is checked before it is printed", () => {
   }, 40_000);
 
   test("pre-built rows cannot bypass the totals check", async () => {
-    // The check only ran when items was present, so a hand-written rows array
-    // printed whatever subtotal the file claimed.
+
     const p = await write("rows_only", {
       rows: '<tr><td>x</td></tr>',
       subtotal: "1",
@@ -377,16 +360,13 @@ describe("the rendered invoice is what a customer would expect", () => {
     expect(text).toContain("1,691.52");
     expect(text).toContain("20%");
     expect(text).toContain("Replacement sensor window");
-    // The stray comma that sat above the DESCRIPTION header.
+
     expect(text).not.toMatch(/^\s*,\s*$/m);
   }, 90_000);
 });
 describe("ctrl-c cancels", () => {
   test("SIGINT ends the run at once, with the conventional exit code", async () => {
-    // Measured before the handler existed: SIGINT was swallowed, the render ran
-    // on for another 296 seconds past the deadline the user had given up on,
-    // then reported a timeout that had not happened and exited 1. Someone
-    // watching a five minute render had no way out.
+
     const { readdir, readFile } = await import("node:fs/promises");
     const big = join(dir, "huge.html");
     await writeFile(
@@ -406,25 +386,14 @@ describe("ctrl-c cancels", () => {
       stdout: "pipe", stderr: "pipe",
     });
 
-    // Wait for chromium to come up, so the signal lands mid-render rather than
-    // during startup. A fixed settle is enough and keeps this test honest about
-    // what it is measuring.
     await Bun.sleep(9_000);
-    // Scoped to this run's profile directory. Counting every chromium on the
-    // machine measures this test file's own beforeAll browser, which is about
-    // eleven processes and has nothing to do with the child.
-    //
-    // Matched on the profile directory alone. The binary name used to be part of the
-    // match, which holds only where the executable happens to be called
-    // "chromium-browser": the first CI run counted zero processes and failed with
-    // "chromium should be running before the signal" while chromium was running.
+
     const chromiumForRun = async () =>
       (await Bun.$`ps -eo args`.text())
         .split("\n").filter((l) => l.includes("letterpress-cli-")).length;
     const alive = await chromiumForRun();
     expect(alive, "chromium should be running before the signal").toBeGreaterThan(2);
-    // If the render already finished, this test measures nothing at all. A warm
-    // chromium turned a 6000-line document round in under nine seconds once.
+
     expect(child.killed).toBe(false);
     expect(child.signalCode).toBeNull();
 
@@ -433,16 +402,11 @@ describe("ctrl-c cancels", () => {
     const code = await child.exited;
     const elapsed = Date.now() - sentAt;
 
-    // 128 + SIGINT, and nothing like the 296 seconds it used to take.
     expect(code).toBe(130);
     expect(elapsed, `took ${elapsed}ms after the signal`).toBeLessThan(15_000);
 
-    // No partial output: a half-written pdf is worse than none.
     expect(await Bun.file(join(dir, "cancelled.pdf")).exists()).toBe(false);
 
-    // And no leftover directories. process.exit skips the finally block that
-    // normally removes them, so an interrupted run left a seventeen-file
-    // chromium profile and a work directory behind every time.
     const dirsNow = readSync(tmpdir()).filter(
       (n) => n.startsWith("letterpress-cli-") || n.startsWith("letterpress-server-"),
     );
@@ -451,19 +415,6 @@ describe("ctrl-c cancels", () => {
       "left behind by this run",
     ).toEqual([]);
 
-    // And no orphaned chromium. It was 3 to 7 processes lingering about twenty
-    // seconds, which is enough to trip a CI check for stray processes.
-    //
-    // Counted directly rather than by diffing /tmp, which is shared and would
-    // measure every other process on the machine.
-    // Polled rather than sampled at a fixed instant: measured standalone the
-    // count reaches zero immediately, and under a loaded machine a crashpad
-    // handler can still be a second late. What matters is that nothing is
-    // orphaned, not that the kernel reaped it within 2000ms.
-    // Forty seconds, not fifteen. The note above this block records the measured linger
-    // as about twenty, so a fifteen-second budget could fail on behaviour that had not
-    // changed at all -- which is what CI did, leaving ten processes at the end of a
-    // window shorter than the teardown the test had already measured.
     let remaining = await chromiumForRun();
     for (let waited = 0; waited < 40_000 && remaining > 0; waited += 500) {
       await Bun.sleep(500);
@@ -476,14 +427,10 @@ describe("ctrl-c cancels", () => {
 
 describe("stdin is bounded by the deadline", () => {
   test("a pipe that never closes is given up on", async () => {
-    // Measured: `{ printf "<html>"; sleep 600; } | letterpress - --timeout 5000`
-    // hung past 25 seconds with no output, no file and no diagnostic. --timeout
-    // covered the render and not the read, and no flag would end it.
+
     const fifo = join(dir, "fifo");
     await Bun.$`mkfifo ${fifo}`.quiet();
-    // The write end is held open on a separate descriptor. `printf ... > fifo`
-    // closes it as soon as printf exits, so the reader sees EOF and the test
-    // measures a normal short read instead of a stalled pipe.
+
     const held = Bun.spawn([
       "sh", "-c",
       `exec 3> ${fifo}; printf '<!doctype html><p>partial' >&3; sleep 60`,
@@ -498,8 +445,7 @@ describe("stdin is bounded by the deadline", () => {
       const started = Date.now();
       const spawned = Bun.spawn(
         ["bun", join(import.meta.dir, "..", "src", "cli.ts"), "-", "--timeout", "5000", "-o", join(dir, "s.pdf")],
-        // Opened, not passed as a path: opening for read blocks until a writer
-        // arrives, which is the state this test is trying to hold open.
+
         { stdin: openSync(fifo, "r"), stdout: "pipe", stderr: "pipe" },
       );
       child = spawned;
@@ -507,17 +453,13 @@ describe("stdin is bounded by the deadline", () => {
       await spawned.exited;
       elapsed = Date.now() - started;
     } finally {
-      // In a finally, because an assertion that throws before the kill leaves a
-      // shell holding the write end open for the next sixty seconds. One did,
-      // and it was still alive an hour later.
+
       child?.kill("SIGKILL");
       held.kill("SIGKILL");
     }
 
     expect(err).toContain("stdin was still open after 5s");
-    // The clock is raced against the read. Checking the deadline inside the
-    // loop did nothing, because a pipe that sends nothing never yields another
-    // chunk for the check to run on: the first version still had to be killed.
+
     expect(elapsed, `took ${elapsed}ms`).toBeLessThan(20_000);
     expect(await Bun.file(join(dir, "s.pdf")).exists()).toBe(false);
   }, 90_000);
@@ -550,16 +492,13 @@ describe("stdin is bounded by the deadline", () => {
 
 describe("the pdf title is not a loopback port", () => {
   test("a document with no title is titled after its file", async () => {
-    // Chromium titles a document from the page URL, so a document with no
-    // <title> came out titled "127.0.0.1:40263/input.html" with a different
-    // random port every run. That only got rewritten under SOURCE_DATE_EPOCH,
-    // so it was the normal output of the tool.
+
     const p = join(dir, "notitle.html");
     await writeFile(p, `<!doctype html><style>@page{size:A4;margin:9mm}</style><h1>No title</h1>`);
     for (const out of ["a.pdf", "b.pdf"]) {
       await cli([p, "-o", join(dir, out)]);
       const info = await pdfInfo(new Uint8Array(await Bun.file(join(dir, out)).arrayBuffer()));
-      // pdfinfo trims the fixed-width padding the title patcher leaves behind.
+
       expect(info.title.trim(), out).toBe("notitle.html");
     }
   }, 150_000);
@@ -585,17 +524,14 @@ describe("the pdf title is not a loopback port", () => {
   }, 120_000);
 
   test("a long filename does not corrupt the pdf", async () => {
-    // The patcher wrote value.length bytes into a slot of title.length. A
-    // replacement longer than the original overran into the rest of the file,
-    // which is the corruption the fixed-width design exists to prevent. The old
-    // constant was short enough never to reach it.
+
     const name = `${"n".repeat(120)}.html`;
     const p = join(dir, name);
     await writeFile(p, `<!doctype html><p>long</p>`);
     const out = join(dir, "long.pdf");
     expect((await cli([p, "-o", out])).code).toBe(0);
     const bytes = new Uint8Array(await Bun.file(out).arrayBuffer());
-    // Still a readable pdf, not a file with bytes shifted.
+
     expect((await pdfInfo(bytes)).pages).toBe(1);
     expect(await pdfText(bytes)).toContain("long");
   }, 60_000);

@@ -7,9 +7,7 @@ let s: Running;
 let origin: string;
 
 beforeAll(async () => {
-  // Port 0 asks the OS for a free port, and the returned port is the real one.
-  // Reading it back from the startServer result rather than assuming 8787 keeps
-  // concurrent test files from colliding.
+
   s = await startServer({ port: 0 });
   origin = `http://127.0.0.1:${s.port}`;
 }, 60_000);
@@ -36,7 +34,7 @@ describe("health", () => {
     expect(r.status).toBe(200);
     const body = await r.json() as { ok: boolean; port: number };
     expect(body.ok).toBe(true);
-    // Bun types the bound port as optional even though a bound server always has one.
+
     expect(body.port).toBe(s.server.port as number);
   });
 });
@@ -53,10 +51,7 @@ describe("render", () => {
     expect(body.pages).toBe(1);
     expect(body.tagged).toBe(true);
     expect(body.mediaBoxes[0]).toContain("594.95996");
-    // Nothing may be an error. The specific codes are not asserted: the fixture earns a
-    // font-metrics warning only when the face it resolves to has no font program behind
-    // it, which depends on the machine's font set. Asserting the exact list failed the
-    // first CI run on a correct document.
+
     const findings = body.findings as Array<{ code: string; severity: string }>;
     expect(findings.filter((f) => f.severity === "error")).toEqual([]);
     for (const f of findings) expect(f.severity).not.toBe("error");
@@ -65,7 +60,6 @@ describe("render", () => {
     expect(pdf.byteLength).toBe(body.bytes);
     expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
 
-    // Assert on the decoded document, not on the response being 200.
     expect((await pdfInfo(new Uint8Array(pdf))).pages).toBe(1);
     expect(await pdfText(new Uint8Array(pdf))).toContain("Rendered over HTTP");
   }, 60_000);
@@ -126,8 +120,7 @@ ${Array.from({ length: 6 }, (_, i) => `<div class="s">PAGE_${i + 1}</div>`).join
   }, 60_000);
 
   test("a path is refused by name rather than read from disk", async () => {
-    // This used to be a 500 with the filename in it, and before that it was an
-    // unauthenticated read of any file the user can open.
+
     const r = await post({ path: "/tmp/definitely-not-here.html" });
     expect(r.status).toBe(400);
     const { error } = await r.json() as { error: string };
@@ -142,9 +135,7 @@ ${Array.from({ length: 6 }, (_, i) => `<div class="s">PAGE_${i + 1}</div>`).join
   }, 60_000);
 
   test("a burst waits rather than being refused", async () => {
-    // Measured against the version that refused: eight concurrent requests came
-    // back four ok and four 429. A burst is not eight independent failures, it is
-    // eight documents that all need printing, so the overflow waits for a slot.
+
     const burst = 8;
     const results = await Promise.all(Array.from({ length: burst }, () => post({ html: DOC })));
     const ok = results.filter((r) => r.status === 200);
@@ -153,8 +144,7 @@ ${Array.from({ length: 6 }, (_, i) => `<div class="s">PAGE_${i + 1}</div>`).join
   }, 120_000);
 
   test("a burst beyond the queue is refused, and says so", async () => {
-    // The queue has to be bounded, or a burst becomes an unbounded wait and a
-    // client's deadline expires instead of an error arriving promptly.
+
     const results = await Promise.all(Array.from({ length: 40 }, () => post({ html: DOC })));
     const refused = results.filter((r) => r.status === 429);
     expect(refused.length).toBeGreaterThan(0);
@@ -164,13 +154,13 @@ ${Array.from({ length: 6 }, (_, i) => `<div class="s">PAGE_${i + 1}</div>`).join
       expect(body.ok).toBe(false);
       expect(body.error).toMatch(/retry/i);
     }
-    // Everything accepted still renders rather than being dropped.
+
     const ok = results.filter((r) => r.status === 200);
     expect(ok.length).toBeGreaterThan(0);
   }, 180_000);
 
   test("a queued render still produces a whole pdf", async () => {
-    // The point of the queue is that a waiting request gets a real answer.
+
     const results = await Promise.all(Array.from({ length: 6 }, () => post({ html: DOC })));
     for (const r of results) {
       expect(r.status).toBe(200);
@@ -184,17 +174,14 @@ ${Array.from({ length: 6 }, (_, i) => `<div class="s">PAGE_${i + 1}</div>`).join
 
 describe("loopback boundary", () => {
   test("refuses a request whose Host is not loopback", async () => {
-    // This is the DNS rebinding case: the socket goes to 127.0.0.1 but the
-    // browser-supplied Host names somewhere else.
+
     const r = await post({ html: DOC }, { host: "attacker.example" });
     expect(r.status).toBe(403);
     expect((await r.json() as { error: string }).error).toContain("loopback");
   });
 
   test("refuses a Host whose port is out of range", async () => {
-    // The loopback regex allows any digits, including 99999. new URL then
-    // throws on it, and uncaught that returned Bun's dev error page with the
-    // server's source in it.
+
     for (const host of ["localhost:99999", "127.0.0.1:70000", "localhost:abc"]) {
       const r = await post({ html: DOC }, { host });
       expect([400, 403], `Host: ${host}`).toContain(r.status);
@@ -203,10 +190,7 @@ describe("loopback boundary", () => {
   });
 
   test("accepts every loopback spelling of Host", async () => {
-    // The Host check is for DNS rebinding and nothing more. It does not stop a
-    // page on another origin: Host names the destination, so such a page sends
-    // an acceptable Host and passes. That is handled by requiring a JSON
-    // content type and an exact Origin, which the security tests cover.
+
     for (const host of ["127.0.0.1", `127.0.0.1:${s.port}`, "localhost", "[::1]", "LOCALHOST"]) {
       const r = await post({ html: DOC }, { host });
       expect(r.status, `Host: ${host}`).toBe(200);
@@ -236,10 +220,7 @@ describe("routing", () => {
   });
 });
 describe("page limit", () => {
-  // MAX_PAGES was declared and never checked: a 3,664-page document rendered
-  // through this server without complaint. The limit is now applied where the page
-  // count is finally knowable, which is after the print, and these tests prove it
-  // bites rather than merely being present in the source.
+
   const sections = (n: number) => `<!doctype html><meta charset="utf-8"><title>T</title>
 <style>@page{size:A4;margin:18mm}</style>` +
     Array.from({ length: n }, (_, i) => `<h2>Section ${i + 1}</h2>` +
@@ -254,8 +235,7 @@ describe("page limit", () => {
 
   test("pageRanges is exempt, because its count is what was emitted not the document", async () => {
     const r = await post({ html: sections(120), pageRanges: "1-2" });
-    // The server under test runs at the default limit, so this asserts the shape
-    // rather than the refusal: a ranged request reports the pages it produced.
+
     expect(r.status).toBe(200);
     const body = await r.json() as { ok: boolean; pages: number; partial: boolean };
     expect(body.ok).toBe(true);
@@ -290,9 +270,7 @@ describe("response format", () => {
   }, 90_000);
 
   test("both formats return the same document", async () => {
-    // The binary path must not be a different render. Two renders are not
-    // generally byte-identical -- /CreationDate has one-second resolution -- so
-    // what is compared is what the document says, with the clock pinned.
+
     process.env.SOURCE_DATE_EPOCH = "1700000000";
     try {
       const viaJson = await (await post({ html: DOC2, author: "Someone" })).json() as { pdf: string; pages: number };
@@ -314,16 +292,14 @@ describe("response format", () => {
   }, 120_000);
 
   test("an unknown responseFormat is refused rather than ignored", async () => {
-    // Silently returning JSON to a caller that asked for a PDF would be found by
-    // failing to parse a response that looked successful.
+
     const r = await post({ html: DOC2, responseFormat: "nope" });
     expect(r.status).toBe(400);
     expect((await r.json() as { error: string }).error).toMatch(/responseFormat/);
   }, 60_000);
 
   test("metadata reaches the renderer over http", async () => {
-    // --author worked from the cli and did nothing over http: the three fields
-    // were never forwarded from the server to render().
+
     const r = await post({ html: DOC2, author: "Ahammed Sahad", subject: "CV" });
     const body = await r.json() as { pdf: string };
     const info = Buffer.from(body.pdf, "base64").toString("latin1");

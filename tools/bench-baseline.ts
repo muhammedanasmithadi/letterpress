@@ -1,10 +1,3 @@
-/**
- * Baseline, with every workload's page count measured rather than assumed.
- *
- * The first attempt labelled its workloads 1p/20p/200p and they turned out to be
- * 1, 12 and 113 pages. Page count is therefore measured and printed, and the
- * target is hit by growing the document until printToPDF says it has enough.
- */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,7 +19,6 @@ function doc(sections: number) {
 const letter = `<!doctype html><meta charset="utf-8"><title>Letter</title>
 <h1>Letter</h1><p>Dear Sir,</p><p>office efficient different flags finished</p><p>Yours faithfully,</p>`;
 
-/** Grow the document until printToPDF reports at least `target` pages. */
 async function hit(browser: Browser, target: number) {
   let sections = Math.max(1, Math.round(target / 5));
   for (let i = 0; i < 6; i++) {

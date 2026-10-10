@@ -1,55 +1,13 @@
-/**
- * Re-tag a Figure that is only a container.
- *
- * `<figure><img alt="…"><figcaption>…</figcaption></figure>` produces two Figure
- * structure elements. Chromium tags the image as a Figure carrying the description, and
- * tags the `<figure>` itself as a Figure carrying nothing:
- *
- *   51 Figure   no /Alt                <- the <figure> element
- *     52 Figure  Alt=(a bar chart)     <- the <img>
- *     53 Caption -> NonStruct          <- the <figcaption>
- *
- * Clause 7.3 of PDF/UA-1 requires every Figure to carry a description or replacement
- * text, so the outer element fails it. Re-tagging it `Div` closes that: `Div` is the
- * grouping element ISO 32000-1 defines for exactly this, and the image keeps its own
- * Figure and its own description.
- *
- * Three alternatives were considered and rejected:
- *
- *   Copying the description onto the outer element also passes, and a screen reader
- *   then announces the same sentence twice.
- *
- *   Leaving it fails 7.3 on every document using `<figure>`, which is the ordinary way
- *   to write one.
- *
- *   Inventing a description is not available, and would be wrong if it were.
- *
- * Nothing here touches a content stream. The change is one value of one key in one
- * dictionary, so `verify()`'s byte-identity guarantee on content streams holds unchanged.
- *
- * The conditions are deliberately narrow. An element is re-tagged only when it has no
- * description of its own AND a descendant Figure does. Anything else is left alone,
- * because stripping a Figure role from something that has no described child would
- * remove semantics rather than correct them.
- */
 import { dictCode, join, kidsOf, LATIN1, structElementsInOrder, trySplit, type Obj, type Parts } from "./pdfparts.ts";
 
-/** A structure element's description, if it has one. */
 function hasDescription(text: string): boolean {
   return /\/(?:Alt|ActualText)\s*(\((?:[^()\\]|\\.)*\)|<[0-9A-Fa-f\s]*>)/.test(text);
 }
 
-/** `/S` followed by a role name, as opposed to `/Subtype`, `/StructElem` and the like. */
 function rolePattern(role: string): RegExp {
   return new RegExp(`/S(\\s*)/${role}\\b`);
 }
 
-/**
- * Object numbers of the Figures to re-tag, in tree order.
- *
- * Exported so a test can assert the decision without inspecting the bytes, and so a
- * caller can report what changed.
- */
 export function redundantFigures(parts: Parts): number[] {
   const byNum = new Map<number, string>(parts.objs.map((o) => [o.num, dictCode(o)]));
   const figures = structElementsInOrder(parts, "Figure");
@@ -58,9 +16,6 @@ export function redundantFigures(parts: Parts): number[] {
   const described = new Set<number>();
   for (const n of figures) if (hasDescription(byNum.get(n) ?? "")) described.add(n);
 
-  // A Figure qualifies when it has none of its own and something below it does. Walking
-  // down from each undescribed Figure rather than up from each described one keeps the
-  // test local, and a cycle guard is warranted because the tree is a graph in principle.
   const out: number[] = [];
   const guard = new Set<number>();
   const hasDescribedDescendant = (num: number, depth: number): boolean => {
@@ -84,12 +39,6 @@ export function redundantFigures(parts: Parts): number[] {
   return out;
 }
 
-/**
- * Re-tag redundant Figures as Div.
- *
- * Returns the input unchanged when there is nothing to do, which also makes it
- * idempotent: a second pass finds no `/S /Figure` left to rewrite.
- */
 export function fixRedundantFigures(pdf: Uint8Array): Uint8Array {
   const parts = trySplit(pdf);
   if (!parts) return pdf;
@@ -110,7 +59,6 @@ export function fixRedundantFigures(pdf: Uint8Array): Uint8Array {
   return new Uint8Array(join(parts.head, parts.objs, parts.trailer));
 }
 
-/** How many Figures were re-tagged, so the caller can say so rather than change silently. */
 export function redundantFigureCount(pdf: Uint8Array): number {
   const parts = trySplit(pdf);
   return parts ? redundantFigures(parts).length : 0;

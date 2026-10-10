@@ -17,15 +17,6 @@ function same(a: Uint8Array, b: Uint8Array) {
   return a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
-/**
- * A two-page PDF, so content streams are more than one and their order matters.
- *
- *   1 catalog   2 pages   3 page one   4 page two   5 info   6,7 content
- *
- * Object numbering is load-bearing: each page names its own `/Contents` by number,
- * so the two pages must point at different streams for the comparison below to
- * mean anything.
- */
 function fixture(): Buffer {
   const parts = [
     "<< /Type /Catalog /Pages 2 0 R >>",
@@ -65,41 +56,20 @@ function fixture(): Buffer {
   return Buffer.concat(chunks);
 }
 
-/** A repair that rewrites a content stream, which no repair may do. */
 function movesGlyphs(pdf: Uint8Array): Uint8Array {
   const text = Buffer.from(pdf).toString(LATIN1);
   return Buffer.from(text.replace("(page one)", "(page ONE)"), LATIN1);
 }
 
-/**
- * A repair that leaves a file whose cross-reference table points nowhere.
- *
- * This used to be `text.replace(/xref\n0 /, "xref\n0 ")` followed by `.subarray(0)`,
- * which replaces the matched text with itself and returns the same bytes. The test
- * "a repair that breaks the file is discarded" therefore handed the gate an unchanged
- * file and passed -- so the gate's headline claim, that a repair which breaks the file
- * is thrown away, had no test at all.
- *
- * Two real corruptions, so the check is not satisfied by one of them:
- *
- *   startxref pointing at an offset that is not the table, which is what a reader
- *   follows first, and
- *   an entry whose offset is wrong while startxref is honest, which is what a reader
- *   notices second.
- */
 function breaksXref(pdf: Uint8Array): Uint8Array {
   const text = Buffer.from(pdf).toString(LATIN1);
   const bad = text.replace(/startxref\n(\d+)/, (_m, at: string) => `startxref\n${Number(at) + 7}`);
-  // And an entry offset that no longer names its object.
+
   return Buffer.from(
     bad.replace(/\n(\d{10}) 00000 n \n/, (_m, off: string) => `\n${String(Number(off) + 3).padStart(10, "0")} 00000 n \n`),
     LATIN1,
   );
 }
-
-/* ------------------------------------------------------------------ *
- * The structural checks
- * ------------------------------------------------------------------ */
 
 describe("verify", () => {
   test("a whole file passes", () => {
@@ -146,38 +116,17 @@ describe("verify", () => {
     expect(r.ok).toBe(false);
   });
 
-  /* ---------------------------------------------------------------- *
-   * A reference-shaped string is not a reference
-   *
-   * This check is what rejects a repair, so a false reading of it does not merely miss a
-   * defect -- it throws away the repair. Measured, with the check reading raw bytes:
-   *
-   *   alt text reading "see object 999 0 R"   -> every gated repair rejected, the
-   *                                              document shipped with no author and no
-   *                                              XMP packet at all
-   *   title reading "object 999 0 R"          -> the title is written into the XMP
-   *                                              packet, which is a stream payload, and
-   *                                              the packet then fails the same check
-   *
-   * The second needed more than masking literal strings: a payload is data whatever
-   * shape it is, so the scan now reads each object's dictionary and the trailer and
-   * nothing else.
-   * ---------------------------------------------------------------- */
-
   test("a reference inside a literal string is not a reference", () => {
     const text = Buffer.from(fixture()).toString(LATIN1);
     const withAlt = Buffer.from(text.replace(
       "/Contents 6 0 R", "/Alt (see object 999 0 R) /Contents 6 0 R"), LATIN1);
-    // The edit makes the file longer, so every offset after it is wrong and the
-    // cross-reference checks fire too. What matters here is that the *reference* check
-    // stays silent, and the control below shows that file is otherwise clean.
+
     expect(verify(withAlt).failures.join(" ")).not.toMatch(/does not exist/);
     expect(verify(Buffer.from(fixture())).failures).toEqual([]);
   });
 
   test("a reference inside a stream payload is not a reference", () => {
-    // The XMP packet is XML in a stream, and a document title is written into it. If the
-    // scan reads payloads it finds this and rejects the very repair that wrote it.
+
     const payload = Buffer.from("<x>see object 999 0 R</x>", LATIN1);
     const text = Buffer.from(fixture()).toString(LATIN1);
     const added =
@@ -193,26 +142,19 @@ endobj
   });
 
   test("a genuine dangling reference is still refused with the scan narrowed", () => {
-    // The narrowing must not cost the check its teeth: this is the same failure it
-    // exists to catch, written where the scan does look.
+
     const text = Buffer.from(fixture()).toString(LATIN1);
     const broken = Buffer.from(text.replace("/Contents 6 0 R", "/Contents 99 0 R"), LATIN1);
     expect(verify(broken).ok).toBe(false);
   });
 
   test("/Length is read past a string carrying the word stream", () => {
-    // The length check used to cut the dictionary at the first *substring* "stream",
-    // anywhere. `/Producer (upstream)` before the /Length hid it, and /Length is the
-    // check that would catch a repair that resized a payload.
+
     const text = Buffer.from(fixture()).toString(LATIN1);
     const hidden = Buffer.from(text.replace("/Length 39", "/Producer (upstream) /Length 39"), LATIN1);
-    expect(verify(hidden).ok).toBe(false); // now seen: the offset moved, so /Length lies
+    expect(verify(hidden).ok).toBe(false);
   });
 });
-
-/* ------------------------------------------------------------------ *
- * The check that earns its place
- * ------------------------------------------------------------------ */
 
 describe("content survived", () => {
   test("contentPayloads finds every page's stream", () => {
@@ -223,13 +165,9 @@ describe("content survived", () => {
     const original = fixture();
     const moved = movesGlyphs(original);
 
-    // This is the whole reason the check exists. Rewriting a content stream
-    // leaves the cross-reference table correct, every reference resolving and
-    // every /Length matching, so all three structural checks pass.
     const structureOnly = verify(moved);
     expect(structureOnly.ok).toBe(true);
 
-    // Comparing against what Chromium emitted is what finds it.
     const withOriginal = verify(moved, original);
     expect(withOriginal.ok).toBe(false);
     expect(withOriginal.failures.join(" ")).toMatch(/content stream 1 was rewritten/);
@@ -244,12 +182,10 @@ describe("content survived", () => {
   });
 
   test("a page pointing at a different stream is caught", () => {
-    // Both streams exist, the count is unchanged, and the file is structurally
-    // whole: only comparing payloads finds this.
+
     const original = fixture();
     const text = Buffer.from(original).toString(LATIN1);
-    // Swapped through a placeholder: a pair of sequential replaces undoes itself,
-    // because the second one finds the token the first just created.
+
     const swapped = Buffer.from(
       text
         .replace("/Contents 6 0 R", "/Contents \x00 R")
@@ -259,10 +195,6 @@ describe("content survived", () => {
     expect(verify(swapped, original).ok).toBe(false);
   });
 });
-
-/* ------------------------------------------------------------------ *
- * The gate
- * ------------------------------------------------------------------ */
 
 describe("repairOrKeep", () => {
   test("a repair that is already a no-op is not treated as applied", () => {
@@ -298,9 +230,7 @@ describe("repairOrKeep", () => {
 
   test("a repair that breaks the file is discarded", () => {
     const original = fixture();
-    // The helper must actually corrupt the file. Asserted first, because a test that
-    // hands the gate unchanged bytes passes for the wrong reason: this exact helper
-    // was once the identity function and the test below was green throughout.
+
     const broken = breaksXref(original);
     expect(same(broken, original), "the corruption helper changed nothing").toBe(false);
     expect(verify(broken).ok, "the corrupted file should not verify").toBe(false);
@@ -308,7 +238,7 @@ describe("repairOrKeep", () => {
     const r = repairOrKeep(original, (p) => breaksXref(p));
     expect(r.applied).toBe(false);
     expect(same(r.pdf, original)).toBe(true);
-    // And it was rejected for the right reason rather than by the no-op short-circuit.
+
     expect(r.failures.join(" ")).toMatch(/xref|startxref/i);
   });
 
@@ -319,10 +249,6 @@ describe("repairOrKeep", () => {
     expect(r.failures.length).toBeGreaterThan(0);
   });
 });
-
-/* ------------------------------------------------------------------ *
- * In the pipeline
- * ------------------------------------------------------------------ */
 
 describe("the gate in the render path", () => {
   let browser: Browser;
@@ -344,7 +270,7 @@ describe("the gate in the render path", () => {
 <style>@page{size:A4;margin:18mm}</style><h1>H</h1><p>office efficient flags finished</p>`,
       author: "A Person",
     });
-    // No repair was rejected on a document that needs all three.
+
     expect(r.findings.filter((f) => f.code === "repair-rejected")).toEqual([]);
     expect(readDocInfo(r.pdf).author).toBe("A Person");
     expect(unresolvedLigatures(r.pdf)).toEqual([]);
@@ -388,30 +314,8 @@ describe("the gate in the render path", () => {
     expect(text).not.toMatch(/\/CapHeight -/);
   });
 
-/* ------------------------------------------------------------------ *
- * split() then join() must not move a byte
- *
- * Every repair in the pipeline goes through that pair: read the file into objects, change
- * some dictionaries, write it back. So any drift between them is drift in all of them.
- *
- * The whole file is deliberately *not* byte-identical, and cannot be -- join rebuilds the
- * cross-reference table, which is its job. What must hold is that every object and the
- * trailer come back exactly, and the result still verifies and still reads.
- *
- * Measured over three real renders, 1095 objects: zero changed, one byte of difference in
- * each file, which is the blank line before the table that join replaces.
- *
- * What this does *not* prove: it passes against the old split() as well, because Chromium
- * emits no `endobj` inside a stream's dictionary or payload, so real output never reaches
- * that path. The cases that do are pinned by hand in test/pdfparts.test.ts, and were
- * checked to fail against the old code. This is the guard against the next drift, not
- * evidence about the last fix.
- * ------------------------------------------------------------------ */
-
 describe("split and join round-trip a real render", () => {
-  // Long-form prose with several embedded fonts, a table, and an image. The three things
-  // that make a parser's job non-trivial: dictionaries that nest, streams whose payload
-  // is binary, and an XMP packet whose payload is neither.
+
   const DOC = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Round trip</title>
 <style>@page { size: A4; margin: 15mm }
 body { font-family: 'Noto Serif', serif }
@@ -430,7 +334,7 @@ td { border: 0.5pt solid #999 }</style></head><body>
     const after = split(rejoined);
     expect(after?.objs.length).toBe(parts.objs.length);
     for (const o of after?.objs ?? []) {
-      // Bytes, not length: a truncation and an extension of equal length are both caught.
+
       expect(before.get(o.num)?.equals(o.bytes)).toBe(true);
     }
     expect(parts.trailer.equals(after?.trailer ?? Buffer.alloc(0))).toBe(true);

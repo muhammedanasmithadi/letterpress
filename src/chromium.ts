@@ -1,10 +1,5 @@
-/** Binary name or absolute path for the Chromium that does the printing. */
 export const CHROMIUM = process.env.HTML2PDF_CHROMIUM ?? "chromium";
 
-/**
- * Bun.which resolves the binary and throws a usable message when it is missing,
- * which beats a bare "spawn ENOENT" from deep inside a render.
- */
 export function resolveChromium(): string {
   try {
     return Bun.which(CHROMIUM) ?? CHROMIUM;
@@ -15,7 +10,6 @@ export function resolveChromium(): string {
   }
 }
 
-/** The slice of Bun.spawn's return value this codebase depends on. */
 export type Subprocess = {
   pid: number;
   stderr: ReadableStream<Uint8Array> | null;

@@ -1,4 +1,3 @@
-/** Throughput and latency of the render server under concurrent load. */
 import { startServer } from "/home/anas/Projects/html2pdf/src/server.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,7 +16,7 @@ let port = 0;
 const server = await startServer({ profile, port: 0, onReady: () => {} }).catch(() => null);
 void server;
 await Bun.sleep(200);
-// startServer returns the Browser; the port comes from the Bun server. Use a fixed port.
+
 const s = await startServer({ profile: await mkdtemp(join(tmpdir(), "lp-scale2-")), port: 8791 });
 void s;
 await Bun.sleep(300);
@@ -34,7 +33,6 @@ async function one() {
   return { status: res.status, ms: (Bun.nanoseconds() - t0) / 1e6, ok: body.ok, pages: body.pages };
 }
 
-// warm
 await one();
 for (const n of [1, 2, 4, 8]) {
   const t0 = Bun.nanoseconds();

@@ -35,7 +35,7 @@
  * to act on.
  */
 import { inflateSync } from 'node:zlib';
-import { LATIN1, dictOf, streamRange, trySplit, type Parts } from './pdfparts.ts';
+import { LATIN1, dictOf, maskStrings, streamRange, trySplit, type Parts } from './pdfparts.ts';
 import { cmapStreams, fontsByContent, type FontTable } from './textfont.ts';
 
 /** pdf.js `TRACKING_SPACE_FACTOR` and `SPACE_IN_FLOW_MIN_FACTOR`. */
@@ -275,7 +275,10 @@ export function textFlow(pdf: Uint8Array): TextFlow | null {
 
     const pageFonts = fonts.get(o.num);
     if (!pageFonts) continue;
-    const glyphs = glyphsOf(text, pageFonts);
+    // Mask first: without it a `q`, a `cm` or an `ET` inside a literal string is an
+    // operator, and a stray `q` pushes onto the CTM stack that nothing ever pops, so every
+    // gap after it is divided by the wrong scale.
+    const glyphs = glyphsOf(maskStrings(text), pageFonts);
     if (!glyphs) continue;
     flow.lines++;
 
@@ -298,18 +301,23 @@ export function textFlow(pdf: Uint8Array): TextFlow | null {
         const gap = (g.x - (prev.x + (prev.table.widthOf(prev.cid) / 1000) * prev.size)) / scale;
         const rise = Math.abs(g.y - prev.y) / scale;
 
+        // A move to another line is not a word gap, and Chromium writes the whole line from
+        // its left margin, so at a line break the pen also jumps backwards. Testing the
+        // horizontal move first books every line break as a backwards move and leaves
+        // `lines` counting nothing, which is how a document with four hundred line breaks
+        // reported thirty-nine.
+        if (rise > VERTICAL * size) {
+          flow.lines++;
+          last.reset();
+          prev = null;
+          continue;
+        }
         if (gap < NEGATIVE * size) {
-          // Moving back inside the run ends the item. It is a layout shape rather than a
+          // Moving back within a line ends the item. That is a layout shape rather than a
           // word gap, so it is reported apart from them.
           flow.breaks++;
           flow.backwards++;
           last.reset();
-        } else if (rise > VERTICAL * size) {
-          // A new line: the item ends and the next glyph anchors a new one, which is what
-          // a reader should do and not a fault.
-          last.reset();
-          prev = null;
-          continue;
         } else {
           flow.gaps++;
           const em = gap / size;

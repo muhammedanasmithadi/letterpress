@@ -89,14 +89,16 @@ function fixRanges(cmap: string): string | undefined {
   });
   if (!needsWork) return undefined;
 
-  const blocks = [...cmap.matchAll(/(\d+) beginbfrange\n([\s\S]*?)\nendbfrange/g)];
+  const blocks = [...cmap.matchAll(/(\d+) beginbfrange\r?\n([\s\S]*?)\r?\nendbfrange/g)];
   let out = '';
   let cursor = 0;
   for (const block of blocks) {
     const [whole, , body] = block;
     const keep: string[] = [];
     const added: string[] = [];
-    for (const line of body.split('\n')) {
+    for (const raw of body.split('\n')) {
+      // A row ends at the newline, and on a CRLF map that newline carries a \r with it.
+      const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
       const m = line.match(/^<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]{4})>$/);
       if (!m) {
         keep.push(line);
@@ -199,12 +201,12 @@ export function unresolvedLigatures(pdf: Uint8Array): Array<{ cp: number; expans
     const raw = inflatedStream(o, inflateSync);
     if (!raw) continue;
     const cmap = raw.toString(LATIN1);
-    for (const m of cmap.matchAll(/beginbfchar\n([\s\S]*?)\nendbfchar/g)) {
+    for (const m of cmap.matchAll(/beginbfchar\r?\n([\s\S]*?)\r?\nendbfchar/g)) {
       for (const e of m[1]!.matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g)) {
         for (let i = 0; i + 4 <= e[2]!.length; i += 4) note(parseInt(e[2]!.slice(i, i + 4), 16));
       }
     }
-    for (const m of cmap.matchAll(/beginbfrange\n([\s\S]*?)\nendbfrange/g)) {
+    for (const m of cmap.matchAll(/beginbfrange\r?\n([\s\S]*?)\r?\nendbfrange/g)) {
       for (const e of m[1]!.matchAll(
         /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(?:<([0-9A-Fa-f]+)>|\[([\s\S]*?)\])/g,
       )) {

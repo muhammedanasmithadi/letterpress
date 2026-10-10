@@ -118,12 +118,12 @@ function utf16be(hex: string): string {
 /** CID to character, from both forms of the CMap body. */
 export function parseCMap(cmap: string): Map<number, string> {
   const out = new Map<number, string>();
-  for (const m of cmap.matchAll(/beginbfchar\n([\s\S]*?)\nendbfchar/g)) {
+  for (const m of cmap.matchAll(/beginbfchar\r?\n([\s\S]*?)\r?\nendbfchar/g)) {
     for (const pair of m[1]!.matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g)) {
       out.set(parseInt(pair[1]!, 16), utf16be(pair[2]!));
     }
   }
-  for (const m of cmap.matchAll(/beginbfrange\n([\s\S]*?)\nendbfrange/g)) {
+  for (const m of cmap.matchAll(/beginbfrange\r?\n([\s\S]*?)\r?\nendbfrange/g)) {
     for (const row of m[1]!.split('\n')) {
       const r = /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(?:<([0-9A-Fa-f]+)>|\[([^\]]*)\])/.exec(row);
       if (!r) continue;

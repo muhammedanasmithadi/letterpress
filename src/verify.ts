@@ -84,7 +84,9 @@ export function verify(pdf: Uint8Array, original?: Uint8Array): Verification {
     ? [...parts.objs.map((o) => dictCode(o)), maskStrings(parts.trailer.toString(LATIN1))]
     : [maskStrings(text)];
   for (const region of codeRegions) {
-    for (const m of region.matchAll(/(?:^|[^0-9])(\d+) 0 R\b/g)) {
+    // The generation is part of the reference and can be anything, so a match on `0 R`
+    // alone leaves `9 1 R` unchecked and a dangling reference passes the gate.
+    for (const m of region.matchAll(/(?:^|[^0-9])(\d+) \d+ R\b/g)) {
       if (!defined.has(Number(m[1]))) {
         failures.push(`a reference to object ${m[1]} that does not exist`);
         break;

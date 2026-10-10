@@ -34,6 +34,7 @@ jobs:
       - run: bun run spell
       - run: bun run ratchet
         env: { LIZARD_BIN: lizard }
+      - run: bun run coverage
       - run: bunx commitlint --from HEAD~1 --to HEAD
   suite:
     runs-on: ubuntu-24.04

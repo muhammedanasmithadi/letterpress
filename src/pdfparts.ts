@@ -34,6 +34,28 @@ export function asBuffer(pdf: Uint8Array): Buffer {
  * table, so a caller that has not verified the structure passes its input
  * through rather than rewriting it blind.
  */
+/**
+ * Where the object's top-level dictionary closes, or -1 when it has none.
+ *
+ * Counting rather than searching, because dictionaries nest and an object reference
+ * dictionary sits inside a structure element. The text is masked by the caller, so a
+ * `<<` inside a literal string cannot open one.
+ */
+function dictClose(window: string): number {
+  let depth = 0;
+  for (let i = 0; i + 1 < window.length; i++) {
+    const pair = window.slice(i, i + 2);
+    if (pair === "<<") { depth++; i++; continue; }
+    if (pair === ">>") {
+      depth--;
+      i++;
+      // The index of the second `>`, which is where the search for the keyword starts.
+      if (depth === 0) return i + 1;
+    }
+  }
+  return -1;
+}
+
 export function split(raw: Buffer): Parts {
   const text = raw.toString(LATIN1);
   // Object headers must begin a line. Both this code and Chromium write them there, and
@@ -112,12 +134,25 @@ export function split(raw: Buffer): Parts {
       // verify() returned ok with no failures, there were no findings, and pdftotext
       // exited 0 while printing three syntax errors.
       //
-      // The end-of-line requirement is what tells a name from the keyword. `/A (endobj)`
-      // is handled by the masking, but `/A [endobj]` and `/A endobj` are a bare name and
-      // a name in an array -- legal PDF, and textually indistinguishable from the keyword
-      // except by what follows. Requiring end-of-line is the specification's own answer.
-      const m = /\bendobj[ \t]*[\r\n]/.exec(maskStrings(window));
-      to = m ? from + m.index + 6 : next;
+      // The end-of-line requirement is most of it, but not all of it. A *name* that ends
+      // a line is lexically identical to the keyword -- `<< /A endobj\n>>` -- and the
+      // end-of-line rule cuts there, dropping `\n>>\nendobj`. What distinguishes them is
+      // position: an object's `endobj` comes after its dictionary is closed. So the
+      // keyword is looked for after the matching `>>`, and the end-of-line rule is only the
+      // fallback for an object with no dictionary to close -- an integer object, say.
+      //
+      // Chromium emits no bare `endobj` name and looksBinary refuses PDF input, so this
+      // was unreachable through the product. Fixed because the counting is cheap and the
+      // alternative is a comment saying the rule is sufficient when it is not.
+      const maskedWindow = maskStrings(window);
+      const dictEnd = dictClose(maskedWindow);
+      // `after` is measured from the dictionary's close, so the offset has to be added
+      // back to where that close is -- and to zero when there is no dictionary, or every
+      // object without one is cut a byte early. The round-trip test caught that: one
+      // object of 182 gained a byte per round trip and the file grew a byte every time.
+      const after = dictEnd === -1 ? 0 : dictEnd;
+      const m = /\bendobj[ \t]*[\r\n]/.exec(maskedWindow.slice(after));
+      to = m ? from + after + m.index + 6 : next;
     }
     objs.push({ num: starts[i].num, bytes: raw.subarray(from, Math.min(to, next)) });
   }

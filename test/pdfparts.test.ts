@@ -582,3 +582,46 @@ describe("split when a dictionary spells an object header", () => {
     expect(verify(pdf).ok).toBe(true);
   });
 });
+
+/* ------------------------------------------------------------------ *
+ * A name is lexically identical to the keyword
+ *
+ * `<< /A endobj\n>>` -- a bare name at the end of a line -- is cut at the name by a rule
+ * that only requires `endobj` to be followed by an end-of-line. What actually separates
+ * them is position: an object's own `endobj` comes after its dictionary is closed.
+ *
+ * An audit subagent found this and correctly said the commit claiming otherwise
+ * overstated its fix. Chromium emits no bare `endobj` name and `looksBinary` refuses PDF
+ * input, so it was unreachable through the product; it is fixed here because the counting
+ * is cheap and the alternative is a comment asserting a sufficiency that does not hold.
+ * ------------------------------------------------------------------ */
+
+describe("split when a dictionary ends a line with the keyword's spelling", () => {
+  const cases: Array<[string, string]> = [
+    ["a bare name at end of line", "<< /A endobj\n/Foo 1 >>"],
+    ["a name used as a title", "<< /Title /endobj\n/Foo 1 >>"],
+    ["a name inside an array", "<< /A [endobj]\n/Foo 1 >>"],
+    ["nested dictionaries closing", "<< /A << /B 1 >>\n/C 2 >>"],
+    ["and the plain case still works", "<< /A 1 >>"],
+  ];
+
+  for (const [name, body] of cases) {
+    test(name, () => {
+      const pdf = fileWithObject4(body);
+      const o = trySplit(pdf)!.objs.find((x) => x.num === 4)!;
+      // The whole dictionary, and the object's own endobj, or nothing useful was fixed.
+      expect(o.bytes.toString(LATIN1)).toBe(`4 0 obj\n${body}\nendobj`);
+      expect(trySplit(pdf)!.objs.map((x) => x.num)).toEqual([1, 2, 3, 4, 5]);
+    });
+  }
+
+  test("an object with no dictionary is still delimited", () => {
+    // The round-trip test caught the bug here first: with no dictionary to close, the
+    // search offset was taken from -1 and every such object was cut one byte early.
+    const pdf = fileWithObject4("<< /A 1 >>");
+    const rejoined = trySplit(fileWithObject4("<< /A 1 >>"))!;
+    expect(rejoined.objs.find((x) => x.num === 4)!.bytes.toString(LATIN1))
+      .toBe("4 0 obj\n<< /A 1 >>\nendobj");
+    expect(verify(pdf).ok).toBe(true);
+  });
+});

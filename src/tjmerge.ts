@@ -37,6 +37,7 @@
  * it uses the same width table the merge does, so a table read wrongly agrees with itself.
  * The word boxes poppler reports are the independent check, and they live in the test.
  */
+import { fontsByContent } from "./textfont.ts";
 import { deflateSync, inflateSync } from 'node:zlib';
 import { LATIN1, dictOf, join, streamRange, trySplit, type Obj, type Parts } from './pdfparts.ts';
 
@@ -59,26 +60,6 @@ export type MergeStats = {
   refused: number;
 };
 
-/** The body of the `/Font` dictionary, to its matching `>>`. */
-function fontDictOf(dict: string): string {
-  const at = /\/Font\s*<</.exec(dict);
-  if (!at) return '';
-  let depth = 0;
-  for (let i = at.index + at[0].length - 2; i < dict.length - 1; i++) {
-    const pair = dict.slice(i, i + 2);
-    if (pair === '<<') {
-      depth++;
-      i++;
-      continue;
-    }
-    if (pair === '>>') {
-      depth--;
-      i++;
-      if (depth === 0) return dict.slice(at.index + at[0].length, i - 1);
-    }
-  }
-  return '';
-}
 
 /**
  * Advance widths per page font resource, keyed by resource name.
@@ -87,100 +68,21 @@ function fontDictOf(dict: string): string {
  * widths live on the descendant. Reading the parent finds nothing, which looks like a font
  * with no metrics rather than one indirection away.
  */
-function widthsByResource(parts: Parts): Widths {
-  const out: Widths = new Map();
-  const byNum = new Map(parts.objs.map((o) => [o.num, o]));
-  for (const page of parts.objs) {
-    const dict = dictOf(page);
-    if (!/\/Type\s*\/Page\b/.test(dict)) continue;
-    // A non-greedy search for the next ">>" lands inside whatever dictionary precedes
-    // /Font -- /Resources carries /ExtGState <</G3 3 0 R>> first -- and reads a font
-    // dictionary that is not there.
-    let resDict = fontDictOf(dict);
-    const ref = /\/Resources\s+(\d+)\s+0\s+R/.exec(dict)?.[1];
-    if (ref) resDict = fontDictOf(dictOf(byNum.get(Number(ref))!)) || resDict;
-    for (const m of resDict.matchAll(/\/(\w+)\s+(\d+)\s+0\s+R/g)) {
-      const target = byNum.get(Number(m[2]));
-      if (!target) continue;
-      let font = dictOf(target);
-      const descendant = byNum.get(
-        Number(/\/DescendantFonts\s*\[\s*(\d+)\s+0\s+R/.exec(font)?.[1]),
-      );
-      if (descendant) font = dictOf(descendant);
-      if (!/\/Subtype\s*\/CIDFontType2/.test(font)) continue;
-      const dw = Number(/\/DW\s+(-?[\d.]+)/.exec(font)?.[1] ?? 1000);
-      const widths = new Map(parseW(font));
-      out.set(m[1]!, (cid: number) => widths.get(cid) ?? dw);
-    }
+function widthsByResource(parts: Parts): Map<number, Widths> {
+  const out = new Map<number, Widths>();
+  // One table per content stream, for the same reason the gap report does it that way: a
+  // resource name is page-local, and one table keyed by name lets the last page that binds
+  // `/F1` decide the widths for every other page. The replay proof reads this same table,
+  // so a wrong one agrees with itself and the merge moves glyphs while reporting that it
+  // did not -- which is the one failure this stage cannot detect on its own.
+  for (const [num, fonts] of fontsByContent(parts, () => null)) {
+    const widths: Widths = new Map();
+    for (const [name, table] of fonts) widths.set(name, table.widthOf);
+    out.set(num, widths);
   }
   return out;
 }
 
-/**
- * The `/W` array, read with balanced brackets.
- *
- * The grammar has two forms and taking only the first is a quiet way to move text:
- *
- *     /W [ 0 [600 0 0 260] 15 17 250 38 [614] ]
- *              ^^^^^^^^^   ^^^^^^^^^^^
- *              c [w...]    cFirst cLast w
- *
- * Reading `15 17 250` as three unrelated numbers leaves CIDs 15 to 17 with no width, they
- * fall back to `/DW`, and every adjustment computed from them is short by the difference.
- * The page still rasterises identically and still extracts the right characters, so only
- * the word boxes move -- and the reader that has to live with that is the one copying the
- * text.
- */
-function parseW(dict: string): Map<number, number> {
-  const at = /\/(?:W|w)\s*\[/.exec(dict);
-  if (!at) return new Map();
-  let depth = 0;
-  let end = -1;
-  for (let i = at.index + at[0].length - 1; i < dict.length; i++) {
-    if (dict[i] === '[') depth++;
-    else if (dict[i] === ']') {
-      depth--;
-      if (depth === 0) {
-        end = i;
-        break;
-      }
-    }
-  }
-  if (end === -1) return new Map();
-
-  const out = new Map<number, number>();
-  const toks = dict
-    .slice(at.index + at[0].length, end)
-    .replace(/[[\]]/g, ' $& ')
-    .split(/\s+/)
-    .filter(Boolean);
-
-  let cid: number | null = null;
-  let last: number | null = null;
-  for (let i = 0; i < toks.length; i++) {
-    const tok = toks[i]!;
-    if (tok === '[') {
-      const from = cid;
-      let j = i + 1;
-      for (; j < toks.length && toks[j] !== ']'; j++) {
-        const w = Number(toks[j]);
-        if (from !== null && Number.isFinite(w)) out.set(from + (j - i - 1), w);
-      }
-      cid = last = null;
-      i = j;
-      continue;
-    }
-    const n = Number(tok);
-    if (!Number.isFinite(n)) continue;
-    if (cid === null) cid = n;
-    else if (last === null) last = n;
-    else {
-      for (let c = cid; c <= last; c++) out.set(c, n);
-      cid = last = null;
-    }
-  }
-  return out;
-}
 
 /**
  * The CIDs in a hex string.
@@ -486,8 +388,8 @@ export function mergeTextRuns(pdf: Uint8Array): { pdf: Uint8Array; stats: MergeS
   const stats: MergeStats = { blocks: 0, merged: 0, refused: 0 };
   const parts = trySplit(pdf);
   if (!parts) return { pdf, stats };
-  const widths = widthsByResource(parts);
-  if (!widths.size) return { pdf, stats };
+  const byStream = widthsByResource(parts);
+  if (!byStream.size) return { pdf, stats };
 
   let changed = 0;
   const objs: Obj[] = parts.objs.map((o) => {
@@ -495,6 +397,8 @@ export function mergeTextRuns(pdf: Uint8Array): { pdf: Uint8Array; stats: MergeS
     if (!decoded || !/\bBT\b/.test(decoded.text)) return o;
     const blocks = blocksOf(decoded.text);
     stats.blocks += blocks.length;
+    const widths = byStream.get(o.num);
+    if (!widths) return o;
     const before = streamPlaced(decoded.text, widths);
 
     let rewritten = decoded.text;

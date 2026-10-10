@@ -46,6 +46,13 @@ export function verify(pdf: Uint8Array, original?: Uint8Array): Verification {
   } else if (pointers.length > 1) {
     failures.push(`${pointers.length} startxref lines: readers disagree which one is current`);
   }
+  // A reader that reaches the end without %%EOF throws away the cross-reference table and
+  // rebuilds one by scanning for object headers, which is a reconstruction, not a read. A
+  // truncated write looks exactly like this, so it is a damaged file rather than a
+  // tolerated one.
+  const eofs = text.match(/%%EOF/g);
+  if (!eofs) failures.push('no %%EOF');
+  else if (eofs.length > 1) failures.push(`${eofs.length} %%EOF markers`);
   const sx = Number(text.match(/startxref\s+(\d+)/)?.[1] ?? -1);
   let size = -1;
   if (sx < 0 || text.slice(sx, sx + 4) !== 'xref') {
@@ -96,6 +103,18 @@ export function verify(pdf: Uint8Array, original?: Uint8Array): Verification {
   }
 
   for (const o of parts?.objs ?? []) {
+    // A dictionary that is opened and never closed is the shape a repair that truncates
+    // an object body leaves behind. Nothing downstream notices: the splitter clamps the
+    // object at the next header, the writer recomputes a self-consistent cross-reference
+    // table around what survived, and the result parses. Checking that every dictionary
+    // balances is what makes a truncated body visible to the gate.
+    const code = dictCode(o);
+    const opened = (code.match(/<</g) ?? []).length;
+    const closed = (code.match(/>>/g) ?? []).length;
+    if (opened !== closed) {
+      failures.push(`object ${o.num} opens ${opened} dictionaries and closes ${closed}`);
+      break;
+    }
     const len = streamDict(o).match(/\/Length\s+(\d+)/);
     if (!len) continue;
     const range = streamRange(o.bytes);

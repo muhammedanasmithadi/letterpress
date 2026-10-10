@@ -21,7 +21,7 @@ const PARAGRAPH = `<p>WAVE To. Pack my box with five dozen liquor jugs, and cons
   follow: the measure is short enough that the return sweep is accurate.</p>`;
 
 const page = (align: string): string => `<!doctype html><meta charset="utf-8">
-  <style>@page{size:A4;margin:20mm}
+  <style>@page{size:A4;margin:48mm}
     body{font-family:'Noto Serif',serif;font-size:10.5pt;line-height:1.5}
     p{text-align:${align};margin:0}</style>${PARAGRAPH}`;
 
@@ -40,7 +40,9 @@ describe('word gaps a browser will break a selection on', () => {
     expect(/text-align:justify/.test(message!)).toBe(true);
 
     // The same page set ragged-right has no gap past the band, which is the whole
-    // difference between one highlight and one per word.
+    // difference between one highlight and one per word. The measure is narrow on purpose:
+    // on a wide measure justification barely stretches anything and neither file reports,
+    // which is correct rather than a failed measurement.
     expect(said(ragged)).toBeUndefined();
   }, 120_000);
 

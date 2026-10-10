@@ -25,14 +25,17 @@
  * reader measures it correctly. So the useful thing to do is measure it and say so, rather
  * than let the reader of the PDF find out by dragging a cursor over it.
  *
- * What this reports is exact is the geometry: where each glyph is, how wide the one before
- * it advances, and the gap between. What it does *not* claim to match exactly is the
- * reader's item count. Checked against Firefox on a table it predicted 179 gap breaks where
- * the reader produced 180, and on running prose it over-predicts by about three times. The
- * remaining disagreement is in the reader's item bookkeeping -- when a run is also ended by
- * a font change, a marked-content boundary or an accumulated negative chunk width -- and
- * that has not been modelled. So `breaks` is an upper estimate and `widest` is the number
- * to act on.
+ * Positions are held in text space throughout. A reader measures in device space and
+ * divides by the CTM scale to arrive at the same place; dividing a text-space difference
+ * by that scale as well shrinks every gap by it, and it was doing exactly that: the page
+ * Firefox reports 14 breaks on came out at 48. Removing the second division takes it to 9,
+ * and the gutter count on the table page, which was already right, stays at 179 against the
+ * 180 the reader produces.
+ *
+ * What the reader adds on top of this arithmetic is not modelled: it also ends an item at a
+ * font change, at a marked-content boundary, and when a chunk's accumulated width goes
+ * negative, which inverts the sign of the band tests. So `breaks` is an upper estimate and
+ * `widest` is the number to act on.
  */
 import { inflateSync } from 'node:zlib';
 import { LATIN1, dictOf, maskStrings, streamRange, trySplit, type Parts } from './pdfparts.ts';
@@ -111,13 +114,6 @@ type Placed = {
   table: FontTable;
   cid: number;
   blank: boolean;
-  /**
-   * How much the CTM and line matrix scale, which a reader divides a gap by before
-   * comparing it with the font size -- and compares it against a font size it does *not*
-   * scale. Chromium wraps page content in `q ... 3.125 0 0 3.125 ... cm ... Q`, so on a
-   * real page this is rarely 1 and leaving it out moves the whole measurement.
-   */
-  scale: number;
 };
 
 /**
@@ -141,21 +137,17 @@ function glyphsOf(stream: string, fonts: Map<string, FontTable>): Placed[] | nul
   let lx = 0;
   let ly = 0;
 
-  let ctm = [1, 0, 0, 1, 0, 0] as number[];
-  const stack: number[][] = [];
-
   const tok =
-    /\bBT\b|\bET\b|\bq\b|\bQ\b|([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+cm|\/(\w+)\s+([-\d.eE]+)\s+Tf|([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+Tm|([-\d.eE]+)\s+([-\d.eE]+)\s+Td|<([0-9A-Fa-f]*)>\s*Tj|\[([^\]]*)\]\s*TJ/g;
+    /\bBT\b|\bET\b|\/(\w+)\s+([-\d.eE]+)\s+Tf|([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+Tm|([-\d.eE]+)\s+([-\d.eE]+)\s+Td|<([0-9A-Fa-f]*)>\s*Tj|\[([^\]]*)\]\s*TJ/g;
 
   const show = (hex: string): void => {
     if (hex.length % 4 !== 0 || !table) return;
-    const scale = Math.hypot(ctm[0]!, ctm[1]!);
     for (let i = 0; i < hex.length; i += 4) {
       const cid = parseInt(hex.slice(i, i + 4), 16);
       // A reader folds an invisible glyph into the pen advance instead of placing one, but
       // it still remembers that a space came by, which is what decides whether a following
       // narrow gap ends the item.
-      out.push({ x, y, size, table, cid, blank: invisible(table, cid), scale });
+      out.push({ x, y, size, table, cid, blank: invisible(table, cid) });
       x += (table.widthOf(cid) / 1000) * size;
     }
   };
@@ -167,54 +159,31 @@ function glyphsOf(stream: string, fonts: Map<string, FontTable>): Placed[] | nul
       continue;
     }
     if (m[0] === 'ET') continue;
-    if (m[0] === 'q') {
-      stack.push(ctm.slice());
-      continue;
-    }
-    if (m[0] === 'Q') {
-      ctm = stack.pop() ?? [1, 0, 0, 1, 0, 0];
-      continue;
-    }
     if (m[1] !== undefined) {
-      const a = Number(m[1]),
-        b = Number(m[2]),
-        c = Number(m[3]);
-      const dd = Number(m[4]),
-        e = Number(m[5]),
-        f = Number(m[6]);
-      ctm = [
-        a * ctm[0]! + b * ctm[2]!,
-        a * ctm[1]! + b * ctm[3]!,
-        c * ctm[0]! + dd * ctm[2]!,
-        c * ctm[1]! + dd * ctm[3]!,
-        e * ctm[0]! + f * ctm[2]! + ctm[4]!,
-        e * ctm[1]! + f * ctm[3]! + ctm[5]!,
-      ];
-      continue;
-    }
-    if (m[7] !== undefined) {
-      size = Number(m[8]);
-      table = fonts.get(m[7]!) ?? null;
+      size = Number(m[2]);
+      table = fonts.get(m[1]!) ?? null;
       if (!table) return null;
       continue;
     }
-    if (m[9] !== undefined) {
-      if (Number(m[9]) !== 1 && Number(m[9]) !== -1) return null;
-      if (Number(m[12]) !== 1 && Number(m[12]) !== -1) return null;
-      x = lx = Number(m[13]);
-      y = ly = Number(m[14]);
+    if (m[3] !== undefined) {
+      // `b` and `c` decide where a `Td` puts the pen, so a sheared matrix cannot be read
+      // as a plain move or every gap on the line is invented.
+      if (Number(m[3]) !== 1 || Number(m[4]) !== 0 || Number(m[5]) !== 0) return null;
+      if (Number(m[6]) !== 1 && Number(m[6]) !== -1) return null;
+      x = lx = Number(m[7]);
+      y = ly = Number(m[8]);
       continue;
     }
-    if (m[15] !== undefined) {
-      lx += Number(m[15]);
-      ly += Number(m[16]);
+    if (m[9] !== undefined) {
+      lx += Number(m[9]);
+      ly += Number(m[10]);
       x = lx;
       y = ly;
       continue;
     }
-    if (m[17] !== undefined) show(m[17]!);
-    else if (m[18] !== undefined) {
-      for (const piece of m[18]!.split(/\s+/)) {
+    if (m[11] !== undefined) show(m[11]!);
+    else if (m[12] !== undefined) {
+      for (const piece of m[12]!.split(/\s+/)) {
         if (!piece) continue;
         const hex = /^<([0-9A-Fa-f]*)>$/.exec(piece);
         if (hex) show(hex[1]!);
@@ -302,12 +271,13 @@ export function textFlow(pdf: Uint8Array): TextFlow | null {
       flow.glyphs++;
       if (prev) {
         const size = prev.size;
-        // A reader scales the gap by the CTM before comparing it with a font size it leaves
-        // alone, so on a page Chromium wraps in a 3.125 scale the two are not comparable
-        // without this division.
-        const scale = prev.scale || 1;
-        const gap = (g.x - (prev.x + (prev.table.widthOf(prev.cid) / 1000) * prev.size)) / scale;
-        const rise = Math.abs(g.y - prev.y) / scale;
+        // Text space throughout: `Tm` and `Td` operands are text space and a glyph
+        // advance is width/1000 * size, all of which is the same space the font size is
+        // in. A reader measures in device space and divides by the CTM scale to get here,
+        // so dividing again would shrink every gap by that scale and make each threshold
+        // behave as if the font were scale times larger.
+        const gap = g.x - (prev.x + (prev.table.widthOf(prev.cid) / 1000) * prev.size);
+        const rise = Math.abs(g.y - prev.y);
 
         // A move to another line is not a word gap, and Chromium writes the whole line from
         // its left margin, so at a line break the pen also jumps backwards. Testing the

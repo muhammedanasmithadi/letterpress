@@ -124,6 +124,7 @@ of the summary.
 | `network-blocked` | a remote request was blocked, with its URL |
 | `subresource-failed` | a referenced asset did not load, so the pdf will not look like the source |
 | `asset-outside-root` | the document references a path outside its own directory, which was not read; pass `--root` |
+| `text-runs-merged` | per-glyph text positioning folded into TJ arrays, glyph positions verified unchanged; also reports any block left alone |
 | `asset-overwrites-document` | the document references a file named `input.html` or `override.html`, which was not staged because it would replace the page |
 
 ## Right-to-left text
@@ -175,7 +176,7 @@ escaped and printed.
 ## Development
 
 ```bash
-bun test          # 498 tests across 19 files
+bun test          # 502 tests across 20 files
 bun run bench     # cold start, concurrency and footprint, cross-runtime
 bun run typecheck
 ```

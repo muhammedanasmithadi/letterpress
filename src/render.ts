@@ -6,6 +6,7 @@ import { addMetadata, isVolatileTitle, readDocInfo, setDocTitle } from "./meta.t
 import { fixToUnicode } from "./tounicode.ts";
 import { LINK_DESC_JS, fixLinkDescs, parseLinkDescs } from "./linkdesc.ts";
 import { fixRedundantFigures, redundantFigureCount } from "./figrole.ts";
+import { mergeTextRuns } from "./tjmerge.ts";
 import { repairOrKeep } from "./verify.ts";
 import { audit } from "./lint.ts";
 import { declaredPageMargin, declaredPageSize, inspect, pageRules, type PdfInfo } from "./pdf.ts";
@@ -845,6 +846,26 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         subject: req.subject?.trim() || docMeta.subject || "",
         keywords: req.keywords?.trim() || docMeta.keywords || "",
       }));
+      // The only stage that rewrites a content stream, and the only one outside the gate.
+      // It proves itself by replaying the original and the rewritten stream and comparing
+      // every glyph position; if any glyph moves, or a block is not the simple shape it
+      // handles, the input is returned untouched.
+      const { pdf: merged, stats: runs } = mergeTextRuns(described);
+      if (runs.blocks > 0) {
+        // Reported even when nothing merged. A document whose text Chromium writes in a
+        // shape this does not handle is a fact about the output, and staying quiet about
+        // it is how a transform looks like it works.
+        findings.push({
+          code: "text-runs-merged",
+          severity: "info",
+          message: runs.merged > 0
+            ? `folded ${runs.merged} of ${runs.blocks} text blocks into TJ arrays, ` +
+              `${described.byteLength - merged.byteLength} bytes smaller, glyph positions verified unchanged` +
+              `${runs.refused ? `; ${runs.refused} left alone as not simple enough to rewrite` : ""}.`
+            : `left all ${runs.blocks} text blocks alone: none is the shape this rewrites.`,
+        });
+      }
+      described = merged;
       const pdf = stampPdf(described, pdfTitle);
 
       if (docMeta.author && !req.author?.trim() && !rejected.has("metadata")) {

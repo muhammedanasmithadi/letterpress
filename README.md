@@ -191,7 +191,7 @@ escaped and printed.
 ## Development
 
 ```bash
-bun test          # 506 tests across 21 files
+bun test          # 509 tests across 22 files
 bun run bench     # cold start, concurrency and footprint, cross-runtime
 bun run typecheck
 ```

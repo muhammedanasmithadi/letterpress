@@ -131,7 +131,7 @@ function replay(block: string, widths: Widths): { placed: Placed[]; simple: bool
   };
 
   const tok =
-    /\/(\w+)\s+([-\d.eE]+)\s+Tf|([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+Tm|([-\d.eE]+)\s+([-\d.eE]+)\s+Td|<([0-9A-Fa-f]*)>\s*Tj|\[([^\]]*)\]\s*TJ|\b(TZ|TC|TW|TL|TQ|T\*|Ts)\b/g;
+    /\/(\w+)\s+([-\d.eE]+)\s+Tf|([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+Tm|([-\d.eE]+)\s+([-\d.eE]+)\s+Td|<([0-9A-Fa-f]*)>\s*Tj|\[([^\]]*)\]\s*TJ|\b(Tz|Tc|Tw|TL|T\*|Ts)\b/g;
 
   for (let m = tok.exec(block); m; m = tok.exec(block)) {
     if (m[1] !== undefined) {

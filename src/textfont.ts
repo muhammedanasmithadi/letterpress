@@ -118,12 +118,12 @@ function utf16be(hex: string): string {
 /** CID to character, from both forms of the CMap body. */
 export function parseCMap(cmap: string): Map<number, string> {
   const out = new Map<number, string>();
-  for (const m of cmap.matchAll(/beginbfchar\r?\n([\s\S]*?)\r?\nendbfchar/g)) {
+  for (const m of cmap.matchAll(/beginbfchar\s*([\s\S]*?)\s*endbfchar/g)) {
     for (const pair of m[1]!.matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g)) {
       out.set(parseInt(pair[1]!, 16), utf16be(pair[2]!));
     }
   }
-  for (const m of cmap.matchAll(/beginbfrange\r?\n([\s\S]*?)\r?\nendbfrange/g)) {
+  for (const m of cmap.matchAll(/beginbfrange\s*([\s\S]*?)\s*endbfrange/g)) {
     for (const row of m[1]!.split('\n')) {
       const r = /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(?:<([0-9A-Fa-f]+)>|\[([^\]]*)\])/.exec(row);
       if (!r) continue;
@@ -133,9 +133,20 @@ export function parseCMap(cmap: string): Map<number, string> {
         const list = [...r[4]!.matchAll(/<([0-9A-Fa-f]+)>/g)].map((h) => utf16be(h[1]!));
         for (let i = 0; lo + i <= hi && i < list.length; i++) out.set(lo + i, list[i]!);
       } else if (r[3]) {
-        const base = parseInt(r[3]!, 16);
-        for (let c = lo; c <= hi && c - lo < 65536; c++)
-          out.set(c, String.fromCharCode(base + (c - lo)));
+        // The destination is text, and this engine writes two-character ligature
+        // expansions, so stepping one code point gives one character where there were two
+        // and every character after it lands in the wrong plane.
+        const base = r[3]!;
+        for (let c = lo; c <= hi && c - lo < 65536; c++) {
+          let hex = '';
+          for (let k = 0; k < base.length; k += 4) {
+            hex += (((parseInt(base.slice(k, k + 4), 16) + (c - lo)) & 0xffff)
+              .toString(16)
+              .toUpperCase()
+              .padStart(4, '0'));
+          }
+          out.set(c, utf16be(hex));
+        }
       }
     }
   }

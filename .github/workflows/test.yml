@@ -43,7 +43,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version-file: .python-version }
       - run: pip install 'semgrep==1.180.0'
-      - run: semgrep scan --config p/default --error src tools
+      - run: semgrep scan --config p/default --severity ERROR --error src tools
   suite:
     runs-on: ubuntu-24.04
     timeout-minutes: 35

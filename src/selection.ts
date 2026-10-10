@@ -72,8 +72,8 @@ export type TextFlow = {
    * happened to read correctly. This is the quantity that changes.
    */
   widestAll: number;
-  /** The narrowest gap treated as a space, in em. */
-  thinest: number;
+  /** The narrowest gap of any kind, in em, including the negative ones a kern produces. */
+  narrowest: number;
   /** Text streams this walked. */
   streams: number;
   /**
@@ -103,7 +103,7 @@ const EMPTY: TextFlow = {
   lines: 0,
   widest: 0,
   widestAll: 0,
-  thinest: Number.POSITIVE_INFINITY,
+  narrowest: Number.POSITIVE_INFINITY,
   streams: 0,
   read: 0,
 };
@@ -148,8 +148,11 @@ function glyphsOf(stream: string, fonts: Map<string, FontTable>): Placed[] | nul
   let lx = 0;
   let ly = 0;
 
+  // `Tz`, `Tc`, `Tw`, `TL` and `T*` all move the pen, and a pre-existing `TJ` arrives
+  // already shaped. Skipping any of them would measure gaps the reader does not see, so
+  // meeting one refuses the stream rather than passing over it.
   const tok =
-    /\bBT\b|\bET\b|\/(\w+)\s+([-\d.eE]+)\s+Tf|([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+Tm|([-\d.eE]+)\s+([-\d.eE]+)\s+Td|<([0-9A-Fa-f]*)>\s*Tj|\[([^\]]*)\]\s*TJ/g;
+    /\b(BT|ET|Tz|Tc|Tw|TL|T\*|TJ)\b|\/(\w+)\s+([-\d.eE]+)\s+Tf|([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+Tm|([-\d.eE]+)\s+([-\d.eE]+)\s+Td|<([0-9A-Fa-f]*)>\s*Tj|\[([^\]]*)\]\s*TJ/g;
 
   const show = (hex: string): void => {
     if (hex.length % 4 !== 0 || !table) return;
@@ -166,41 +169,48 @@ function glyphsOf(stream: string, fonts: Map<string, FontTable>): Placed[] | nul
   for (let m = tok.exec(stream); m; m = tok.exec(stream)) {
     if (m[0] === 'BT') {
       x = lx = y = ly = 0;
+      size = 0;
       table = null;
       continue;
     }
     if (m[0] === 'ET') continue;
-    if (m[1] !== undefined) {
-      size = Number(m[2]);
-      table = fonts.get(m[1]!) ?? null;
+    // Tz, Tc, Tw, TL, T* and a pre-existing TJ all move the pen in ways this does not read.
+    if (m[1] !== undefined) return null;
+    if (m[2] !== undefined) {
+      size = Number(m[3]);
+      table = fonts.get(m[2]!) ?? null;
       if (!table) return null;
       continue;
     }
-    if (m[3] !== undefined) {
+    if (m[4] !== undefined) {
       // `b` and `c` decide where a `Td` puts the pen, so a sheared matrix cannot be read
       // as a plain move or every gap on the line is invented.
-      if (Number(m[3]) !== 1 || Number(m[4]) !== 0 || Number(m[5]) !== 0) return null;
-      if (Number(m[6]) !== 1 && Number(m[6]) !== -1) return null;
-      x = lx = Number(m[7]);
-      y = ly = Number(m[8]);
+      if (Number(m[4]) !== 1 || Number(m[5]) !== 0 || Number(m[6]) !== 0) return null;
+      if (Number(m[7]) !== 1 && Number(m[7]) !== -1) return null;
+      x = lx = Number(m[8]);
+      y = ly = Number(m[9]);
       continue;
     }
-    if (m[9] !== undefined) {
-      lx += Number(m[9]);
-      ly += Number(m[10]);
+    if (m[10] !== undefined) {
+      lx += Number(m[10]);
+      ly += Number(m[11]);
       x = lx;
       y = ly;
       continue;
     }
-    if (m[11] !== undefined) show(m[11]!);
-    else if (m[12] !== undefined) {
-      for (const piece of m[12]!.split(/\s+/)) {
+    if (m[12] !== undefined) show(m[12]!);
+    else if (m[13] !== undefined) {
+      for (const piece of m[13]!.split(/\s+/)) {
         if (!piece) continue;
         const hex = /^<([0-9A-Fa-f]*)>$/.exec(piece);
         if (hex) show(hex[1]!);
         else {
           const n = Number(piece);
-          if (Number.isFinite(n)) x -= (n / 1000) * size;
+          // A literal string inside TJ shows glyphs through an encoding this does not
+          // read. Passing over it leaves the pen where it was and shifts every gap after
+          // it, which is the one failure a report about gaps cannot have.
+          if (!Number.isFinite(n)) return null;
+          x -= (n / 1000) * size;
         }
       }
     } else return null;
@@ -316,7 +326,7 @@ export function textFlow(pdf: Uint8Array): TextFlow | null {
           // space would send whoever reads the finding to the wrong CSS property.
           if (em > flow.widest && em <= WORD_GAP_MAX) flow.widest = em;
           if (em > flow.widestAll) flow.widestAll = em;
-          if (em < flow.thinest) flow.thinest = em;
+          if (em < flow.narrowest) flow.narrowest = em;
           if (em <= NOT_A_SPACE) last.reset();
           if (em <= MIN_FLOW) {
             // Narrower than a tracking space. On its own that is absorbed into the run;
@@ -338,7 +348,7 @@ export function textFlow(pdf: Uint8Array): TextFlow | null {
       prev = g;
     }
   }
-  if (flow.thinest === Number.POSITIVE_INFINITY) flow.thinest = 0;
+  if (flow.narrowest === Number.POSITIVE_INFINITY) flow.narrowest = 0;
   // A document where not one stream could be read has no measurement to report, and a row
   // of zeroes read as "this document has no wide gaps" is the opposite of the truth.
   if (flow.read === 0) return null;

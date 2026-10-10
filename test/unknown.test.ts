@@ -9,7 +9,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { join, type Obj } from "../src/pdfparts.ts";
-import { parseW } from "../src/textfont.ts";
+import { parseCMap, parseW } from "../src/textfont.ts";
 import { textFlow } from "../src/selection.ts";
 
 const dict = (num: number, body: string) => ({
@@ -144,6 +144,72 @@ describe("a document only partly read", () => {
     expect(flow).not.toBeNull();
     expect(flow!.streams).toBe(2);
     expect(flow!.read).toBe(1);
+  });
+});
+
+describe("a stream using something the report cannot read", () => {
+  const withContent = (content: string, fonts = CID): Uint8Array =>
+    join(
+      Buffer.from("%PDF-1.4\n", "latin1"),
+      [
+        dict(1, "<< /Type /Catalog /Pages 2 0 R >>"),
+        dict(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+        dict(
+          3,
+          `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F1 4 0 R >> >> /Contents 10 0 R >>`,
+        ),
+        dict(4, fonts),
+        {
+          num: 10,
+          bytes: Buffer.from(
+            `10 0 obj\n<< /Length ${content.length} >>\nstream\n${content}endstream\nendobj\n`,
+            "latin1",
+          ),
+        },
+      ],
+      Buffer.from("trailer\n<< /Root 1 0 R /Size 11 >>\n", "latin1"),
+    );
+
+  const plain = "BT\n/F1 10 Tf\n1 0 0 1 10 700 Tm\n<0001> Tj\n50 0 Td <0001> Tj\nET\n";
+
+  test("is read", () => {
+    expect(textFlow(withContent(plain))).not.toBeNull();
+  });
+
+  test("char spacing refuses the stream rather than measuring around it", () => {
+    // `2 Tc` moves every glyph by two units. Passing over it measures gaps the reader does
+    // not see, and the number looks like a measurement.
+    expect(textFlow(withContent(plain.replace("1 0 0 1 10 700 Tm", "2 Tc\n1 0 0 1 10 700 Tm")))).toBeNull();
+  });
+
+  test("word spacing refuses the stream", () => {
+    expect(textFlow(withContent(plain.replace("1 0 0 1 10 700 Tm", "5 Tw\n1 0 0 1 10 700 Tm")))).toBeNull();
+  });
+
+  test("a literal string inside TJ refuses the stream", () => {
+    // `(abc) 12 (def) TJ` shows glyphs through an encoding this does not read. Treating the
+    // strings as nothing leaves the pen where it was and shifts every gap after them.
+    const body = "BT\n/F1 10 Tf\n1 0 0 1 10 700 Tm\n(abc) 12 (def) TJ\nET\n";
+    expect(textFlow(withContent(body))).toBeNull();
+  });
+});
+
+describe("a CMap written on one line", () => {
+  test("is read like a multi-line one", () => {
+    // Legal, and the newline-anchored pattern found nothing, so every CID read as unmapped
+    // and every space looked like a drawn glyph.
+    const one = parseCMap("begincmap 2 beginbfchar <0001> <0020> <0002> <0041> endbfchar endcmap");
+    const many = parseCMap("begincmap\n2 beginbfchar\n<0001> <0020>\n<0002> <0041>\nendbfchar\nendcmap");
+    expect([...one.entries()]).toEqual([...many.entries()]);
+    expect(one.get(1)).toBe(" ");
+  });
+
+  test("a two-character destination steps by character, not by code point", () => {
+    // This engine writes `<00660069>` for an "fi" ligature. Stepping one code point turns
+    // that into a single character in the wrong plane and every later one with it.
+    const m = parseCMap("begincmap\n1 beginbfrange\n<0010> <0011> <00660069>\nendbfrange\nendcmap");
+    expect(m.get(0x10)).toBe("fi");
+    expect(m.get(0x11)).toBe("gj");
   });
 });
 

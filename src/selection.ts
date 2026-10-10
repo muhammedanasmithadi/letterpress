@@ -62,6 +62,13 @@ export type TextFlow = {
   lines: number;
   /** The widest word-sized gap, in em, which is the one worth acting on. */
   widest: number;
+  /**
+   * The widest gap of any size, jumps included. Every other counter here is a category or
+   * a minimum, and a width read from the wrong page moves none of them: both the right and
+   * the wrong advance can land in the same bucket, and the smallest gap is whichever page
+   * happened to read correctly. This is the quantity that changes.
+   */
+  widestAll: number;
   /** The narrowest gap treated as a space, in em. */
   thinest: number;
 };
@@ -83,6 +90,7 @@ const EMPTY: TextFlow = {
   backwards: 0,
   lines: 0,
   widest: 0,
+  widestAll: 0,
   thinest: Number.POSITIVE_INFINITY,
 };
 
@@ -325,6 +333,7 @@ export function textFlow(pdf: Uint8Array): TextFlow | null {
           // table is the jump to the next column, and naming that as a stretched word
           // space would send whoever reads the finding to the wrong CSS property.
           if (em > flow.widest && em <= WORD_GAP_MAX) flow.widest = em;
+          if (em > flow.widestAll) flow.widestAll = em;
           if (em < flow.thinest) flow.thinest = em;
           if (em <= NOT_A_SPACE) last.reset();
           if (em <= MIN_FLOW) {

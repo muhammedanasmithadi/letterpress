@@ -94,5 +94,12 @@ describe("font resources are page-local", () => {
     expect(shared!.breaks).toBe(distinct!.breaks);
     expect(shared!.jump).toBe(distinct!.jump);
     expect(shared!.tooWide).toBe(distinct!.tooWide);
+    // The counts above are too coarse to see the defect: both advance widths put the gap
+    // in the same bucket, so a table read from the wrong page still counts the same number
+    // of breaks. The size of the gap does not survive that. Page one advances 100 units per
+    // glyph, so its gap is 90 minus 1, which is 8.9 em; read with page two's 1000 units it
+    // is 90 minus 10, which is 8.0 em.
+    expect(shared!.widestAll).toBeCloseTo(distinct!.widestAll, 6);
+    expect(distinct!.widestAll).toBeCloseTo(8.9, 6);
   });
 });

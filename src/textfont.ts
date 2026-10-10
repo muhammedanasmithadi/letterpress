@@ -140,10 +140,10 @@ export function parseCMap(cmap: string): Map<number, string> {
         for (let c = lo; c <= hi && c - lo < 65536; c++) {
           let hex = '';
           for (let k = 0; k < base.length; k += 4) {
-            hex += (((parseInt(base.slice(k, k + 4), 16) + (c - lo)) & 0xffff)
+            hex += ((parseInt(base.slice(k, k + 4), 16) + (c - lo)) & 0xffff)
               .toString(16)
               .toUpperCase()
-              .padStart(4, '0'));
+              .padStart(4, '0');
           }
           out.set(c, utf16be(hex));
         }
@@ -241,7 +241,8 @@ function descendant(byNum: Map<number, Obj>, parent: string): Obj | undefined {
       } else if (pair === '>>') {
         depth--;
         i++;
-        if (depth === 0) return { num: -1, bytes: Buffer.from(parent.slice(start, i - 1), 'latin1') };
+        if (depth === 0)
+          return { num: -1, bytes: Buffer.from(parent.slice(start, i - 1), 'latin1') };
       }
     }
   }

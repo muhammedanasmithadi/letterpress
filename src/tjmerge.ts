@@ -37,7 +37,7 @@
  * it uses the same width table the merge does, so a table read wrongly agrees with itself.
  * The word boxes poppler reports are the independent check, and they live in the test.
  */
-import { fontsByContent } from "./textfont.ts";
+import { fontsByContent } from './textfont.ts';
 import { deflateSync, inflateSync } from 'node:zlib';
 import { LATIN1, dictOf, join, streamRange, trySplit, type Obj, type Parts } from './pdfparts.ts';
 
@@ -60,7 +60,6 @@ export type MergeStats = {
   refused: number;
 };
 
-
 /**
  * Advance widths per page font resource, keyed by resource name.
  *
@@ -82,7 +81,6 @@ function widthsByResource(parts: Parts): Map<number, Widths> {
   }
   return out;
 }
-
 
 /**
  * The CIDs in a hex string.

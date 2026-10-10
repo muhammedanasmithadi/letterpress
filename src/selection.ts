@@ -74,6 +74,15 @@ export type TextFlow = {
   widestAll: number;
   /** The narrowest gap treated as a space, in em. */
   thinest: number;
+  /** Text streams this walked. */
+  streams: number;
+  /**
+   * How many of those it could read. A stream is dropped when it will not inflate, when
+   * its page binds no font under the name the stream uses, or when it sets a text matrix
+   * this cannot interpret -- and a dropped stream takes its glyphs out of every count above
+   * while the counts still read as a document total.
+   */
+  read: number;
 };
 
 /**
@@ -95,6 +104,8 @@ const EMPTY: TextFlow = {
   widest: 0,
   widestAll: 0,
   thinest: Number.POSITIVE_INFINITY,
+  streams: 0,
+  read: 0,
 };
 
 /** Whether a CID stands for a character no reader draws. */
@@ -249,14 +260,15 @@ export function textFlow(pdf: Uint8Array): TextFlow | null {
       continue;
     }
     if (!/\bBT\b/.test(text)) continue;
+    flow.streams++;
 
     const pageFonts = fonts.get(o.num);
     if (!pageFonts) continue;
-    // Mask first: without it a `q`, a `cm` or an `ET` inside a literal string is an
-    // operator, and a stray `q` pushes onto the CTM stack that nothing ever pops, so every
-    // gap after it is divided by the wrong scale.
+    // Mask first: without it an `ET`, a `Td` or a `TJ` inside a literal string is an
+    // operator, and the block it ends is text this has not measured.
     const glyphs = glyphsOf(maskStrings(text), pageFonts);
     if (!glyphs) continue;
+    flow.read++;
     flow.lines++;
 
     // One item spans the stream, as it does in a reader: a new text object does not end it.
@@ -327,6 +339,9 @@ export function textFlow(pdf: Uint8Array): TextFlow | null {
     }
   }
   if (flow.thinest === Number.POSITIVE_INFINITY) flow.thinest = 0;
+  // A document where not one stream could be read has no measurement to report, and a row
+  // of zeroes read as "this document has no wide gaps" is the opposite of the truth.
+  if (flow.read === 0) return null;
   return flow;
 }
 

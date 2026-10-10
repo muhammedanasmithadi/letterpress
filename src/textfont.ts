@@ -168,7 +168,11 @@ export function fontsByContent(
     // dictionary that is not there.
     let resDict = fontDictOf(dict);
     const ref = /\/Resources\s+(\d+)\s+0\s+R/.exec(dict)?.[1];
-    if (ref) resDict = fontDictOf(dictOf(byNum.get(Number(ref))!)) || resDict;
+    // A page can name a resource object the file does not contain, and a `!` here is a
+    // compile-time assertion with no runtime effect: the measurement stage would throw and
+    // take the render with it.
+    const resObj = ref ? byNum.get(Number(ref)) : undefined;
+    if (resObj) resDict = fontDictOf(dictOf(resObj)) || resDict;
 
     const fonts = new Map<string, FontTable>();
     for (const m of resDict.matchAll(/\/(\w+)\s+(\d+)\s+0\s+R/g)) {
@@ -178,10 +182,15 @@ export function fontsByContent(
       // `/DescendantFonts` names an array, and the array may itself be an indirect
       // reference. Reading only the inline form leaves the parent, which carries no /W,
       // and every glyph then falls back to the default width.
-      const inline = /\/DescendantFonts\s*\[\s*(\d+)\s+0\s+R/.exec(parent)?.[1];
-      const kid = inline !== undefined ? Number(inline) : descendantOf(byNum, parent);
-      const kidObj = kid === undefined ? undefined : byNum.get(kid);
-      const font = kidObj ? dictOf(kidObj) : parent;
+      // The array may hold an indirect reference, an indirect array, or the dictionary
+      // itself, and a font that resolves to none of those has no readable widths. Saying so
+      // is the point: falling back to `/DW` and then to 1000 makes every glyph one em wide,
+      // which invents a gap where there is a letter fit.
+      // A font may be the descendant itself, with no `/Type0` parent above it.
+      const kidObj = /\/Subtype\s*\/CIDFontType2/.test(parent) ? target : descendant(byNum, parent);
+      if (!kidObj) continue;
+      const font = dictOf(kidObj);
+      if (!/\/Subtype\s*\/CIDFontType2/.test(font)) continue;
       const dw = Number(/\/DW\s+(-?[\d.]+)/.exec(font)?.[1] ?? 1000);
       const widths = parseW(font);
       const cmap = parseCMap(
@@ -193,25 +202,65 @@ export function fontsByContent(
       });
     }
 
-    for (const n of contentsOf(dict)) out.set(n, fonts);
+    for (const n of contentsOf(dict, byNum)) out.set(n, fonts);
   }
   return out;
 }
 
-/** The first descendant named by a `/DescendantFonts` that is itself a reference. */
-function descendantOf(byNum: Map<number, Obj>, parent: string): number | undefined {
-  const arrNum = Number(/\/DescendantFonts\s+(\d+)\s+0\s+R/.exec(parent)?.[1] ?? NaN);
-  if (!Number.isFinite(arrNum)) return undefined;
-  const arr = byNum.get(arrNum);
-  const first = arr ? /(\d+)\s+0\s+R/.exec(dictOf(arr))?.[1] : undefined;
-  return first === undefined ? undefined : Number(first);
+/** The descendant a `/Type0` font names, in any of the three forms it may take. */
+function descendant(byNum: Map<number, Obj>, parent: string): Obj | undefined {
+  const inline = /\/DescendantFonts\s*\[\s*(\d+)\s+0\s+R/.exec(parent)?.[1];
+  if (inline !== undefined) return byNum.get(Number(inline));
+  const arrNum = /\/DescendantFonts\s+(\d+)\s+0\s+R/.exec(parent)?.[1];
+  if (arrNum !== undefined) {
+    const arr = byNum.get(Number(arrNum));
+    const first = arr ? /(\d+)\s+0\s+R/.exec(dictOf(arr))?.[1] : undefined;
+    if (first !== undefined) return byNum.get(Number(first));
+  }
+  // `/DescendantFonts [<< /Subtype /CIDFontType2 ... >>]`: the dictionary in the array.
+  const direct = /\/DescendantFonts\s*\[\s*(<<)/.exec(parent);
+  if (direct) {
+    const start = direct.index + direct[0].length - 2;
+    let depth = 0;
+    for (let i = start; i < parent.length - 1; i++) {
+      const pair = parent.slice(i, i + 2);
+      if (pair === '<<') {
+        depth++;
+        i++;
+      } else if (pair === '>>') {
+        depth--;
+        i++;
+        if (depth === 0) return { num: -1, bytes: Buffer.from(parent.slice(start, i - 1), 'latin1') };
+      }
+    }
+  }
+  return undefined;
 }
 
-/** Every content stream object a page draws through. */
-function contentsOf(dict: string): number[] {
-  const out = [...dict.matchAll(/\/Contents\s+(\d+)\s+0\s+R/g)].map((m) => Number(m[1]));
+/**
+ * Every content stream object a page draws through.
+ *
+ * `/Contents 12 0 R` is allowed to name an *array* object, `12 0 obj [13 0 R 14 0 R]`,
+ * and treating 12 as a stream finds nothing for the page that uses it.
+ */
+function contentsOf(dict: string, byNum: Map<number, Obj>): number[] {
+  const out: number[] = [];
+  const seen = new Set<number>();
+  const push = (n: number): void => {
+    if (seen.has(n)) return;
+    seen.add(n);
+    out.push(n);
+  };
+  for (const m of dict.matchAll(/\/Contents\s+(\d+)\s+0\s+R/g)) {
+    const n = Number(m[1]);
+    const target = byNum.get(n);
+    // `dictOf` keeps the `N 0 obj` header, so the bracket is not the first thing in it.
+    const isArray = target && /^\s*(?:\d+ \d+ obj\s*)?\[/.test(dictOf(target));
+    if (isArray) for (const r of dictOf(target!).matchAll(/(\d+)\s+0\s+R/g)) push(Number(r[1]));
+    else push(n);
+  }
   const array = /\/Contents\s*\[([^\]]*)\]/.exec(dict)?.[1] ?? '';
-  for (const n of array.matchAll(/(\d+)\s+0\s+R/g)) out.push(Number(n[1]));
+  for (const n of array.matchAll(/(\d+)\s+0\s+R/g)) push(Number(n[1]));
   return out;
 }
 

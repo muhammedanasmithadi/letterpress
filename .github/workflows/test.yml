@@ -35,6 +35,15 @@ jobs:
       - run: bun run ratchet
         env: { LIZARD_BIN: lizard }
       - run: bunx commitlint --from HEAD~1 --to HEAD
+  semgrep:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version-file: .python-version }
+      - run: pip install 'semgrep==1.180.0'
+      - run: semgrep scan --config p/default --error src tools
   suite:
     runs-on: ubuntu-24.04
     timeout-minutes: 35

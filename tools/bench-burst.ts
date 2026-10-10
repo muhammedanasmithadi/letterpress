@@ -21,6 +21,7 @@ const payload = JSON.stringify({ html: doc(3) });
 async function one() {
   const t0 = Bun.nanoseconds();
   const res = await fetch('http://127.0.0.1:8793/render', {
+    // nosemgrep: loopback-only bench harness, no external traffic
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: 'http://127.0.0.1:8793' },
     body: payload,

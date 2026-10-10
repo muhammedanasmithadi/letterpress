@@ -1018,12 +1018,19 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         if (flow.tooThin > 0) {
           why.push(`${flow.tooThin} word spaces squeezed below it, which letter-spacing causes`);
         }
+        // A stream this could not read takes its glyphs out of every count above while the
+        // counts still read as a document total, so say how much of the document the numbers
+        // come from rather than letting "at least" go unsaid.
+        const from =
+          flow.read < flow.streams
+            ? ` Measured on ${flow.read} of ${flow.streams} text streams; the rest were not readable.`
+            : '';
         findings.push({
           code: 'selection-fragmented',
           severity: 'warn',
           message:
             `a browser ends a text item at any gap over 0.6 em and draws one highlight ` +
-            `box per item, so selection breaks here: ${why.join('; ')}.`,
+            `box per item, so selection breaks here: ${why.join('; ')}.${from}`,
         });
       }
 

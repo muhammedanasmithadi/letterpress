@@ -886,7 +886,8 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
             severity: 'warn',
             message:
               `the ${label} fix was discarded because it did not leave a valid pdf: ` +
-              `${attempt.failures.join('; ')}. the file is chromium's own output, unmodified.`,
+              `${attempt.failures.join('; ')}. the file is what the previous stage ` +
+              `produced, with this fix not applied.`,
           });
         }
         return attempt.pdf;
@@ -902,12 +903,17 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       if (redundant > 0) {
         const attempt = repairOrKeep(described, fixRedundantFigures);
         if (attempt.failures.length) {
+          // Recorded like every other rejection. Nothing reads `figure-role` out of the set
+          // today, but the set reads as a complete record of what was discarded and a reader
+          // would otherwise assume a rejected fix was an accepted one.
+          rejected.add('figure-role');
           findings.push({
             code: 'repair-rejected',
             severity: 'warn',
             message:
               `the figure-role fix was discarded because it did not leave a valid pdf: ` +
-              `${attempt.failures.join('; ')}. the file is chromium's own output, unmodified.`,
+              `${attempt.failures.join('; ')}. the file is what the previous stage ` +
+              `produced, with this fix not applied.`,
           });
         } else {
           described = attempt.pdf;

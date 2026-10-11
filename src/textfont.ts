@@ -242,7 +242,7 @@ function simpleTable(
   const descriptorNum = Number(/\/FontDescriptor\s+(\d+)\s+0\s+R/.exec(parent)?.[1] ?? NaN);
   const descriptor = Number.isFinite(descriptorNum) ? byNum.get(descriptorNum) : undefined;
   const missing = Number(
-    descriptor ? /\/MissingWidth\s+(-?[\d.]+)/.exec(dictOf(descriptor))?.[1] ?? 0 : 0,
+    descriptor ? (/\/MissingWidth\s+(-?[\d.]+)/.exec(dictOf(descriptor))?.[1] ?? 0) : 0,
   );
   const widths = parseWidths(parent);
 
@@ -251,7 +251,9 @@ function simpleTable(
   const matrix = Number(/\/FontMatrix\s*\[\s*(-?[\d.eE]+)/.exec(parent)?.[1] ?? 1);
   const scale = subtype === 'Type3' && matrix !== 0 ? matrix * 1000 : 1;
 
-  const cmap = parseCMap(cmapOf(Number(/\/ToUnicode\s+(\d+)\s+0\s+R/.exec(parent)?.[1] ?? -1)) ?? '');
+  const cmap = parseCMap(
+    cmapOf(Number(/\/ToUnicode\s+(\d+)\s+0\s+R/.exec(parent)?.[1] ?? -1)) ?? '',
+  );
   void target;
   return {
     codeBytes: 1,
@@ -300,7 +302,9 @@ function cidTable(
 
   const dw = Number(/\/DW\s+(-?[\d.]+)/.exec(font)?.[1] ?? 1000);
   const widths = parseW(font);
-  const cmap = parseCMap(cmapOf(Number(/\/ToUnicode\s+(\d+)\s+0\s+R/.exec(parent)?.[1] ?? -1)) ?? '');
+  const cmap = parseCMap(
+    cmapOf(Number(/\/ToUnicode\s+(\d+)\s+0\s+R/.exec(parent)?.[1] ?? -1)) ?? '',
+  );
   return {
     codeBytes: 2,
     widthOf: (cid: number) => widths.get(cid) ?? dw,

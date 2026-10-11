@@ -8,7 +8,7 @@ import { LINK_DESC_JS, fixLinkDescs, parseLinkDescs } from './linkdesc.ts';
 import { fixRedundantFigures, redundantFigureCount } from './figrole.ts';
 import { textFlow } from './selection.ts';
 import { mergeTextRuns } from './tjmerge.ts';
-import { repairOrKeep } from './verify.ts';
+import { repairOrKeep, verify } from './verify.ts';
 import { audit } from './lint.ts';
 import {
   declaredPageMargin,
@@ -988,7 +988,46 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         });
       }
       described = merged;
-      const pdf = stampPdf(described, pdfTitle);
+
+      // The title stamp is a byte-for-byte rewrite of the file rather than a change to one
+      // object, and it was the only stage after the merge that nothing checked. It goes
+      // through the same gate as the others so that a bad rewrite is a finding rather than
+      // the caller's problem.
+      const stamped = repairOrKeep(described, (bytes) => stampPdf(bytes, pdfTitle));
+      if (stamped.failures.length) {
+        rejected.add('stamp');
+        findings.push({
+          code: 'repair-rejected',
+          severity: 'warn',
+          message:
+            `the title stamp was discarded because it did not leave a valid pdf: ` +
+            `${stamped.failures.join('; ')}. the file is what the previous stage produced, ` +
+            `with this fix not applied.`,
+        });
+      }
+      const pdf = stamped.pdf;
+
+      // The last structural check, on the bytes actually being returned.
+      //
+      // `mergeTextRuns` rewrites content streams on purpose, so it cannot be checked against
+      // Chromium's own output -- that comparison is what `repairOrKeep` does for every other
+      // repair and is exactly wrong here. This runs standalone instead: header, xref,
+      // trailer, object count and `%%EOF`, with no notion of what the file should contain.
+      //
+      // It cannot tell a correct page from a wrong one. It catches the file that will not
+      // open, which is the failure a caller cannot detect and the one no finding so far
+      // would have described.
+      const finalCheck = verify(pdf);
+      if (!finalCheck.ok) {
+        findings.push({
+          code: 'output-unverified',
+          severity: 'error',
+          message:
+            `the file returned by this call did not pass the structural check: ` +
+            `${finalCheck.failures.join('; ')}. every repair upstream is gated on the same ` +
+            `check, so this is the merge or the stamp producing something it should not have.`,
+        });
+      }
 
       // What a browser will do with a selection over this page. Firefox's PDF.js keeps a
       // word gap inside the current text item only between 0.102 and 0.6 em; outside that

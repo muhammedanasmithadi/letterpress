@@ -251,7 +251,7 @@ escaped and printed.
 ## Development
 
 ```bash
-bun test          # 559 tests across 30 files
+bun test          # 563 tests across 31 files
 bun tools/selection.ts ~/Documents/a.html   # what a browser will do when a selection is dragged across it
 bun run bench     # cold start, concurrency and footprint, cross-runtime
 bun run typecheck

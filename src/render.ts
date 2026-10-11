@@ -9,6 +9,7 @@ import { fixRedundantFigures, redundantFigureCount } from './figrole.ts';
 import { textFlow } from './selection.ts';
 import { mergeTextRuns } from './tjmerge.ts';
 import { applyImageReplacements, measureImages } from './pageside.ts';
+import { stripRedundantSpans } from './spans.ts';
 import { repairOrKeep, verify } from './verify.ts';
 import { audit } from './lint.ts';
 import {
@@ -91,6 +92,9 @@ export type RenderRequest = {
    * that found nothing.
    */
   pageProbe?: () => unknown;
+
+  /** Keep Chromium's /ActualText ligature spans, at the cost of selection in a reader. */
+  keepLigatureSpans?: boolean;
 
   pageRanges?: string;
 
@@ -1057,6 +1061,40 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         });
       }
       described = merged;
+
+      // Chromium wraps every ligature in a marked-content span carrying /ActualText, and a
+      // reader ends a text item at each one whatever the spacing says. One page of ordinary
+      // prose comes back as sixty text items where the geometry alone gives seven, and
+      // dragging a selection across it draws sixty highlight boxes, seventeen of them for
+      // gaps that are not there.
+      //
+      // Only spans whose text the font's /ToUnicode already resolves to are removed, so
+      // nothing is lost: where the two disagree the span is the only copy and it stays.
+      // Measured in Firefox: sixty items and seventeen whitespace items as rendered, seven
+      // and none after. Extracted text is unchanged character for character.
+      if (req.keepLigatureSpans !== true) {
+        const stripped = stripRedundantSpans(described);
+        const spans = stripped.stats;
+        if (spans.seen > 0) {
+          findings.push({
+            code: 'ligature-spans',
+            severity: 'info',
+            message:
+              spans.stripped > 0
+                ? `removed ${spans.stripped} of ${spans.seen} marked-content spans carrying ` +
+                  `/ActualText, each of which ended a text item at every ligature. each was ` +
+                  `removed only because /ToUnicode already gave the same characters, so the ` +
+                  `extracted text is unchanged.${spans.kept ? ` ${spans.kept} kept, being the only place their text appears.` : ''}`
+                : `left all ${spans.seen} /ActualText spans in place: /ToUnicode does not ` +
+                  `resolve them to the same text, so each is the only copy of it.`,
+          });
+        }
+        if (spans.stripped > 0) {
+          const attempt = repairOrKeep(described, () => stripped.pdf);
+          if (attempt.failures.length) rejected.add('ligature-spans');
+          else described = attempt.pdf;
+        }
+      }
 
       // The title stamp is a byte-for-byte rewrite of the file rather than a change to one
       // object, and it was the only stage after the merge that nothing checked. It goes

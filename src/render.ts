@@ -74,6 +74,24 @@ export type RenderRequest = {
 
   beforePrint?: string;
 
+  /**
+   * A function run in the page once the document is laid out and settled, whose return
+   * value comes back on the result as `probe`.
+   *
+   * A function rather than an expression string because a string is invisible to `tsc`, and
+   * an identifier that resolves on this side and not in the page is a runtime failure in the
+   * browser rather than a build failure here.
+   *
+   * Pass the function itself, not a wrapper around it. The body is shipped as source and
+   * runs in the page, where the enclosing module does not exist: `pageProbe: wideGaps` works
+   * and `pageProbe: () => wideGaps()` is a `ReferenceError`, because `wideGaps` is a name in
+   * the caller's file and not in the browser. That was the second version of this, and the
+   * first. A probe that throws is reported as `page-probe-failed` rather than returning
+   * nothing, because nothing downstream can otherwise tell a probe that failed from a probe
+   * that found nothing.
+   */
+  pageProbe?: () => unknown;
+
   pageRanges?: string;
 
   transfer?: 'base64' | 'stream';
@@ -88,6 +106,8 @@ export type RenderResult = {
   blocked: string[];
   ms: number;
   source: string;
+  /** Whatever `pageProbe` returned, or undefined when none was given. */
+  probe?: unknown;
 };
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -767,6 +787,47 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         );
       }
 
+      // A probe runs after the document is settled and before the print, so it sees the same
+      // layout the PDF is made from. Its result is handed back untouched; if it throws in
+      // the page, that is the caller's problem to notice rather than a silent empty result,
+      // which is what an expression string returned last time.
+      let probe: unknown;
+      if (req.pageProbe) {
+        const answer = await tab
+          .send(
+            'Runtime.evaluate',
+            { expression: `(${req.pageProbe})()`, returnByValue: true },
+            timeoutMs,
+          )
+          .catch((e: unknown) => ({ exceptionDetails: { text: String(e) } }));
+        // Reported, never swallowed. The first version of this returned `undefined` on
+        // failure, which is indistinguishable from a probe that legitimately found nothing:
+        // `wideGaps` called a helper that does not exist in the page, the probe came back
+        // empty, and the tool printed its old sentence as though the document had no wide
+        // gaps. It had eight. A probe that cannot run must say so.
+        const thrown = (
+          answer as {
+            exceptionDetails?: { text?: string; exception?: { description?: string } };
+          } | null
+        )?.exceptionDetails;
+        if (thrown) {
+          // `exceptionDetails.text` is the word "Uncaught". The message that says which
+          // name was missing is on the exception itself, and that is the whole diagnosis.
+          const detail =
+            thrown.exception?.description?.split('\n')[0]?.trim() || thrown.text || 'no detail';
+          findings.push({
+            code: 'page-probe-failed',
+            severity: 'warn',
+            message:
+              `the page probe threw in the browser: ${detail}. it returned nothing, so ` +
+              `nothing downstream can tell a probe that failed from a probe that found ` +
+              `nothing. this is a gap in the tool, not a finding about the document.`,
+          });
+        } else {
+          probe = (answer as { result?: { value?: unknown } } | null)?.result?.value;
+        }
+      }
+
       const stated = await tab.send(
         'Runtime.evaluate',
         {
@@ -1207,6 +1268,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         blocked,
         ms: Math.round((Bun.nanoseconds() - started) / 1e6),
         source: src.source,
+        probe,
       };
     } finally {
       clearTimeout(deadline);

@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { Browser } from '../src/browser.ts';
+import { wideGaps, type WideGap } from '../src/pageside.ts';
 import { render } from '../src/render.ts';
 import { textFlow } from '../src/selection.ts';
 
@@ -49,6 +50,7 @@ for (const file of files) {
       author: 'selection',
       allowNetwork: false,
       timeoutMs: 120_000,
+      pageProbe: wideGaps,
     });
   } catch (e) {
     console.log(`  ${file}\n       render threw ${(e as Error).message.slice(0, 80)}`);
@@ -85,6 +87,29 @@ for (const file of files) {
           `blocks or inline items (a flex or grid gap, a margin, a table cell), not a ` +
           `stretched word space.`,
       );
+      // The measurement says how many and how wide. This says which elements, because
+      // "eight gaps, widest 0.67 em" is not something anyone can act on and the answer is a
+      // `gap` three rules away from the element that carries it.
+      const gaps = (r.probe as WideGap[] | undefined) ?? [];
+      if (gaps.length) {
+        for (const g of gaps) {
+          const how =
+            g.cause === 'flex-gap'
+              ? 'a flex gap'
+              : g.cause === 'grid-gap'
+                ? 'a grid gap'
+                : g.cause === 'table-cell'
+                  ? 'table cell padding'
+                  : g.cause === 'space-between'
+                    ? 'justify-content: space-between'
+                    : g.cause === 'margin'
+                      ? 'a margin'
+                      : 'a gap of untraced origin';
+          advice.push(
+            `${g.em.toFixed(2)} em at ${g.selector}\n           ${how}, next to "${g.text}"`,
+          );
+        }
+      }
     }
   }
   if (flow.tooThin > 0) {

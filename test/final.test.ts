@@ -13,24 +13,21 @@
  * it. The decision is now a pure function of the bytes and needs no registry to reach.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { Browser } from '../src/browser.ts';
+import type { Browser } from '../src/browser.ts';
 import { finalCheckFinding, render } from '../src/render.ts';
 import { verify } from '../src/verify.ts';
+import { closeTestBrowser, launchTestBrowser, type TestBrowser } from './browser.ts';
 
+let t: TestBrowser;
 let browser: Browser;
-let profile: string;
 
 beforeAll(async () => {
-  profile = await mkdtemp(join(tmpdir(), 'letterpress-final-'));
-  browser = await Browser.launch({ profile });
+  t = await launchTestBrowser('final');
+  browser = t.browser;
 }, 60_000);
 
 afterAll(async () => {
-  await browser.close();
-  await rm(profile, { recursive: true, force: true }).catch(() => {});
+  await closeTestBrowser(t);
 }, 20_000);
 
 test('what a render returns passes the structural check', async () => {

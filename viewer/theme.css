@@ -25,9 +25,12 @@
   --shadow: 0 1px 2px color-mix(in oklab, black 12%, transparent);
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
-html, body {
+html,
+body {
   height: 100%;
   margin: 0;
 }
@@ -45,7 +48,11 @@ body {
 
   background: Canvas;
   color: CanvasText;
-  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font:
+    13px/1.4 system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
 }
 
 /* ---------- toolbar ---------- */
@@ -78,22 +85,26 @@ body {
   min-width: 0;
 }
 
-.spacer { flex: 1 1 auto; }
+.spacer {
+  flex: 1 1 auto;
+}
 
 .field {
   display: grid;
   /* Labels above controls. Reads as a row of settings rather than a row of
      captions, and survives a long option name. */
-  grid-template-areas: "label" "control";
+  grid-template-areas: 'label' 'control';
   gap: 2px;
   font-size: 11px;
   color: color-mix(in oklab, CanvasText 70%, transparent);
 }
 
-.field > span { grid-area: label; }
+.field > span {
+  grid-area: label;
+}
 
 .field.checkbox {
-  grid-template-areas: "control label";
+  grid-template-areas: 'control label';
   align-items: center;
   gap: 5px;
   /* Same baseline as a labelled control, so a row of checkboxes lines up with
@@ -102,10 +113,18 @@ body {
   padding-bottom: 3px;
 }
 
-.field.checkbox > input { grid-area: control; margin: 0; }
-.field.checkbox > span { grid-area: label; }
+.field.checkbox > input {
+  grid-area: control;
+  margin: 0;
+}
+.field.checkbox > span {
+  grid-area: label;
+}
 
-select, input[type="text"], input[type="number"], input[type="file"] {
+select,
+input[type='text'],
+input[type='number'],
+input[type='file'] {
   grid-area: control;
   font: inherit;
   font-size: 12px;
@@ -122,15 +141,24 @@ select, input[type="text"], input[type="number"], input[type="file"] {
    five digit ppi cap into a 200px box. Sized to their content, not to the row. */
 /* The number box needs room for the spinner's own gutter: at 6ch a value of
    300 displayed as "30", which reads as a different setting. */
-input[type="number"] { width: 9ch; }
-input[type="text"] { width: 8ch; }
+input[type='number'] {
+  width: 9ch;
+}
+input[type='text'] {
+  width: 8ch;
+}
 /* min-width:0, not just width. The file input's min-content is 242px, which
    drove the whole toolbar to 442px and pushed Download off a 380px screen. */
-input[type="file"] { width: 20ch; min-width: 0; }
+input[type='file'] {
+  width: 20ch;
+  min-width: 0;
+}
 /* No width and no max-width. The UA sizes a select to its widest option, which
    is the correct behaviour; capping it at 22ch clipped the default option
    "document's own @page" at every window width, and to a single "d" at 380px. */
-select { min-width: 0; }
+select {
+  min-width: 0;
+}
 
 input:disabled {
   /* Not opacity. Stacked on a label already at 70% it measured 2.72:1 against
@@ -149,7 +177,10 @@ button.primary {
   font-weight: 600;
 }
 
-button:disabled { cursor: default; opacity: 0.55; }
+button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
 
 /* The UA default is a 1px ring drawn flush against the control, which on
    #source — border: 0 — is the only focus indicator there is. Offset, thicker,
@@ -176,7 +207,9 @@ button:disabled { cursor: default; opacity: 0.55; }
   min-height: 0;
 }
 
-.pane + .pane { border-left: 1px solid var(--line); }
+.pane + .pane {
+  border-left: 1px solid var(--line);
+}
 
 .pane h2 {
   margin: 0;
@@ -204,7 +237,12 @@ button:disabled { cursor: default; opacity: 0.55; }
   resize: none;
   border: 0;
   padding: 10px 12px;
-  font: 12px/1.55 ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+  font:
+    12px/1.55 ui-monospace,
+    'SF Mono',
+    'Cascadia Mono',
+    Menlo,
+    monospace;
   /* Without this the textarea's own background wins over the page's, and the
      pane goes light-on-light in dark mode. */
   background: transparent;
@@ -265,15 +303,29 @@ button:disabled { cursor: default; opacity: 0.55; }
   white-space: nowrap;
 }
 
-.status[data-level="error"] { color: light-dark(#b3261e, #ffb4ab); }
-.status[data-level="warn"]  { color: light-dark(#8a5300, #f9d67c); }
+.status[data-level='error'] {
+  color: light-dark(#b3261e, #ffb4ab);
+}
+.status[data-level='warn'] {
+  color: light-dark(#8a5300, #f9d67c);
+}
 
 @media (prefers-reduced-motion: no-preference) {
-  button, select, input { transition: background-color 120ms ease; }
+  button,
+  select,
+  input {
+    transition: background-color 120ms ease;
+  }
 }
 
 @media (width < 700px) {
   /* Below this the two panes are unreadable side by side, so stack them. */
-  .split { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
-  .pane + .pane { border-left: 0; border-top: 1px solid var(--line); }
+  .split {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+  .pane + .pane {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
 }

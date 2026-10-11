@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "serve": "bun src/server.ts",
     "lint": "eslint tools --max-warnings=0",
-    "format:check": "prettier --check src test tools templates README.md docs",
+    "format:check": "prettier --check src test tools templates viewer README.md docs",
     "spell": "cspell --no-progress --fail-fast --config cspell.yaml README.md docs/*.md",
     "ratchet": "bun tools/ratchet.mjs",
     "coverage": "bun test --coverage --coverage-reporter=lcov && bun tools/coverage.mjs"

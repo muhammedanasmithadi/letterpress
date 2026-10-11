@@ -13,20 +13,20 @@
 const $ = (id) => document.getElementById(id);
 
 const el = {
-  file: $("file"),
-  format: $("format"),
-  landscape: $("landscape"),
-  margin: $("margin"),
-  background: $("background"),
-  ppi: $("ppi"),
-  network: $("network"),
-  render: $("render"),
-  download: $("download"),
-  source: $("source"),
-  preview: $("preview"),
-  previewNote: $("preview-note"),
-  status: $("status"),
-  metrics: $("metrics"),
+  file: $('file'),
+  format: $('format'),
+  landscape: $('landscape'),
+  margin: $('margin'),
+  background: $('background'),
+  ppi: $('ppi'),
+  network: $('network'),
+  render: $('render'),
+  download: $('download'),
+  source: $('source'),
+  preview: $('preview'),
+  previewNote: $('preview-note'),
+  status: $('status'),
+  metrics: $('metrics'),
 };
 
 const DEBOUNCE_MS = 400;
@@ -69,7 +69,7 @@ function syncBusy() {
   // the button while another was still running, and Ctrl+Enter started further
   // ones regardless, so renders could stack without limit.
   el.render.disabled = inflight > 0;
-  el.render.textContent = inflight > 1 ? `Rendering (${inflight})` : "Render";
+  el.render.textContent = inflight > 1 ? `Rendering (${inflight})` : 'Render';
 }
 
 /** Read the toolbar. Empty format means "let the document decide". */
@@ -78,7 +78,7 @@ function settings() {
   // readOnly rather than disabled, so the field can still be focused and read.
   // Its value is ignored here while a format is unset, because the server refuses
   // a margin without one.
-  const margin = el.format.value ? el.margin.value.trim() : "";
+  const margin = el.format.value ? el.margin.value.trim() : '';
   return {
     format: format || undefined,
     // The server rejects a margin without a format, because a document's own
@@ -103,17 +103,17 @@ function settings() {
  */
 function readPpi() {
   const raw = el.ppi.value.trim();
-  if (raw === "") return undefined;
+  if (raw === '') return undefined;
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
-    el.ppi.setAttribute("aria-invalid", "true");
+    el.ppi.setAttribute('aria-invalid', 'true');
     return undefined;
   }
-  el.ppi.removeAttribute("aria-invalid");
+  el.ppi.removeAttribute('aria-invalid');
   return n;
 }
 
-function say(message, level = "info") {
+function say(message, level = 'info') {
   el.status.textContent = message;
   el.status.dataset.level = level;
 }
@@ -131,33 +131,33 @@ function say(message, level = "info") {
  * attribute, which costs nothing until someone hovers.
  */
 function findingLine(findings) {
-  if (!findings.length) return "no findings";
+  if (!findings.length) return 'no findings';
   const first = String(findings[0].message).split(/(?<=[.!?])\s/)[0];
-  const more = findings.length > 1 ? ` (+${findings.length - 1} more)` : "";
+  const more = findings.length > 1 ? ` (+${findings.length - 1} more)` : '';
   return `${first}${more}`;
 }
 
 /** Replace the preview's contents without dropping the stale marker. */
 function showPreview(main, sub) {
   const box = el.preview;
-  const p = document.createElement("p");
-  p.className = "placeholder";
+  const p = document.createElement('p');
+  p.className = 'placeholder';
   p.textContent = main;
   if (sub) {
     // A child of .placeholder. As a sibling it missed the `.placeholder .sub`
     // rule, so the first render silently changed the pane's typography.
-    const span = document.createElement("span");
-    span.className = "sub";
+    const span = document.createElement('span');
+    span.className = 'sub';
     span.textContent = sub;
     p.append(span);
   }
   box.replaceChildren(p);
 }
 
-function markStale(on, why = "") {
+function markStale(on, why = '') {
   el.previewNote.hidden = !on;
   if (on) {
-    el.previewNote.textContent = `showing the last good render, not the current source${why ? ` — ${why}` : ""}`;
+    el.previewNote.textContent = `showing the last good render, not the current source${why ? ` — ${why}` : ''}`;
   }
   // Download is disabled on a failure, because the bytes on offer belong to a
   // document the user has already changed.
@@ -170,14 +170,14 @@ async function render() {
   const mine = ++seq;
   controller?.abort();
   controller = new AbortController();
-  const timer = setTimeout(() => controller.abort("timeout"), CLIENT_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort('timeout'), CLIENT_TIMEOUT_MS);
 
   const html = el.source.value;
   if (!html.trim()) {
     clearTimeout(timer);
-    say("Nothing to render: the source is empty.", "warn");
-    el.metrics.textContent = "";
-    markStale(true, "source is empty");
+    say('Nothing to render: the source is empty.', 'warn');
+    el.metrics.textContent = '';
+    markStale(true, 'source is empty');
     return;
   }
 
@@ -190,12 +190,12 @@ async function render() {
   const ticker = setInterval(() => {
     if (mine === seq) say(`Rendering… ${Math.round((performance.now() - startedAt) / 1000)}s`);
   }, 1000);
-  say("Rendering…");
+  say('Rendering…');
 
   try {
-    const res = await fetch("/render", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
+    const res = await fetch('/render', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ html, ...settings() }),
       signal: controller.signal,
     });
@@ -205,7 +205,7 @@ async function render() {
     if (mine !== seq) return;
 
     if (!res.ok || body.ok === false) {
-      fail(body.error ?? `render failed: ${res.status}`, "error");
+      fail(body.error ?? `render failed: ${res.status}`, 'error');
       return;
     }
 
@@ -215,24 +215,25 @@ async function render() {
     let objectUrl = null;
     el.download.disabled = false;
     el.download.onclick = () => {
-      objectUrl ??= URL.createObjectURL(new Blob([lastBytes], { type: "application/pdf" }));
-      const a = document.createElement("a");
+      objectUrl ??= URL.createObjectURL(new Blob([lastBytes], { type: 'application/pdf' }));
+      const a = document.createElement('a');
       a.href = objectUrl;
-      a.download = "document.pdf";
+      a.download = 'document.pdf';
       a.click();
     };
     markStale(false);
 
-    const kb = body.bytes < 1048576
-      ? `${Math.round(body.bytes / 1024)} KB`
-      : `${(body.bytes / 1048576).toFixed(1)} MB`;
-    const pages = `${body.pages} page${body.pages === 1 ? "" : "s"}`;
+    const kb =
+      body.bytes < 1048576
+        ? `${Math.round(body.bytes / 1024)} KB`
+        : `${(body.bytes / 1048576).toFixed(1)} MB`;
+    const pages = `${body.pages} page${body.pages === 1 ? '' : 's'}`;
     el.metrics.textContent = `${pages} · ${kb} · ${body.ms} ms`;
     showPreview(
       `${pages}, ${kb}.`,
       body.partial
-        ? "Only the requested pages were rendered, so this is not the document length."
-        : "PDF.js draws these bytes here in the next phase.",
+        ? 'Only the requested pages were rendered, so this is not the document length.'
+        : 'PDF.js draws these bytes here in the next phase.',
     );
 
     const findings = body.findings ?? [];
@@ -242,22 +243,22 @@ async function render() {
       // words every time announced nothing at all.
       say(`Rendered ${pages}, no findings.`);
     } else {
-      const errors = findings.filter((f) => f.severity === "error").length;
+      const errors = findings.filter((f) => f.severity === 'error').length;
       const line = findingLine(findings);
-      say(`Rendered ${pages}. ${line}`, errors ? "error" : "warn");
+      say(`Rendered ${pages}. ${line}`, errors ? 'error' : 'warn');
       // The full wording, for anyone who wants it.
-      el.status.title = findings.map((f) => f.message).join("\n\n");
+      el.status.title = findings.map((f) => f.message).join('\n\n');
     }
   } catch (e) {
     if (mine !== seq) return;
-    const aborted = e instanceof Error && e.name === "AbortError";
+    const aborted = e instanceof Error && e.name === 'AbortError';
     const elapsed = Math.round(performance.now() - startedAt);
-    if (aborted && controller.signal.reason === "timeout") {
+    if (aborted && controller.signal.reason === 'timeout') {
       fail(
         `gave up after ${Math.round(CLIENT_TIMEOUT_MS / 1000)}s without an answer. that is this page's ` +
-        `own backstop for a connection that never completes, well past the server's 30s deadline, ` +
-        `so the renderer is not the slow part here. restart it, or check that it is still running.`,
-        "error",
+          `own backstop for a connection that never completes, well past the server's 30s deadline, ` +
+          `so the renderer is not the slow part here. restart it, or check that it is still running.`,
+        'error',
       );
     } else if (aborted) {
       // Superseded by a newer request, which is not a failure worth reporting.
@@ -265,8 +266,8 @@ async function render() {
     } else {
       fail(
         `could not reach the renderer (${e instanceof Error ? e.message : e}). ` +
-        `is the server still running?`,
-        "error",
+          `is the server still running?`,
+        'error',
       );
     }
     void elapsed;
@@ -289,7 +290,7 @@ async function render() {
 function fail(message, level) {
   say(message, level);
   el.status.title = message;
-  el.metrics.textContent = "";
+  el.metrics.textContent = '';
   markStale(true, message.split(/(?<=[.!?])\s/)[0]);
 }
 
@@ -307,19 +308,22 @@ function fail(message, level) {
  */
 function syncMargin() {
   const inert = !el.format.value;
-  el.margin.setAttribute("aria-disabled", inert ? "true" : "false");
+  el.margin.setAttribute('aria-disabled', inert ? 'true' : 'false');
   el.margin.readOnly = inert;
   el.margin.title = inert
     ? "Margins apply to a paper size you choose here. A document's own @page margin wins otherwise."
-    : "";
+    : '';
 }
-el.format.addEventListener("change", () => { syncMargin(); void render(); });
-el.margin.addEventListener("change", () => void render());
+el.format.addEventListener('change', () => {
+  syncMargin();
+  void render();
+});
+el.margin.addEventListener('change', () => void render());
 
 for (const control of [el.landscape, el.background, el.network]) {
-  control.addEventListener("change", () => void render());
+  control.addEventListener('change', () => void render());
 }
-el.ppi.addEventListener("input", () => {
+el.ppi.addEventListener('input', () => {
   readPpi();
   clearTimeout(ppiTimer);
   ppiTimer = setTimeout(() => void render(), DEBOUNCE_MS);
@@ -327,7 +331,7 @@ el.ppi.addEventListener("input", () => {
 
 let timer;
 let ppiTimer;
-el.source.addEventListener("input", () => {
+el.source.addEventListener('input', () => {
   clearTimeout(timer);
   timer = setTimeout(() => void render(), DEBOUNCE_MS);
 });
@@ -335,17 +339,17 @@ el.source.addEventListener("input", () => {
 // Ctrl+Enter renders without waiting for the debounce, which is the reflex after
 // half a second of typing. It queues rather than bypassing the in-flight guard,
 // because the old version let it start a second render while one was running.
-el.source.addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+el.source.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
     e.preventDefault();
     clearTimeout(timer);
     void render();
   }
 });
 
-el.render.addEventListener("click", () => void render());
+el.render.addEventListener('click', () => void render());
 
-el.file.addEventListener("change", async () => {
+el.file.addEventListener('change', async () => {
   const file = el.file.files?.[0];
   if (!file) return;
   el.source.value = await file.text();

@@ -74,6 +74,13 @@ export type TextFlow = {
   widestAll: number;
   /** The narrowest gap of any kind, in em, including the negative ones a kern produces. */
   narrowest: number;
+  /**
+   * Marked-content spans carrying `/ActualText`, which Chromium wraps around every
+   * ligature. A reader ends a text item at each of them whatever the geometry says, and
+   * this does not model that: on a page of ordinary prose with twenty ligatures the reader
+   * produced eighteen whitespace items where every measured gap was inside the band.
+   */
+  spans: number;
   /** Text streams this walked. */
   streams: number;
   /**
@@ -104,6 +111,7 @@ const EMPTY: TextFlow = {
   widest: 0,
   widestAll: 0,
   narrowest: Number.POSITIVE_INFINITY,
+  spans: 0,
   streams: 0,
   read: 0,
 };
@@ -271,6 +279,7 @@ export function textFlow(pdf: Uint8Array): TextFlow | null {
     }
     if (!/\bBT\b/.test(text)) continue;
     flow.streams++;
+    flow.spans += (text.match(/\/ActualText/g) ?? []).length;
 
     const pageFonts = fonts.get(o.num);
     if (!pageFonts) continue;

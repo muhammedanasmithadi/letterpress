@@ -344,7 +344,7 @@ export async function stageAssets(
   const consider = (ref: string, from: string) => {
     const clean = ref.trim().split(/[?#]/)[0];
     if (!clean) return;
-    if (/^(?:https?:|data:|blob:|file:|#|mailto:|\/\/)/i.test(clean)) return;
+    if (NOT_A_LOCAL_FILE.test(clean)) return;
     const abs = isAbsolute(clean) ? clean : resolve(from, clean);
 
     if (seen.has(abs)) return;
@@ -365,19 +365,9 @@ export async function stageAssets(
   };
 
   const scan = (text: string, from: string) => {
-    for (const m of text.matchAll(/(?:src|href)\s*=\s*["']([^"']+)["']/gi)) consider(m[1]!, from);
-    for (const m of text.matchAll(/(?:src|href)\s*=\s*([^\s>]+)/gi))
-      consider(m[1]!.replace(/["']/g, ''), from);
-    for (const m of text.matchAll(/\bsrcset\s*=\s*["']([^"']+)["']/gi)) {
-      for (const candidate of m[1]!.split(',')) consider(candidate.trim().split(/\s+/)[0]!, from);
-    }
-    for (const m of text.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)) consider(m[1]!, from);
-    for (const m of text.matchAll(/@import\s+["']([^"']+)["']/gi)) consider(m[1]!, from);
-
-    for (const m of text.matchAll(/\b(?:import|export)\b[^;'"]*?\bfrom\s*["']([^"']+)["']/g))
-      consider(m[1]!, from);
-    for (const m of text.matchAll(/\bimport\s*["']([^"']+)["']/g)) consider(m[1]!, from);
-    for (const m of text.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g)) consider(m[1]!, from);
+    // The same list `hasRelativeAssets` reads, deliberately: that function decides whether
+    // this one runs at all, and two lists is how a document ends up printed unstyled.
+    for (const ref of refsIn(text)) consider(ref, from);
   };
 
   scan(html, base);
@@ -423,13 +413,48 @@ export async function stageAssets(
   return refused;
 }
 
+// Every place a document can name a local file.
+//
+// `stageAssets` copies what these find, and `hasRelativeAssets` decides from the same list
+// whether `stageAssets` needs to run at all -- if it does not, the document is rendered from
+// `about:blank` with no server and no staged files. The two lists were written separately
+// and the second missed `@import` and module imports, so a document whose only local
+// reference was an imported stylesheet was rendered from nothing and printed unstyled, with
+// no finding and no error. One list, so the question cannot be asked two ways again.
+const REF_PATTERNS: ReadonlyArray<{ re: RegExp; candidates?: true }> = [
+  { re: /(?:src|href)\s*=\s*["']([^"']+)["']/gi },
+  { re: /(?:src|href)\s*=\s*([^\s>]+)/gi },
+  // `srcset` holds a comma-separated list, and each entry's first token is the URL.
+  { re: /\bsrcset\s*=\s*["']([^"']+)["']/gi, candidates: true },
+  { re: /url\(\s*["']?([^"')]+)["']?\s*\)/gi },
+  { re: /@import\s+["']([^"']+)["']/gi },
+  { re: /\b(?:import|export)\b[^;'"]*?\bfrom\s*["']([^"']+)["']/g },
+  { re: /\bimport\s*["']([^"']+)["']/g },
+  { re: /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g },
+];
+
+/** A reference the document did not have to be shipped with: nothing on disk to stage. */
+const NOT_A_LOCAL_FILE = /^(?:https?:|data:|blob:|file:|#|mailto:|\/\/)/i;
+
+function* refsIn(text: string): Generator<string> {
+  for (const { re, candidates } of REF_PATTERNS) {
+    for (const m of text.matchAll(re)) {
+      const raw = (m[1] ?? '').replace(/["']/g, '');
+      if (candidates) {
+        for (const entry of raw.split(',')) yield entry.trim().split(/\s+/)[0] ?? '';
+      } else {
+        yield raw;
+      }
+    }
+  }
+}
+
 export function hasRelativeAssets(html: string): boolean {
-  if (/(?:src|href)\s*=\s*["'](?!https?:|data:|blob:|file:|#|mailto:|\/\/)[^"']/i.test(html))
-    return true;
-  if (/(?:src|href)\s*=\s*(?!["'])(?!https?:|data:|blob:|file:|#|mailto:|\/\/)[^\s>]+/i.test(html))
-    return true;
-  if (/\bsrcset\s*=/i.test(html)) return true;
-  return /url\(\s*(?!["']?(?:https?:|data:|blob:|file:|#|\/\/))\s*["']?[^)'"\s]/i.test(html);
+  for (const ref of refsIn(html)) {
+    const clean = ref.trim().split(/[?#]/)[0];
+    if (clean && !NOT_A_LOCAL_FILE.test(clean)) return true;
+  }
+  return false;
 }
 
 export async function drainStream(

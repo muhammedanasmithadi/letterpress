@@ -213,6 +213,34 @@ describe('assets reach the document without rewriting it', () => {
       await rm(outside, { recursive: true, force: true }).catch(() => {});
     }
   }, 60_000);
+
+  test('an imported stylesheet is staged and applied', async () => {
+    // `hasRelativeAssets` decides whether the staging server runs at all; when it says no,
+    // the document is printed from about:blank with nothing beside it. It read a shorter
+    // list than the stager did and had no @import on it, so a document whose only local
+    // reference was an imported stylesheet printed unstyled -- no error, no finding, one
+    // page instead of two.
+    //
+    // The page count is the assertion rather than a font size or a colour because it is the
+    // only thing here that survives compression: a single paragraph with a leading break is
+    // still one page, so the control needs two paragraphs to mean anything.
+    await writeFile(join(dir, 'imported.css'), 'p+p{page-break-before:always}');
+    await writeFile(
+      join(dir, 'imported.html'),
+      `<!doctype html><style>@import "imported.css";</style><p>one</p><p>two</p>`,
+    );
+
+    const r = await render(browser, { path: join(dir, 'imported.html') });
+    expect(r.info.pages).toBe(2);
+  }, 60_000);
+
+  test('the fast path is not taken for an imported stylesheet', () => {
+    expect(hasRelativeAssets('<style>@import "theme.css";</style>')).toBe(true);
+    expect(hasRelativeAssets('<style>@import url("theme.css");</style>')).toBe(true);
+    expect(hasRelativeAssets('<style>@import "https://cdn.test/a.css";</style>')).toBe(false);
+    expect(hasRelativeAssets('<script type="module">import x from "./x.js"</script>')).toBe(true);
+    expect(hasRelativeAssets('<style>@page{size:A4}</style>')).toBe(false);
+  });
 });
 
 describe('invoice totals are checked as numbers', () => {

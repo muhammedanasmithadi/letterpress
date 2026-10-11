@@ -1,5 +1,5 @@
 import { inflateSync } from 'node:zlib';
-import { inflatedStream, join, LATIN1, trySplit, type Obj } from './pdfparts.ts';
+import { inflatedStream, join, LATIN1, objsByNum, trySplit, type Obj } from './pdfparts.ts';
 
 type Table = { offset: number; length: number };
 type Sfnt = {
@@ -110,7 +110,7 @@ export function fixFontDescriptors(pdf: Uint8Array): Uint8Array {
   const parts = trySplit(pdf);
   if (!parts) return pdf;
 
-  const byNum = new Map(parts.objs.map((o) => [o.num, o]));
+  const byNum = objsByNum(parts);
 
   const descriptorNums = new Set<number>();
   for (const o of parts.objs) {

@@ -5,7 +5,7 @@ import {
   LATIN1,
   structElementsInOrder,
   trySplit,
-  type Obj,
+  objsByNum,
   type Parts,
 } from './pdfparts.ts';
 import { pdfValue } from './meta.ts';
@@ -44,7 +44,7 @@ export function linkOrder(parts: Parts): number[] {
 }
 
 export function linkAnnotations(parts: Parts, linkNum: number): number[] {
-  const byNum = new Map<number, Obj>(parts.objs.map((o) => [o.num, o]));
+  const byNum = objsByNum(parts);
   const link = byNum.get(linkNum);
   if (!link) return [];
   const text = dictCode(link);
@@ -66,7 +66,7 @@ export function fixLinkDescs(pdf: Uint8Array, descs: string[]): Uint8Array {
   const links = linkOrder(parts);
   if (links.length !== descs.length) return pdf;
 
-  const byNum = new Map(parts.objs.map((o) => [o.num, o]));
+  const byNum = objsByNum(parts);
   let changed = 0;
   links.forEach((linkNum, index) => {
     const desc = (descs[index] ?? '').trim();

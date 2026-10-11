@@ -1,6 +1,10 @@
 export type Obj = { num: number; bytes: Buffer };
 export type Parts = { head: Buffer; objs: Obj[]; trailer: Buffer };
 
+export function objsByNum(parts: Parts): Map<number, Obj> {
+  return new Map(parts.objs.map((o) => [o.num, o]));
+}
+
 export const LATIN1 = 'latin1' as BufferEncoding;
 const NEWLINE = Buffer.from('\n', LATIN1);
 

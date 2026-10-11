@@ -1,5 +1,5 @@
 import { deflateSync, inflateSync } from 'node:zlib';
-import { insertIntoDict, join, LATIN1, streamRange, trySplit, type Obj } from './pdfparts.ts';
+import { insertIntoDict, join, LATIN1, objsByNum, streamRange, trySplit, type Obj } from './pdfparts.ts';
 
 export function pdfString(value: string): string {
   if ([...value].some((ch) => ch.codePointAt(0)! < 32 || ch.codePointAt(0)! > 126)) {
@@ -210,7 +210,7 @@ export function addMetadata(
     packetInfo.modified = pinned;
   }
 
-  const byNum = new Map(parts.objs.map((o) => [o.num, o]));
+  const byNum = objsByNum(parts);
   const trailer = parts.trailer.toString(LATIN1);
   const infoRef = trailer.match(/\/Info\s+(\d+)\s+0\s+R/);
   if (!infoRef) return pdf;
@@ -256,7 +256,7 @@ export function addMetadata(
 function xmpPayload(pdf: Uint8Array): string | undefined {
   const parts = trySplit(pdf);
   if (!parts) return undefined;
-  const byNum = new Map(parts.objs.map((o) => [o.num, o]));
+  const byNum = objsByNum(parts);
   const rootRef = parts.trailer.toString(LATIN1).match(/\/Root\s+(\d+)\s+0\s+R/);
   const root = rootRef ? byNum.get(Number(rootRef[1])) : undefined;
   if (!root) return undefined;

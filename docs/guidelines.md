@@ -7,8 +7,8 @@ Baseline 2026-10-10, Bun + TypeScript 7.0.2 codebase (18 src files, 23 test file
 - Format: Prettier 3.9.9 (`bunx prettier --check`). One-time normalization applied.
 - Lint: ESLint core recommended + `no-warning-comments` + `no-empty` (allowEmptyCatch for best-effort kills). Covers `tools/` (`.mjs`); `.ts` is covered by `tsc --noEmit` — type-aware lint is blocked until typescript-eslint supports TS 7.
 - TS patterns: `tools/lint-ts.mjs` bans `as any`, `console.*`, `debugger`, marker comments in `src/` + `test/` (AST-exact via TS 5.9 parser sidecar — TS 7 ships no compiler API; grammar verified clean on all 41 files).
-- Duplication: jscpd ≤3.71% (measured baseline; any increase fails).
-- Supply chain: `bun audit` clean (268 packages) + gitleaks job. Secrets have no other place to hide: gitleaks scans full history.
+- Duplication: `bun run dup` fails on any new clone vs `waivers/baseline.jscpd.json` (57 clones / 526 lines today; product clones extracted twice: `objsByNum`, `bracketEnd`; remainder is test-file import boilerplate, budgeted in the baseline).
+- Supply chain: `bun audit` clean (268 packages). Secrets: gitleaks pre-commit hook (the Action now needs a license key; the hook at pinned rev covers staged/all files).
 - Types: `tsc --noEmit`, clean — with `noUnusedLocals` + `noUnusedParameters` on (12 dead declarations removed to get there).
 - Next ratchet, enforced: `noUncheckedIndexedAccess` is on — 62 sites fixed without behavior change (guards, destructure defaults, tuple types; `!` only in tests on fixtures).
 - Spelling: cspell 10 on `README.md` + `docs/*.md` (en-GB + 40 domain words in `cspell.yaml`).

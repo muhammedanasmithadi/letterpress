@@ -11,7 +11,7 @@
     "serve": "bun src/server.ts",
     "lint": "eslint tools --max-warnings=0",
     "lint:ts": "bun tools/lint-ts.mjs",
-    "dup": "bunx --package jscpd@5.4.1 jscpd --min-tokens 50 --reporters console --silent --threshold 3.71 src test",
+    "dup": "bun tools/dup.mjs",
     "audit": "bun audit",
     "format:check": "prettier --check src test tools templates viewer README.md docs",
     "spell": "cspell --no-progress --fail-fast --config cspell.yaml README.md docs/*.md",

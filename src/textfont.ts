@@ -9,7 +9,7 @@
  * ask the ToUnicode map rather than guess.
  */
 import { inflateSync } from 'node:zlib';
-import { LATIN1, dictOf, streamRange, trySplit, type Obj, type Parts } from './pdfparts.ts';
+import { LATIN1, dictOf, objsByNum, streamRange, trySplit, type Obj, type Parts } from './pdfparts.ts';
 
 export type FontTable = {
   /**
@@ -63,18 +63,7 @@ function fontDictOf(dict: string): string {
 export function parseW(dict: string): Map<number, number> {
   const at = /\/(?:W|w)\s*\[/.exec(dict);
   if (!at) return new Map();
-  let depth = 0;
-  let end = -1;
-  for (let i = at.index + at[0].length - 1; i < dict.length; i++) {
-    if (dict[i] === '[') depth++;
-    else if (dict[i] === ']') {
-      depth--;
-      if (depth === 0) {
-        end = i;
-        break;
-      }
-    }
-  }
+  const end = bracketEnd(dict, at.index + at[0].length - 1);
   if (end === -1) return new Map();
 
   const out = new Map<number, number>();
@@ -175,7 +164,7 @@ export function fontsByContent(
   parts: Parts,
   cmapOf: (num: number) => string | null,
 ): Map<number, Map<string, FontTable>> {
-  const byNum = new Map(parts.objs.map((o) => [o.num, o]));
+  const byNum = objsByNum(parts);
   const out = new Map<number, Map<string, FontTable>>();
   for (const page of parts.objs) {
     const dict = dictOf(page);
@@ -262,22 +251,23 @@ function simpleTable(
   };
 }
 
+function bracketEnd(dict: string, from: number): number {
+  let depth = 0;
+  for (let i = from; i < dict.length; i++) {
+    if (dict[i] === '[') depth++;
+    else if (dict[i] === ']') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
 /** The `/Widths` array, which starts at `/FirstChar` and runs to `/LastChar`. */
 function parseWidths(dict: string): Map<number, number> {
   const at = /\/Widths\s*\[/.exec(dict);
   if (!at) return new Map();
-  let depth = 0;
-  let end = -1;
-  for (let i = at.index + at[0].length - 1; i < dict.length; i++) {
-    if (dict[i] === '[') depth++;
-    else if (dict[i] === ']') {
-      depth--;
-      if (depth === 0) {
-        end = i;
-        break;
-      }
-    }
-  }
+  const end = bracketEnd(dict, at.index + at[0].length - 1);
   if (end === -1) return new Map();
   const out = new Map<number, number>();
   let n = 0;

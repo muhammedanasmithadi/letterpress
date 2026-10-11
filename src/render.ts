@@ -212,7 +212,7 @@ async function capImageResolution(
   tab: Tab,
   maxPpi: number,
   timeoutMs: number,
-): Promise<{ from: number; to: number; ppi: number }[]> {
+): Promise<Array<{ at: number; from: number; to: number; ppi: number }>> {
   const expression = `(() => {
     const MAX = ${maxPpi};
     const report = [];
@@ -230,7 +230,7 @@ async function capImageResolution(
       const ctx = canvas.getContext("2d");
       if (!ctx) continue;
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      report.push({ from: img.naturalWidth, to: canvas.width, ppi: Math.round(ppi), url: canvas.toDataURL("image/jpeg", 0.9) });
+      report.push({ at: i, from: img.naturalWidth, to: canvas.width, ppi: Math.round(ppi), url: canvas.toDataURL("image/jpeg", 0.9) });
     }
     return JSON.stringify(report);
   })()`;
@@ -238,7 +238,7 @@ async function capImageResolution(
   const res = await tab.send('Runtime.evaluate', { expression, returnByValue: true }, timeoutMs);
   const raw = res?.result?.value;
   if (raw == null) return [];
-  let entries: Array<{ from: number; to: number; ppi: number; url: string }>;
+  let entries: Array<{ at: number; from: number; to: number; ppi: number; url: string }>;
   try {
     entries = JSON.parse(raw);
   } catch {
@@ -246,57 +246,19 @@ async function capImageResolution(
   }
   if (!entries.length) return [];
 
-  if (entries.length && raw === undefined) {
-    const singles: typeof entries = [];
-    for (const img of await tab
-      .send('Runtime.evaluate', {
-        expression: "Array.from(document.images).map(i => i.currentSrc || i.src).join('\\u0000')",
-        returnByValue: true,
-      })
-      .then((r: any) => String(r?.result?.value ?? '').split('\u0000'))) {
-      const one = await tab
-        .send(
-          'Runtime.evaluate',
-          {
-            expression: `(() => {
-          const MAX = ${maxPpi};
-          const img = document.images.find(i => (i.currentSrc || i.src) === ${JSON.stringify(img)});
-          if (!img || !img.naturalWidth) return "null";
-          const wIn = img.getBoundingClientRect().width / 96;
-          const ppi = img.naturalWidth / wIn;
-          if (!wIn || ppi <= MAX) return "null";
-          const targetW = Math.max(1, Math.round(wIn * MAX));
-          const c = document.createElement("canvas");
-          c.width = targetW;
-          c.height = Math.max(1, Math.round(img.naturalHeight * (targetW / img.naturalWidth)));
-          const ctx = c.getContext("2d");
-          ctx.drawImage(img, 0, 0, c.width, c.height);
-          return JSON.stringify({ from: img.naturalWidth, to: c.width, ppi: Math.round(ppi), url: c.toDataURL("image/jpeg", 0.9) });
-        })()`,
-            returnByValue: true,
-          },
-          timeoutMs,
-        )
-        .catch(() => null);
-      const v = one?.result?.value;
-      if (v && v !== 'null') {
-        try {
-          singles.push(JSON.parse(v));
-        } catch {}
-      }
-    }
-    entries = singles;
-  }
-
-  if (!entries.length) return [];
-
   await tab.send(
     'Runtime.evaluate',
     {
       expression: `(() => {
-      const swap = ${JSON.stringify(entries.map((e) => e.url))};
-      let i = 0;
-      for (const img of document.images) { if (swap[i]) img.src = swap[i++]; }
+      // By index into document.images, not by position in this list: the measuring loop
+      // skips hidden, unloaded and already-small images, so a positional walk hands each
+      // replacement to the wrong image the moment one is skipped. A hidden image took the
+      // first replacement, and the photograph that was meant to be downsampled kept its full
+      // resolution while the finding said it had been reduced.
+      for (const e of ${JSON.stringify(entries.map((e) => ({ at: e.at, url: e.url })))}) {
+        const img = document.images[e.at];
+        if (img) img.src = e.url;
+      }
       return true;
     })()`,
       returnByValue: true,
@@ -314,7 +276,7 @@ async function capImageResolution(
     timeoutMs,
   );
 
-  return entries.map(({ from, to, ppi }) => ({ from, to, ppi }));
+  return entries.map(({ at, from, to, ppi }) => ({ at, from, to, ppi }));
 }
 
 function isTeardownAbort(errorText: string | undefined): boolean {
@@ -1004,7 +966,11 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       const flow = textFlow(pdf);
       if (
         flow &&
-        ((flow.breaks > 0 && (flow.tooWide > 0 || flow.jump > 0 || flow.tooThin > 0)) ||
+        ((flow.breaks > 0 &&
+          (flow.tooWide > 0 ||
+            flow.jump > 0 ||
+            flow.tooThin > 0 ||
+            flow.backwards > 0)) ||
           flow.spans > 0 ||
           flow.unreadable > 0)
       ) {

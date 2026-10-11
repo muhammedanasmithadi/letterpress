@@ -10,7 +10,7 @@ Baseline 2026-10-10, Bun + TypeScript 7.0.2 codebase (18 src files, 23 test file
 - Duplication: jscpd ≤3.71% (measured baseline; any increase fails).
 - Supply chain: `bun audit` clean (268 packages) + gitleaks job. Secrets have no other place to hide: gitleaks scans full history.
 - Types: `tsc --noEmit`, clean — with `noUnusedLocals` + `noUnusedParameters` on (12 dead declarations removed to get there).
-- Next ratchet, not yet enforced: `noUncheckedIndexedAccess` (62 non-null assertions in `src/` today; enable only with a per-site justification pass).
+- Next ratchet, enforced: `noUncheckedIndexedAccess` is on — 62 sites fixed without behavior change (guards, destructure defaults, tuple types; `!` only in tests on fixtures).
 - Spelling: cspell 10 on `README.md` + `docs/*.md` (en-GB + 40 domain words in `cspell.yaml`).
 - Security scan: Semgrep `p/default` on `src/` + `tools/` (verified action refs were stale; runs via pinned pip instead). Gate fails on ERROR severity only; loopback bench URLs carry rule-targeted `nosemgrep` (justified: no external traffic). Placement trap, verified: the suppression must sit on the finding's start line (own-line comments do not suppress), guarded by `prettier-ignore` so formatting cannot move it.
 - Security backlog (WARNING, needs domain adjudication — dynamic RegExp over attacker-controlled PDFs is a ReDoS surface): `src/meta.ts:48,65,164`, `src/pdf.ts:38,74`, `src/pdfparts.ts:270`, `src/figrole.ts:17`.

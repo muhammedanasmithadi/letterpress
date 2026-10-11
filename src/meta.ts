@@ -1,5 +1,13 @@
 import { deflateSync, inflateSync } from 'node:zlib';
-import { insertIntoDict, join, LATIN1, objsByNum, streamRange, trySplit, type Obj } from './pdfparts.ts';
+import {
+  insertIntoDict,
+  join,
+  LATIN1,
+  objsByNum,
+  streamRange,
+  trySplit,
+  type Obj,
+} from './pdfparts.ts';
 
 export function pdfString(value: string): string {
   if ([...value].some((ch) => ch.codePointAt(0)! < 32 || ch.codePointAt(0)! > 126)) {

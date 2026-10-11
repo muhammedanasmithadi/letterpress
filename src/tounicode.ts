@@ -1,6 +1,14 @@
 import { deflateSync } from 'node:zlib';
 import { inflateSync } from 'node:zlib';
-import { inflatedStream, join, LATIN1, objsByNum, streamDict, trySplit, type Obj } from './pdfparts.ts';
+import {
+  inflatedStream,
+  join,
+  LATIN1,
+  objsByNum,
+  streamDict,
+  trySplit,
+  type Obj,
+} from './pdfparts.ts';
 
 const PRESENTATION_FORMS: ReadonlyArray<readonly [number, number]> = [
   [0xfb00, 0xfb4f],

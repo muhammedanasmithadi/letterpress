@@ -9,7 +9,15 @@
  * ask the ToUnicode map rather than guess.
  */
 import { inflateSync } from 'node:zlib';
-import { LATIN1, dictOf, objsByNum, streamRange, trySplit, type Obj, type Parts } from './pdfparts.ts';
+import {
+  LATIN1,
+  dictOf,
+  objsByNum,
+  streamRange,
+  trySplit,
+  type Obj,
+  type Parts,
+} from './pdfparts.ts';
 
 export type FontTable = {
   /**

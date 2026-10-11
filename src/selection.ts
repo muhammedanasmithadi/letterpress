@@ -81,6 +81,8 @@ export type TextFlow = {
    * produced eighteen whitespace items where every measured gap was inside the band.
    */
   spans: number;
+  /** Glyphs whose font had no readable advance, so no gap around them was measured. */
+  unreadable: number;
   /** Text streams this walked. */
   streams: number;
   /**
@@ -112,6 +114,7 @@ const EMPTY: TextFlow = {
   widestAll: 0,
   narrowest: Number.POSITIVE_INFINITY,
   spans: 0,
+  unreadable: 0,
   streams: 0,
   read: 0,
 };
@@ -127,6 +130,8 @@ function invisible(table: FontTable, cid: number): boolean {
 }
 
 type Placed = {
+  /** A glyph whose font has no readable widths, so its advance is unknown. */
+  unknown?: boolean;
   x: number;
   y: number;
   size: number;
@@ -163,7 +168,14 @@ function glyphsOf(stream: string, fonts: Map<string, FontTable>): Placed[] | nul
     /\b(BT|ET|Tz|Tc|Tw|TL|T\*|TJ)\b|\/(\w+)\s+([-\d.eE]+)\s+Tf|([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+Tm|([-\d.eE]+)\s+([-\d.eE]+)\s+Td|<([0-9A-Fa-f]*)>\s*Tj|\[([^\]]*)\]\s*TJ/g;
 
   const show = (hex: string): void => {
-    if (hex.length % 4 !== 0 || !table) return;
+    if (!table) {
+      // One byte per code in a simple font and two in a CID font, and which this is cannot
+      // be told from the bytes, so the run is counted once rather than guessing a count of
+      // glyphs. The pen does not move: an advance that is not known is not invented.
+      out.push({ x, y, size, unknown: true } as Placed);
+      return;
+    }
+    if (hex.length % 4 !== 0) return;
     for (let i = 0; i < hex.length; i += 4) {
       const cid = parseInt(hex.slice(i, i + 4), 16);
       // A reader folds an invisible glyph into the pen advance instead of placing one, but
@@ -186,8 +198,12 @@ function glyphsOf(stream: string, fonts: Map<string, FontTable>): Placed[] | nul
     if (m[1] !== undefined) return null;
     if (m[2] !== undefined) {
       size = Number(m[3]);
+      // A font with no readable widths -- a Type 3 subset, or anything whose advances are
+      // in /Widths rather than /W -- does not refuse the stream. Refusing threw away the
+      // whole page: a document with eighteen Type 3 fallback fonts for CJK and one Latin
+      // face measured nothing at all. Its glyphs are marked instead, the run is re-anchored
+      // after them so no gap is measured across what is unknown, and the count is reported.
       table = fonts.get(m[2]!) ?? null;
-      if (!table) return null;
       continue;
     }
     if (m[4] !== undefined) {
@@ -294,6 +310,16 @@ export function textFlow(pdf: Uint8Array): TextFlow | null {
     const last = new LastChars();
     let prev: Placed | null = null;
     for (const g of glyphs) {
+      if (g.unknown) {
+        // The advance is unknown, so no gap may be measured to or from this glyph. Dropping
+        // the anchor means the next readable glyph starts a fresh comparison rather than
+        // inheriting a position that was never established.
+        flow.glyphs++;
+        flow.unreadable++;
+        last.reset();
+        prev = null;
+        continue;
+      }
       if (g.blank) {
         flow.glyphs++;
         last.save(' ');

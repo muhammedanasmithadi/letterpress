@@ -50,9 +50,14 @@ describe('a font whose widths cannot be read', () => {
         '<< /Type /Font /Subtype /Type0 /BaseFont /X /Encoding /Identity-H /DescendantFonts [9 0 R] >>',
       ),
     ]);
-    // No font under that name, so the stream cannot be read, so there is no measurement to
-    // report: `textFlow` returning null is the honest answer and a fabricated one is not.
-    expect(textFlow(pdf)).toBeNull();
+    // The glyphs cannot be measured and are counted rather than guessed at. Refusing the
+    // stream instead, as an earlier version did, threw away every page that used a fallback
+    // face: a document with eighteen Type 3 fonts for CJK and one Latin face measured
+    // nothing at all.
+    const flow = textFlow(pdf);
+    expect(flow).not.toBeNull();
+    // Once per show operation: the code size is unknown, so counting glyphs would be a guess.
+    expect(flow!.unreadable).toBe(2);
   });
 
   test('a descendant written as a dictionary in the array is found', () => {
@@ -107,21 +112,23 @@ describe('a page that names something the file does not contain', () => {
     // whose `/Resources` object is absent took the whole render down with it.
     const pdf = build('/Resources 99 0 R', '/Contents 10 0 R', [dict(4, CID)]);
     expect(() => textFlow(pdf)).not.toThrow();
-    // Nothing was readable, so there is no measurement -- a row of zeroes would read as
-    // "this document has no wide gaps", which is the opposite of the truth.
-    expect(textFlow(pdf)).toBeNull();
+    // The stream is found and its glyphs counted as unread. What must not happen is a
+    // throw: this runs in the render path, where an exception costs the whole document.
+    const flow = textFlow(pdf);
+    expect(flow).not.toBeNull();
+    expect(flow!.unreadable).toBeGreaterThan(0);
   });
 });
 
 describe('a document only partly read', () => {
   test('the finding can say the numbers came from part of it', () => {
-    // Two content streams, one of them naming a font the page does not bind. Both are
-    // counted, one is measured, and the report carries the difference.
+    // Two content streams. One is measured; the other sets a scaled text matrix, which is
+    // refused outright rather than measured, because a scale changes what a `Td` does to the
+    // pen. Both are counted and the report carries the difference.
     const text = (font: string): string =>
       `BT\n/${font} 10 Tf\n1 0 0 1 10 700 Tm\n<0001> Tj\n50 0 Td <0001> Tj\nET\n`;
     const good = text('F1');
-    // The second stream names a font the page does not bind, so it cannot be read.
-    const bad = text('F9');
+    const bad = text('F1').replace('1 0 0 1 10 700 Tm', '2 0 0 2 10 700 Tm');
     const pdf = join(
       Buffer.from('%PDF-1.4\n', 'latin1'),
       [

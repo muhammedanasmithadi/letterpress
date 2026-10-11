@@ -76,7 +76,12 @@ function widthsByResource(parts: Parts): Map<number, Widths> {
   // did not -- which is the one failure this stage cannot detect on its own.
   for (const [num, fonts] of fontsByContent(parts, () => null)) {
     const widths: Widths = new Map();
-    for (const [name, table] of fonts) widths.set(name, table.widthOf);
+    for (const [name, table] of fonts) {
+      // Only two-byte fonts. `mergeBlock` reads a hex string as pairs of bytes, which is
+      // right for a CID font and halves every code of a Type 3 subset, so a one-byte font is
+      // left alone rather than rewritten into a run with the wrong glyphs.
+      if (table.codeBytes === 2) widths.set(name, table.widthOf);
+    }
     out.set(num, widths);
   }
   return out;

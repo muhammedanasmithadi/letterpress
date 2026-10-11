@@ -11,6 +11,7 @@ import { describe, expect, test } from 'bun:test';
 import { join, type Obj } from '../src/pdfparts.ts';
 import { parseCMap, parseW } from '../src/textfont.ts';
 import { textFlow } from '../src/selection.ts';
+import { mergeTextRuns } from '../src/tjmerge.ts';
 
 const dict = (num: number, body: string) => ({
   num,
@@ -232,6 +233,76 @@ describe('a CMap written on one line', () => {
     const m = parseCMap('begincmap\n1 beginbfrange\n<0010> <0011> <00660069>\nendbfrange\nendcmap');
     expect(m.get(0x10)).toBe('fi');
     expect(m.get(0x11)).toBe('gj');
+  });
+});
+
+describe('a one-byte font', () => {
+  test('is measured with the widths it declares', () => {
+    // A Type 3 subset: one byte per code, advances in /Widths from /FirstChar, and a
+    // FontMatrix that carries the unit conversion. Reading its bytes as pairs of a CID font
+    // halves every code, and reading it as a CID font with no /W makes every glyph one em.
+    // The stream is `A` at 10pt, then `B` 3 units further right than A's advance leaves it.
+    // A is 500 wide, so at size 10 it advances 5; the gap is 8 - 5 = 3, which is 0.3 em.
+    const body = 'BT\n/F3 10 Tf\n1 0 0 1 10 700 Tm\n<41> Tj\n8 0 Td <42> Tj\nET\n';
+    const pdf = join(
+      Buffer.from('%PDF-1.4\n', 'latin1'),
+      [
+        dict(1, '<< /Type /Catalog /Pages 2 0 R >>'),
+        dict(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>'),
+        dict(
+          3,
+          '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F3 7 0 R >> >> /Contents 10 0 R >>',
+        ),
+        dict(
+          7,
+          '<< /Type /Font /Subtype /Type3 /FontMatrix [.001 0 0 -.001 0 0] /FirstChar 65 /LastChar 66 /Widths [500 600] /FontBBox [0 0 1000 1000] >>',
+        ),
+        {
+          num: 10,
+          bytes: Buffer.from(
+            `10 0 obj\n<< /Length ${body.length} >>\nstream\n${body}endstream\nendobj\n`,
+            'latin1',
+          ),
+        },
+      ],
+      Buffer.from('trailer\n<< /Root 1 0 R /Size 11 >>\n', 'latin1'),
+    );
+    const flow = textFlow(pdf);
+    expect(flow).not.toBeNull();
+    expect(flow!.unreadable).toBe(0);
+    expect(flow!.widestAll).toBeCloseTo(0.3, 6);
+  });
+
+  test('is left out of the text-run merge', () => {
+    // The merge reads a hex string as pairs of bytes, which is right for a CID font and
+    // halves every code of a one-byte font, so a block in one must not be rewritten.
+    const body = 'BT\n/F3 10 Tf\n1 0 0 1 10 700 Tm\n<41> Tj\n8 0 Td <42> Tj\nET\n';
+    const pdf = join(
+      Buffer.from('%PDF-1.4\n', 'latin1'),
+      [
+        dict(1, '<< /Type /Catalog /Pages 2 0 R >>'),
+        dict(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>'),
+        dict(
+          3,
+          '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F3 7 0 R >> >> /Contents 10 0 R >>',
+        ),
+        dict(
+          7,
+          '<< /Type /Font /Subtype /Type3 /FontMatrix [.001 0 0 -.001 0 0] /FirstChar 65 /LastChar 66 /Widths [500 600] /FontBBox [0 0 1000 1000] >>',
+        ),
+        {
+          num: 10,
+          bytes: Buffer.from(
+            `10 0 obj\n<< /Length ${body.length} >>\nstream\n${body}endstream\nendobj\n`,
+            'latin1',
+          ),
+        },
+      ],
+      Buffer.from('trailer\n<< /Root 1 0 R /Size 11 >>\n', 'latin1'),
+    );
+    const merged = mergeTextRuns(pdf);
+    expect(merged.stats.merged).toBe(0);
+    expect(Buffer.from(merged.pdf).equals(Buffer.from(pdf))).toBe(true);
   });
 });
 

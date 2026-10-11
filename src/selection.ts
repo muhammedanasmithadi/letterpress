@@ -175,9 +175,14 @@ function glyphsOf(stream: string, fonts: Map<string, FontTable>): Placed[] | nul
       out.push({ x, y, size, unknown: true } as Placed);
       return;
     }
-    if (hex.length % 4 !== 0) return;
-    for (let i = 0; i < hex.length; i += 4) {
-      const cid = parseInt(hex.slice(i, i + 4), 16);
+    // A Type 3 subset uses one byte per code and a CID font two, and the bytes themselves
+    // do not say which: `<70>` is one glyph in the first and half of one in the second.
+    // Splitting every string into pairs halved the advance of every fallback glyph and
+    // invented a gap after each.
+    const step = table.codeBytes * 2;
+    if (hex.length % step !== 0) return;
+    for (let i = 0; i < hex.length; i += step) {
+      const cid = parseInt(hex.slice(i, i + step), 16);
       // A reader folds an invisible glyph into the pen advance instead of placing one, but
       // it still remembers that a space came by, which is what decides whether a following
       // narrow gap ends the item.

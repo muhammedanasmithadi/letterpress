@@ -12,10 +12,16 @@ import { inflateSync } from 'node:zlib';
 import { LATIN1, dictOf, streamRange, trySplit, type Obj, type Parts } from './pdfparts.ts';
 
 export type FontTable = {
-  /** Advance in text-space units for a CID at 1000 units/em. */
-  widthOf: (cid: number) => number;
-  /** The character the CID stands for; empty when the font does not say. */
-  unicodeOf: (cid: number) => string;
+  /**
+   * Bytes per code. One for a simple font or a Type 3 subset, two for a CID font, and it
+   * cannot be inferred from the bytes themselves: `<70>` is one glyph in a simple font and
+   * half of one in a CID font.
+   */
+  codeBytes: 1 | 2;
+  /** Advance in thousandths of an em for a code. */
+  widthOf: (code: number) => number;
+  /** The character the code stands for; empty when the font does not say. */
+  unicodeOf: (code: number) => string;
 };
 
 /** The body of the `/Font` dictionary, to its matching `>>`. */
@@ -197,25 +203,109 @@ export function fontsByContent(
       // itself, and a font that resolves to none of those has no readable widths. Saying so
       // is the point: falling back to `/DW` and then to 1000 makes every glyph one em wide,
       // which invents a gap where there is a letter fit.
-      // A font may be the descendant itself, with no `/Type0` parent above it.
-      const kidObj = /\/Subtype\s*\/CIDFontType2/.test(parent) ? target : descendant(byNum, parent);
-      if (!kidObj) continue;
-      const font = dictOf(kidObj);
-      if (!/\/Subtype\s*\/CIDFontType2/.test(font)) continue;
-      const dw = Number(/\/DW\s+(-?[\d.]+)/.exec(font)?.[1] ?? 1000);
-      const widths = parseW(font);
-      const cmap = parseCMap(
-        cmapOf(Number(/\/ToUnicode\s+(\d+)\s+0\s+R/.exec(parent)?.[1] ?? -1)) ?? '',
-      );
-      fonts.set(m[1]!, {
-        widthOf: (cid: number) => widths.get(cid) ?? dw,
-        unicodeOf: (cid: number) => cmap.get(cid) ?? '',
-      });
+      const table = simpleTable(parent, target, byNum, cmapOf) ?? cidTable(parent, byNum, cmapOf);
+      if (table) fonts.set(m[1]!, table);
     }
 
     for (const n of contentsOf(dict, byNum)) out.set(n, fonts);
   }
   return out;
+}
+
+/**
+ * A font with one-byte codes, whose advances live in a `/Widths` array indexed from
+ * `/FirstChar`.
+ *
+ * These are the Type 3 subsets Chromium emits for a fallback face, and every CJK, Arabic
+ * and Devanagari glyph in a document arrives through one. Leaving them out made a page of
+ * eighteen of them report nothing at all, and reading them as if they were CID fonts made
+ * every glyph one em wide because their code is half as long.
+ *
+ * A Type 3 glyph is drawn in the space its `/FontMatrix` describes, and that matrix is
+ * where the units differ from a CID font's: Chromium writes `.001`, so a glyph 500 units
+ * wide advances half an em. Scaling by the matrix puts the result back in the same
+ * thousand-units-per-em the rest of the report works in.
+ */
+function simpleTable(
+  parent: string,
+  target: Obj,
+  byNum: Map<number, Obj>,
+  cmapOf: (num: number) => string | null,
+): FontTable | null {
+  const subtype = /\/Subtype\s*\/(Type3|TrueType|Type1|MMType1)/.exec(parent)?.[1];
+  if (!subtype) return null;
+
+  const first = Number(/\/FirstChar\s+(\d+)/.exec(parent)?.[1] ?? 0);
+  // A Type 3 subset often has no `/FontDescriptor` at all, and one may name an object the
+  // file does not contain. `!` on a map lookup is a compile-time assertion with no runtime
+  // effect, and this runs in the render path, so the descriptor is read only if it is there.
+  const descriptorNum = Number(/\/FontDescriptor\s+(\d+)\s+0\s+R/.exec(parent)?.[1] ?? NaN);
+  const descriptor = Number.isFinite(descriptorNum) ? byNum.get(descriptorNum) : undefined;
+  const missing = Number(
+    descriptor ? /\/MissingWidth\s+(-?[\d.]+)/.exec(dictOf(descriptor))?.[1] ?? 0 : 0,
+  );
+  const widths = parseWidths(parent);
+
+  // The matrix maps glyph space to text space, so it carries the unit conversion. It is
+  // absent for everything except Type 3, which works in a thousand-unit em.
+  const matrix = Number(/\/FontMatrix\s*\[\s*(-?[\d.eE]+)/.exec(parent)?.[1] ?? 1);
+  const scale = subtype === 'Type3' && matrix !== 0 ? matrix * 1000 : 1;
+
+  const cmap = parseCMap(cmapOf(Number(/\/ToUnicode\s+(\d+)\s+0\s+R/.exec(parent)?.[1] ?? -1)) ?? '');
+  void target;
+  return {
+    codeBytes: 1,
+    widthOf: (code: number) => (widths.get(code - first) ?? missing) * scale,
+    unicodeOf: (code: number) => cmap.get(code) ?? '',
+  };
+}
+
+/** The `/Widths` array, which starts at `/FirstChar` and runs to `/LastChar`. */
+function parseWidths(dict: string): Map<number, number> {
+  const at = /\/Widths\s*\[/.exec(dict);
+  if (!at) return new Map();
+  let depth = 0;
+  let end = -1;
+  for (let i = at.index + at[0].length - 1; i < dict.length; i++) {
+    if (dict[i] === '[') depth++;
+    else if (dict[i] === ']') {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  if (end === -1) return new Map();
+  const out = new Map<number, number>();
+  let n = 0;
+  for (const tok of dict.slice(at.index + at[0].length, end).split(/\s+/)) {
+    const w = Number(tok);
+    if (Number.isFinite(w)) out.set(n++, w);
+  }
+  return out;
+}
+
+/** A font whose codes are two bytes, with its advances in a `/W` array. */
+function cidTable(
+  parent: string,
+  byNum: Map<number, Obj>,
+  cmapOf: (num: number) => string | null,
+): FontTable | null {
+  // A font may be the descendant itself, with no `/Type0` parent above it.
+  const inline = /\/Subtype\s*\/CIDFontType2/.test(parent);
+  const kidObj = inline ? undefined : descendant(byNum, parent);
+  const font = inline ? parent : kidObj ? dictOf(kidObj) : undefined;
+  if (!font || !/\/Subtype\s*\/CIDFontType2/.test(font)) return null;
+
+  const dw = Number(/\/DW\s+(-?[\d.]+)/.exec(font)?.[1] ?? 1000);
+  const widths = parseW(font);
+  const cmap = parseCMap(cmapOf(Number(/\/ToUnicode\s+(\d+)\s+0\s+R/.exec(parent)?.[1] ?? -1)) ?? '');
+  return {
+    codeBytes: 2,
+    widthOf: (cid: number) => widths.get(cid) ?? dw,
+    unicodeOf: (cid: number) => cmap.get(cid) ?? '',
+  };
 }
 
 /** The descendant a `/Type0` font names, in any of the three forms it may take. */

@@ -1041,7 +1041,8 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           // geometry cannot account for, so it is named rather than left to be discovered
           // by dragging a cursor across the page.
           why.push(
-            `${flow.spans} ligature spans a browser ends a text item at regardless of spacing`,
+            `${flow.spans} ligature spans, each a place a browser may end a text item ` +
+              'regardless of spacing',
           );
         }
         // A stream this could not read takes its glyphs out of every count above while the

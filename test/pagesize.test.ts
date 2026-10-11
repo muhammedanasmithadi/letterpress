@@ -1,10 +1,5 @@
 import { expect, test } from 'bun:test';
-import {
-  declaredPageMargin,
-  declaredPageSize,
-  pageRules,
-  stripPageSize,
-} from '../src/pdf.ts';
+import { declaredPageMargin, declaredPageSize, pageRules, stripPageSize } from '../src/pdf.ts';
 
 // `declaredPageSize` is what the pipeline asks before it decides whether the document has
 // chosen its own paper. When it says yes, no paper is sent to Chromium at all and the
@@ -51,7 +46,7 @@ test('text that is not a stylesheet is not a page rule', () => {
     '<!-- @page { size: A4 } -->',
     '<script>const css = "@page{size:A4}";</script>',
     '<script>if (x) { s = "@page{size:A4}" }</script>',
-    "<div onclick=\"go('@page{size:A4}')\">x</div>",
+    '<div onclick="go(\'@page{size:A4}\')">x</div>',
     '<style>p::after{content:"@page { size: A4 }"}</style>',
   ];
   for (const html of notCss) {

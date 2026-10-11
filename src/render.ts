@@ -968,10 +968,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       if (
         flow &&
         ((flow.breaks > 0 &&
-          (flow.tooWide > 0 ||
-            flow.jump > 0 ||
-            flow.tooThin > 0 ||
-            flow.backwards > 0)) ||
+          (flow.tooWide > 0 || flow.jump > 0 || flow.tooThin > 0 || flow.backwards > 0)) ||
           flow.spans > 0 ||
           flow.unreadable > 0)
       ) {

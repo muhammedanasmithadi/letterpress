@@ -97,18 +97,20 @@ export function stripPageSize(html: string): string {
     // `body` is matched on its own so that `^` anchors at the first declaration. Applied to
     // the whole rule instead, `@page{size:A4}` -- size first, nothing before it -- kept its
     // size, because `^` would have been the `@`.
-    const stripped = css.replace(/(@page[^{]*\{)([^}]*)(\})/gi, (_w: string, open: string, body: string, close: string) =>
-      open +
-      body
-        .replace(/((?:^|;)\s*)\bsize\s*:[^;}]*/gi, '$1')
-        // The separators around the declaration that was taken out. `size` first in the
-        // rule leaves the `;` that followed it leading the body; `size` last leaves the `;`
-        // that preceded it trailing. Neither is a syntax error in CSS, but a page rule that
-        // reads `{;margin:2cm}` is a page rule nobody wrote.
-        .replace(/^\s*;\s*/, '')
-        .replace(/;\s*;/g, ';')
-        .replace(/\s*;\s*$/, '') +
-      close,
+    const stripped = css.replace(
+      /(@page[^{]*\{)([^}]*)(\})/gi,
+      (_w: string, open: string, body: string, close: string) =>
+        open +
+        body
+          .replace(/((?:^|;)\s*)\bsize\s*:[^;}]*/gi, '$1')
+          // The separators around the declaration that was taken out. `size` first in the
+          // rule leaves the `;` that followed it leading the body; `size` last leaves the `;`
+          // that preceded it trailing. Neither is a syntax error in CSS, but a page rule that
+          // reads `{;margin:2cm}` is a page rule nobody wrote.
+          .replace(/^\s*;\s*/, '')
+          .replace(/;\s*;/g, ';')
+          .replace(/\s*;\s*$/, '') +
+        close,
     );
     return tag + stripped + end;
   });
@@ -160,4 +162,3 @@ export function pageRules(html: string): string[] {
       .match(/@page[^{]*\{[^}]*\}/gi) ?? []
   );
 }
-

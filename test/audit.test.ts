@@ -352,49 +352,65 @@ test('without SOURCE_DATE_EPOCH the timestamp is left alone', async () => {
   }
 }, 30_000);
 
+// Two tests write images to a scratch directory, write a document beside them and render
+// it at a given cap. Factored out because a copy of the setup is what the duplication gate
+// counts, and because the setup is not what either test is about.
+async function withImageDoc(
+  prefix: string,
+  files: Record<string, Buffer>,
+  doc: string,
+  run: (path: string) => Promise<void>,
+) {
+  const dir = await mkdtemp(join(tmpdir(), prefix));
+  try {
+    for (const [name, bytes] of Object.entries(files)) await Bun.write(join(dir, name), bytes);
+    await Bun.write(join(dir, 'doc.html'), doc);
+    await run(join(dir, 'doc.html'));
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+// The two tests below want the same thing from a capped render: that an image was reduced
+// and that the finding says so. Asserted once, because a second copy of these three lines is
+// what the duplication gate counts and not what either test is about.
+async function cappedRender(path: string) {
+  const r = await render(browser, { path, maxImagePpi: 120 });
+  expect(r.findings.map((f) => f.code)).toContain('image-downsampled');
+  expect(r.info.imageObjects).toBe(1);
+  return r;
+}
+
 test('a hidden image does not take the replacement meant for another', async () => {
   // The measuring loop skips images it cannot measure -- hidden on screen, or not yet loaded
   // -- so its results are a subsequence of document.images. Assigning them positionally hands
   // the first replacement to the hidden image, and the photograph that was meant to be
   // downsampled keeps its full resolution while the finding says it was reduced. A
   // print-only backdrop or a `data-src` lazy load is the shape that triggers it.
-  const dir = await mkdtemp(join(tmpdir(), 'letterpress-img2-'));
-  try {
-    await Bun.write(join(dir, 'backdrop.png'), widePng(1200, 900));
-    await Bun.write(join(dir, 'photo.png'), widePng(1200, 900));
-    const doc =
-      '<!doctype html><style>@page{size:A4;margin:10mm} img{width:180mm}' +
+  await withImageDoc(
+    'letterpress-img2-',
+    { 'backdrop.png': widePng(1200, 900), 'photo.png': widePng(1200, 900) },
+    '<!doctype html><style>@page{size:A4;margin:10mm} img{width:180mm}' +
       '.screen-only{display:none}</style>' +
-      '<img class="screen-only" src="backdrop.png"><img src="photo.png">';
-    await Bun.write(join(dir, 'doc.html'), doc);
-
-    const capped = await render(browser, { path: join(dir, 'doc.html'), maxImagePpi: 120 });
+      '<img class="screen-only" src="backdrop.png"><img src="photo.png">',
     // Exactly one image was measurable. With the positional walk the hidden backdrop took
     // the replacement and the finding was reported against the wrong image entirely.
-    expect(capped.findings.map((f) => f.code)).toContain('image-downsampled');
-    expect(capped.info.imageObjects).toBe(1);
-  } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => {});
-  }
+    async (path) => void (await cappedRender(path)),
+  );
 }, 90_000);
 
 test('images are downsampled to the cap, and reported', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'letterpress-img-'));
-  try {
-    const photo = join(dir, 'photo.png');
-    await Bun.write(photo, widePng(1200, 900));
-    const doc = `<!doctype html><style>@page{size:A4;margin:10mm} img{width:180mm}</style><img src="photo.png">`;
-    await Bun.write(join(dir, 'doc.html'), doc);
+  await withImageDoc(
+    'letterpress-img-',
+    { 'photo.png': widePng(1200, 900) },
+    '<!doctype html><style>@page{size:A4;margin:10mm} img{width:180mm}</style>' +
+      '<img src="photo.png">',
+    async (path) => {
+      const capped = await cappedRender(path);
+      const off = await render(browser, { path, maxImagePpi: 0 });
+      expect(off.findings.map((f) => f.code)).not.toContain('image-downsampled');
 
-    const capped = await render(browser, { path: join(dir, 'doc.html'), maxImagePpi: 120 });
-    expect(capped.findings.map((f) => f.code)).toContain('image-downsampled');
-    expect(capped.info.imageObjects).toBe(1);
-
-    const off = await render(browser, { path: join(dir, 'doc.html'), maxImagePpi: 0 });
-    expect(off.findings.map((f) => f.code)).not.toContain('image-downsampled');
-
-    expect(capped.pdf.byteLength).toBeLessThan(off.pdf.byteLength);
-  } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => {});
-  }
+      expect(capped.pdf.byteLength).toBeLessThan(off.pdf.byteLength);
+    },
+  );
 }, 90_000);

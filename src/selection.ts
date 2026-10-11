@@ -75,10 +75,21 @@ export type TextFlow = {
   /** The narrowest gap of any kind, in em, including the negative ones a kern produces. */
   narrowest: number;
   /**
-   * Marked-content spans carrying `/ActualText`, which Chromium wraps around every
-   * ligature. A reader ends a text item at each of them whatever the geometry says, and
-   * this does not model that: on a page of ordinary prose with twenty ligatures the reader
-   * produced eighteen whitespace items where every measured gap was inside the band.
+   * Marked-content spans carrying `/ActualText`, which Chromium wraps around every ligature.
+   * A reader ends a text item at each of them whatever the geometry says.
+   *
+   * Established by intervention rather than by correlation: stripping the span wrappers
+   * from a rendered file while keeping every glyph took a page of ordinary prose from 67
+   * text items and 18 whitespace items down to 9 items and none -- 9 items being its 9
+   * lines, which is what this report says the geometry alone produces. Tagging is not the
+   * cause: the same file rendered with `generateTaggedPDF` off is identical in both counts,
+   * because the spans come from the shaping layer rather than the structure tree.
+   *
+   * The count is of spans, and the reader's whitespace items are fewer -- 18 against 20 on
+   * that page, 49 against 68 on the multilingual one -- because a span with no gap in front
+   * of it starts a fresh item without producing one. Modelling that exactly means carrying
+   * a position across each boundary, which the masking pass deliberately destroys, so the
+   * number is an upper bound and is reported as one.
    */
   spans: number;
   /** Glyphs whose font had no readable advance, so no gap around them was measured. */

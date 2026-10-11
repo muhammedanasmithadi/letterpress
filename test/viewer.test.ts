@@ -164,7 +164,7 @@ describe('the shell itself', () => {
 
   test('every control is a native element', async () => {
     const page = (await html()).replace(/<!--[\s\S]*?-->/g, '');
-    expect(page).not.toMatch(/<div[^>]*role="button"/);
+    expect(page).not.toMatch(/<div[^>]*role=["']button["']/);
     expect(page).not.toMatch(/<span[^>]*onclick/);
 
     const css = (await (await fetch(`${origin}/assets/theme.css`)).text()).replace(
@@ -222,8 +222,8 @@ describe('the shell itself', () => {
 
   test('the status line is announced, not just drawn', async () => {
     const page = await html();
-    expect(page).toMatch(/role="status"/);
-    expect(page).toMatch(/aria-live="polite"/);
+    expect(page).toMatch(/role=["']status["']/);
+    expect(page).toMatch(/aria-live=["']polite["']/);
   });
 
   test('the editor is labelled and described', async () => {
@@ -317,7 +317,7 @@ div{height:250px;background:#c03030}</style><div>BOX</div>`;
     expect(sheet).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/);
     expect(sheet).toMatch(/\.toolbar\s*\{[^}]*min-width: 0/s);
 
-    expect(sheet).toMatch(/input\[type="file"\][^}]*min-width: 0/s);
+    expect(sheet).toMatch(/input\[type=["']file["']\][^}]*min-width: 0/s);
   });
 
   test('the select is not width-capped, so its default option is not clipped', async () => {
@@ -329,12 +329,12 @@ div{height:250px;background:#c03030}</style><div>BOX</div>`;
   test('the inert margin field is still reachable and explains itself', async () => {
     const page = await shell();
 
-    expect(page).toMatch(/id="margin"[^>]*aria-disabled="true"/s);
-    expect(page).not.toMatch(/id="margin"[^>]*\sdisabled>/s);
+    expect(page).toMatch(/id=["']margin["'][^>]*aria-disabled=["']true["']/s);
+    expect(page).not.toMatch(/id=["']margin["'][^>]*\sdisabled>/s);
 
     const js = await script();
 
-    expect(js).toMatch(/el\.format\.value \? el\.margin\.value\.trim\(\) : ""/);
+    expect(js).toMatch(/el\.format\.value \? el\.margin\.value\.trim\(\) : (""|'')/);
   });
 
   test('a long render reports elapsed time instead of a frozen label', async () => {
@@ -347,11 +347,7 @@ div{height:250px;background:#c03030}</style><div>BOX</div>`;
   test('the editor has an accessible name', async () => {
     const page = await shell();
 
-    const textarea = page.slice(
-      page.indexOf('<textarea id="source"'),
-      page.indexOf('>', page.indexOf('<textarea id="source"')),
-    );
-    expect(textarea).toContain('aria-label="HTML source"');
+    expect(page).toMatch(/<textarea[^>]*id=["']source["'][^>]*aria-label=["']HTML source["']/s);
   });
 
   test('the status line carries the page count, so it is announced', async () => {

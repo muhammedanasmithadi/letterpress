@@ -25,3 +25,4 @@ Baseline 2026-10-10, Bun + TypeScript 7.0.2 codebase (18 src files, 23 test file
 - Comments: 134 in `src/` + 31 in CI config, kept. They carry load-bearing why-context (font dependence, env traps). No machine enforcement on existing code; new code follows the spirit (names over narration).
 - Complexity: 14 known CC>15 functions waived with this file as justification; all are parser/renderer hot spots, all covered by tests.
 - Browser test `selection.test.ts` fails without Chromium + DejaVu/Noto fonts (local env); passes in CI where the workflow installs them. Environment-gated, not a product defect.
+- Tests assert properties, never incidental formatting (quote style, whitespace). A formatter run must not break the suite.

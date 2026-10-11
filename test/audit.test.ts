@@ -317,6 +317,43 @@ test('SOURCE_DATE_EPOCH makes output byte-reproducible', async () => {
   }
 }, 60_000);
 
+test('a stamped date leaves nothing of the old one behind', async () => {
+  // The stamp matches a byte range and writes over it, padding with spaces to keep every
+  // later offset valid. Its date pattern allowed five characters after the offset sign and
+  // Chromium writes six -- `+00'00'` -- so the match stopped one character short of the
+  // closing quote, which kept its old value. The stamped file read
+  // `D:20231114221320Z     '`, with the stale apostrophe still in it.
+  //
+  // No test caught it because the assertion above only checks that the date starts right, and
+  // a conforming reader stops at the `Z`. The file was valid and the finding was true as far
+  // as anyone could tell, which is what a defect with no consumer looks like.
+  const previous = process.env.SOURCE_DATE_EPOCH;
+  process.env.SOURCE_DATE_EPOCH = '1700000000';
+  try {
+    const r = await render(browser, {
+      html: `<!doctype html><style>@page{size:A4;margin:10mm}</style><p>stamped</p>`,
+      author: 'Someone',
+    });
+    const text = new TextDecoder('latin1').decode(r.pdf);
+
+    // Every date in the file is the new one followed by padding and nothing else.
+    const dates = [...text.matchAll(/\((D:[^)]*)\)/g)].map((m) => m[1]!);
+    expect(dates.length).toBeGreaterThan(0);
+    for (const d of dates)
+      expect({ date: d, ok: /^D:20231114\d{6}Z *$/.test(d) }).toEqual({
+        date: d,
+        ok: true,
+      });
+
+    // The length is preserved, so nothing downstream of an edit can move.
+    expect(r.pdf.byteLength).toBeGreaterThan(0);
+    expect(text).not.toContain("'00'");
+  } finally {
+    if (previous === undefined) delete process.env.SOURCE_DATE_EPOCH;
+    else process.env.SOURCE_DATE_EPOCH = previous;
+  }
+}, 60_000);
+
 test('without a pinned clock two renders differ only in their timestamps', async () => {
   const previous = process.env.SOURCE_DATE_EPOCH;
   delete process.env.SOURCE_DATE_EPOCH;

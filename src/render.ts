@@ -536,7 +536,7 @@ async function serveWorkDir(dir: string): Promise<{ origin: string; stop: () => 
   };
 }
 
-function stampPdf(pdf: Uint8Array, fallbackTitle: string): Uint8Array {
+function stampPdf(pdf: Uint8Array): Uint8Array {
   const text = new TextDecoder('latin1').decode(pdf);
   const out = new Uint8Array(pdf);
   const edits: Array<[number, number, string]> = [];
@@ -548,7 +548,18 @@ function stampPdf(pdf: Uint8Array, fallbackTitle: string): Uint8Array {
     const pdfDate =
       `D:${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}` +
       `${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}Z`;
-    for (const m of text.matchAll(/D:\d{14}[+\-Z][\d'Z]{0,5}/g)) {
+    // The whole date, not a prefix of it.
+    //
+    // `[\d'Z]{0,5}` allowed five characters after the offset sign and Chromium writes six
+    // -- `+00'00'` -- so the match stopped one character short of the closing quote. The
+    // replacement preserved the matched length, so the byte the pattern never reached kept
+    // its old value: `D:20261011135334+00'00'` stamped to `D:20231114221320Z     '`, with
+    // the stale apostrophe still sitting in the file. Every reproducible build has it,
+    // because Chromium always writes the six-character form.
+    //
+    // A conforming reader stops at the `Z` and never sees the fragment, which is why no test
+    // caught it: the file was valid and the finding was true as far as anyone could tell.
+    for (const m of text.matchAll(/D:\d{14}(?:[+\-]\d{2}'?\d{2}'?|Z)/g)) {
       if (m.index !== undefined) edits.push([m.index, m[0].length, pdfDate]);
     }
 
@@ -564,8 +575,8 @@ function stampPdf(pdf: Uint8Array, fallbackTitle: string): Uint8Array {
     }
   }
 
-  void fallbackTitle;
-
+  // Applied back to front, and every replacement is padded or truncated to the length it
+  // replaces, so no offset after it can move and the file length never changes.
   for (const [at, length, value] of edits.sort((a, b) => b[0] - a[0])) {
     const fit = value.slice(0, length);
     for (let i = 0; i < fit.length; i++) out[at + i] = fit.charCodeAt(i);
@@ -990,7 +1001,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       // object, and it was the only stage after the merge that nothing checked. It goes
       // through the same gate as the others so that a bad rewrite is a finding rather than
       // the caller's problem.
-      const stamped = repairOrKeep(described, (bytes) => stampPdf(bytes, pdfTitle));
+      const stamped = repairOrKeep(described, stampPdf);
       if (stamped.failures.length) {
         rejected.add('stamp');
         findings.push({

@@ -112,7 +112,7 @@ export function parseArgs(argv: string[]): ParseResult {
   };
 
   for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
+    const a = argv[i] ?? '';
     switch (a) {
       case '-h':
       case '--help':
@@ -232,7 +232,7 @@ export function parseArgs(argv: string[]): ParseResult {
   if (rest.length) {
     if (opts.template)
       return { opts, error: 'pass either an input file or --template with --data, not both' };
-    opts.input = rest[0];
+    opts.input = rest[0] ?? '';
     if (/^https?:\/\//i.test(opts.input)) opts.allowNetwork = true;
   } else if (!opts.template) {
     return { opts, error: 'no input. pass a file, - for stdin, a URL, or --template with --data' };

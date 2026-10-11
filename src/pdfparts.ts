@@ -35,11 +35,13 @@ export function split(raw: Buffer): Parts {
     starts.push({ num: Number(m[1]), at: m.index + (m.index > 0 && m[0][0] !== '0' ? 1 : 0) });
   }
   const trailerAt = text.indexOf('\ntrailer\n');
-  if (!starts.length || trailerAt === -1) throw new Error('not a linear pdf');
+  const first = starts[0];
+  if (first === undefined || trailerAt === -1) throw new Error('not a linear pdf');
   const objs: Obj[] = [];
-  for (let i = 0; i < starts.length; i++) {
-    const from = starts[i].at;
-    const next = i + 1 < starts.length ? starts[i + 1].at : trailerAt;
+  for (const [i, s] of starts.entries()) {
+    const from = s.at;
+    const n = starts[i + 1];
+    const next = n === undefined ? trailerAt : n.at;
 
     const window = text.slice(from, next);
     const marker = maskStrings(window).match(/stream\r?\n/);
@@ -62,13 +64,13 @@ export function split(raw: Buffer): Parts {
       const m = /\bendobj[ \t]*[\r\n]/.exec(maskedWindow.slice(after));
       to = m ? from + after + m.index + 6 : next;
     }
-    objs.push({ num: starts[i].num, bytes: raw.subarray(from, Math.min(to, next)) });
+    objs.push({ num: s.num, bytes: raw.subarray(from, Math.min(to, next)) });
   }
 
   const oldStartxref = text.indexOf('\nstartxref', trailerAt);
   if (oldStartxref === -1) throw new Error('no startxref');
   return {
-    head: raw.subarray(0, starts[0].at),
+    head: raw.subarray(0, first.at),
     objs,
     trailer: raw.subarray(trailerAt + 1, oldStartxref),
   };

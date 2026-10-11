@@ -96,11 +96,11 @@ test('--format a4 and @page size a4 agree to within a point', async () => {
       .match(/([\d.]+)\s+([\d.]+)\s*\]/)!
       .slice(1)
       .map(Number);
-  const a = size(viaFlag.info.mediaBoxes[0]);
-  const b = size(viaCss.info.mediaBoxes[0]);
+  const a = size(viaFlag.info.mediaBoxes[0]!);
+  const b = size(viaCss.info.mediaBoxes[0]!);
 
-  expect(Math.abs(a[0] - b[0])).toBeLessThan(1.5);
-  expect(Math.abs(a[1] - b[1])).toBeLessThan(1.5);
+  expect(Math.abs(a[0]! - b[0]!)).toBeLessThan(1.5);
+  expect(Math.abs(a[1]! - b[1]!)).toBeLessThan(1.5);
 }, 30_000);
 
 test('--landscape under a portrait @page is an error, not silence', async () => {
@@ -246,7 +246,7 @@ test('repeated occurrences are counted, not collapsed to one', async () => {
 test('--format with --landscape actually produces landscape', async () => {
   const doc = `<!doctype html><style>@page{size:A4;margin:10mm}</style><h1>x</h1>`;
   const r = await render(browser, { html: doc, format: 'a4', landscape: true });
-  const { w, h } = boxSize(r.info.mediaBoxes[0]);
+  const { w, h } = boxSize(r.info.mediaBoxes[0]!);
   expect(w).toBeGreaterThan(h);
   expect(codes(r.findings)).toContain('page-size-override');
 }, 30_000);
@@ -257,7 +257,7 @@ test('a commented-out @page is not treated as a declaration', async () => {
     landscape: true,
   });
   expect(codes(r.findings)).not.toContain('orientation-ignored');
-  const { w, h } = boxSize(r.info.mediaBoxes[0]);
+  const { w, h } = boxSize(r.info.mediaBoxes[0]!);
   expect(w).toBeGreaterThan(h);
 }, 30_000);
 

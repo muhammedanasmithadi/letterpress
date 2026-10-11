@@ -63,7 +63,7 @@ function pdfWithCMap(cmap: string): Buffer {
     const head = Buffer.from(`${i + 1} 0 obj\n${parts[i]}`, LATIN1);
     chunks.push(head);
     length += head.length;
-    if (typeof parts[i] === 'string' && parts[i].includes('\nstream\n')) {
+    if (typeof parts[i] === 'string' && parts[i]!.includes('\nstream\n')) {
       const tail = Buffer.from('\nendstream\nendobj\n', LATIN1);
       chunks.push(body, tail);
       length += body.length + tail.length;

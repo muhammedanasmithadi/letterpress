@@ -49,7 +49,7 @@ test('renders the paper size the document declares, exactly', async () => {
   expect(info.pageSize).toContain('594.96');
   expect(info.pageSize).toContain('841.92');
 
-  const box = r.info.mediaBoxes[0].match(/\[\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/)!;
+  const box = r.info.mediaBoxes[0]!.match(/\[\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/)!;
   expect(Number(box[3]) - Number(box[1])).toBeCloseTo(594.96, 1);
   expect(Number(box[4]) - Number(box[2])).toBeCloseTo(841.92, 1);
 }, 30_000);

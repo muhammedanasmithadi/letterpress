@@ -85,7 +85,7 @@ function fixRanges(cmap: string): string | undefined {
   let out = '';
   let cursor = 0;
   for (const block of blocks) {
-    const [whole, , body] = block;
+    const [whole, , body = ''] = block;
     const keep: string[] = [];
     const added: string[] = [];
     for (const raw of body.split('\n')) {

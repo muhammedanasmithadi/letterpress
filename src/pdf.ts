@@ -34,7 +34,8 @@ function pageCount(raw: string): number {
   return (raw.match(/\/Type\s*\/Page[^s]/g) ?? []).length;
 }
 
-function bodyOf(raw: string, num: string): string | undefined {
+function bodyOf(raw: string, num: string | undefined): string | undefined {
+  if (num === undefined) return undefined;
   const start = raw.search(new RegExp(`(?:^|[^0-9])${num}\\s+0\\s+obj`));
   if (start < 0) return undefined;
   const end = raw.indexOf('endobj', start);

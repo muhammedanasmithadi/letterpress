@@ -227,7 +227,7 @@ export async function startServer(opts: ServerOptions = {}) {
           return new Response('not found', { status: 404 });
         }
 
-        const type = (request.headers.get('content-type') ?? '').split(';')[0].trim();
+        const type = (request.headers.get('content-type') ?? '').split(';')[0]?.trim() ?? '';
         if (type !== 'application/json') {
           return Response.json(
             {

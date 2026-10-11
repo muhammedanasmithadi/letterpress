@@ -127,7 +127,8 @@ export function toInches(len: string): number {
         `use an absolute unit: mm, cm, in, pt, pc, px, or a bare 0.`,
     );
   }
-  if (!Object.hasOwn(ABSOLUTE_UNITS, unit)) {
+  const factor = ABSOLUTE_UNITS[unit];
+  if (factor === undefined) {
     throw new Error(`unsupported margin unit "${unit}". use mm, cm, in, pt, pc, px, or a bare 0.`);
   }
   const value = Number(m[1]);
@@ -141,7 +142,7 @@ export function toInches(len: string): number {
         `use px, pt, mm, cm or in.`,
     );
   }
-  return value / ABSOLUTE_UNITS[unit];
+  return value / factor;
 }
 
 const close = (a: number, b: number) => Math.abs(a - b) < 0.05;
@@ -152,15 +153,16 @@ function precedenceFindings(html: string, req: RenderRequest): Finding[] {
   const declaredMargin = declaredPageMargin(html);
 
   if (declared && req.format) {
-    const [w, h] = FORMATS[req.format];
+    const [w = NaN, h = NaN] = FORMATS[req.format];
     const named = declared.match(/\b(a3|a4|a5|letter|legal|tabloid)\b/)?.[1]?.toLowerCase();
     const dims = declared.match(/([\d.]+)\s*(mm|cm|in|px|pt)/gi)?.map(toInches) ?? [];
-    const target = req.landscape ? [h, w] : [w, h];
+    const [d0 = NaN, d1 = NaN] = dims;
+    const target: [number, number] = req.landscape ? [h, w] : [w, h];
     const agrees = named
       ? named === req.format && !req.landscape
       : dims.length >= 2 &&
-        ((close(dims[0], target[0]) && close(dims[1], target[1])) ||
-          (close(dims[0], target[1]) && close(dims[1], target[0])));
+        ((close(d0, target[0]) && close(d1, target[1])) ||
+          (close(d0, target[1]) && close(d1, target[0])));
     if (!agrees) {
       findings.push({
         code: 'page-size-override',
@@ -175,7 +177,8 @@ function precedenceFindings(html: string, req: RenderRequest): Finding[] {
       /\blandscape\b/.test(declared) ||
       (() => {
         const d = declared.match(/([\d.]+)\s*(mm|cm|in)/gi)?.map(toInches) ?? [];
-        return d.length >= 2 && d[0] > d[1];
+        const [e0 = NaN, e1 = NaN] = d;
+        return d.length >= 2 && e0 > e1;
       })();
     if (!landscapeDeclared) {
       findings.push(
@@ -1002,7 +1005,8 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       if (
         flow &&
         ((flow.breaks > 0 && (flow.tooWide > 0 || flow.jump > 0 || flow.tooThin > 0)) ||
-          flow.spans > 0)
+          flow.spans > 0 ||
+          flow.unreadable > 0)
       ) {
         // A gap past 0.6 em ends a text item, but a stretched word space and a jump to the
         // next column have nothing to do with each other and are fixed by different CSS.
@@ -1021,6 +1025,14 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         }
         if (flow.tooThin > 0) {
           why.push(`${flow.tooThin} word spaces squeezed below it, which letter-spacing causes`);
+        }
+        if (flow.unreadable > 0) {
+          // Type 3 subsets and simple fonts carry their advances in /Widths, not /W. Their
+          // glyphs are counted and skipped rather than guessed, and no gap is measured to or
+          // from one, so the numbers above are the readable part of the document.
+          why.push(
+            `${flow.unreadable} glyphs in fonts with no readable advance, so no gap around them was measured`,
+          );
         }
         if (flow.spans > 0) {
           // Chromium wraps every ligature in a marked-content span carrying /ActualText, and
@@ -1112,7 +1124,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         findings.push({
           code: 'subresource-failed',
           severity: 'warn',
-          url: failedSubresources[0].url,
+          url: failedSubresources[0]?.url,
           message:
             `${failedSubresources.length} ${failedSubresources.length === 1 ? 'subresource' : 'subresources'} (${kinds.join(', ')}) failed to load, so the document is missing ${failedSubresources.length === 1 ? 'it' : 'them'}.\n${listed}` +
             (images

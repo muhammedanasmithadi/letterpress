@@ -92,7 +92,7 @@ export async function pdfImages(bytes: Uint8Array): Promise<PdfImage[]> {
         images.push({
           page: Number(m[1]),
 
-          type: m[3],
+          type: m[3]!,
           width: Number(m[4]),
           height: Number(m[5]),
         });

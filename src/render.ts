@@ -999,7 +999,11 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       // justified paragraph selects as a row of separate boxes. Nothing in the file can
       // change the gap, so it is reported rather than repaired.
       const flow = textFlow(pdf);
-      if (flow && flow.breaks > 0 && (flow.tooWide > 0 || flow.jump > 0 || flow.tooThin > 0)) {
+      if (
+        flow &&
+        ((flow.breaks > 0 && (flow.tooWide > 0 || flow.jump > 0 || flow.tooThin > 0)) ||
+          flow.spans > 0)
+      ) {
         // A gap past 0.6 em ends a text item, but a stretched word space and a jump to the
         // next column have nothing to do with each other and are fixed by different CSS.
         const why: string[] = [];
@@ -1017,6 +1021,16 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         }
         if (flow.tooThin > 0) {
           why.push(`${flow.tooThin} word spaces squeezed below it, which letter-spacing causes`);
+        }
+        if (flow.spans > 0) {
+          // Chromium wraps every ligature in a marked-content span carrying /ActualText, and
+          // a reader ends a text item at each of them whatever the geometry says. On a page
+          // of ordinary prose with twenty ligatures that is eighteen highlight boxes the
+          // geometry cannot account for, so it is named rather than left to be discovered
+          // by dragging a cursor across the page.
+          why.push(
+            `${flow.spans} ligature spans a browser ends a text item at regardless of spacing`,
+          );
         }
         // A stream this could not read takes its glyphs out of every count above while the
         // counts still read as a document total, so say how much of the document the numbers

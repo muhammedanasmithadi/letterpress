@@ -39,11 +39,12 @@ describe('word gaps a browser will break a selection on', () => {
     expect(/0\.\d\d em/.test(message!)).toBe(true);
     expect(/text-align:justify/.test(message!)).toBe(true);
 
-    // The same page set ragged-right has no gap past the band, which is the whole
-    // difference between one highlight and one per word. The measure is narrow on purpose:
-    // on a wide measure justification barely stretches anything and neither file reports,
-    // which is correct rather than a failed measurement.
-    expect(said(ragged)).toBeUndefined();
+    // The same page set ragged-right has no *word space* past the band, which is the whole
+    // difference between one highlight and one per word. It may still report ligature
+    // spans, which are a separate cause and not fixed by any of this. The measure is narrow
+    // on purpose: on a wide measure justification barely stretches anything and neither arm
+    // reports a stretched word space, which is correct rather than a failed measurement.
+    expect(said(ragged) ?? '').not.toMatch(/word space/);
   }, 120_000);
 
   test('the measurement agrees with what a browser does', async () => {
@@ -71,6 +72,24 @@ describe('word gaps a browser will break a selection on', () => {
     // be: those are ordinary letter fits, and counting them would point at the wrong CSS.
     expect(flow!.jump).toBe(ROWS * (COLS - 1));
     expect(flow!.tooWide).toBe(0);
+  }, 120_000);
+
+  test('ligature spans are reported even when no gap is wide', async () => {
+    // Chromium wraps every ligature in a marked-content span carrying /ActualText, and a
+    // reader ends a text item at each of them whatever the spacing is. On a page whose
+    // every gap is inside the band the report used to say nothing at all, which is the
+    // dangerous shape: a confident silence where the highlight is still broken.
+    const r = await render(browser, {
+      html: `<!doctype html><meta charset="utf-8">
+        <style>@page{size:A4;margin:20mm}
+          body{font-family:'Noto Serif',serif;font-size:11pt;text-align:left}</style>
+        <p>${'Body text that fills a line and wraps with office affluent. '.repeat(12)}</p>`,
+      author: 's',
+    });
+    const flow = textFlow(r.pdf);
+    expect(flow).not.toBeNull();
+    expect(flow!.spans).toBeGreaterThan(5);
+    expect(said(r)).toMatch(/ligature span/);
   }, 120_000);
 
   test('a document with no text reports nothing rather than guessing', async () => {

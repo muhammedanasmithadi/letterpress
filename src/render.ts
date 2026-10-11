@@ -449,6 +449,27 @@ function* refsIn(text: string): Generator<string> {
   }
 }
 
+/**
+ * The finding for a file that will not pass the structural check, or null when it will.
+ *
+ * A pure function of the bytes on purpose. It was inline at the end of the pipeline first,
+ * and testing it needed `mock.module` on the verify module -- which is global in Bun, so the
+ * test that proved this path works broke every test that ran after it. A decision that is a
+ * function of its argument does not need the module registry to reach.
+ */
+export function finalCheckFinding(pdf: Uint8Array): Finding | null {
+  const finalCheck = verify(pdf);
+  if (finalCheck.ok) return null;
+  return {
+    code: 'output-unverified',
+    severity: 'error',
+    message:
+      `the file returned by this call did not pass the structural check: ` +
+      `${finalCheck.failures.join('; ')}. every repair upstream is gated on the same ` +
+      `check, so this is the merge or the stamp producing something it should not have.`,
+  };
+}
+
 export function hasRelativeAssets(html: string): boolean {
   for (const ref of refsIn(html)) {
     const clean = ref.trim().split(/[?#]/)[0];
@@ -1017,17 +1038,8 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       // It cannot tell a correct page from a wrong one. It catches the file that will not
       // open, which is the failure a caller cannot detect and the one no finding so far
       // would have described.
-      const finalCheck = verify(pdf);
-      if (!finalCheck.ok) {
-        findings.push({
-          code: 'output-unverified',
-          severity: 'error',
-          message:
-            `the file returned by this call did not pass the structural check: ` +
-            `${finalCheck.failures.join('; ')}. every repair upstream is gated on the same ` +
-            `check, so this is the merge or the stamp producing something it should not have.`,
-        });
-      }
+      const failedFinal = finalCheckFinding(pdf);
+      if (failedFinal) findings.push(failedFinal);
 
       // What a browser will do with a selection over this page. Firefox's PDF.js keeps a
       // word gap inside the current text item only between 0.102 and 0.6 em; outside that

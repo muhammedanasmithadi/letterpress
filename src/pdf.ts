@@ -78,6 +78,42 @@ function declaredPageProp(html: string, prop: string): string | null {
   return null;
 }
 
+/**
+ * The same document with the `size` declaration taken out of every `@page` rule, so the
+ * paper sent to Chromium wins over anything the page asked for.
+ *
+ * This walks `<style>` elements for the same reason `pageRules` does. The first version
+ * replaced across the whole document and so reached into `<script>` bodies: a page builder
+ * holding `"@page{size:A4}"` in a JavaScript string had that string rewritten to
+ * `"@page{}"`, and a template injected at load time then carried no page size at all. The
+ * replacement is inside a print pipeline whose contract is to change the paper and nothing
+ * else, so leaving the script alone is the whole point.
+ */
+export function stripPageSize(html: string): string {
+  return html.replace(/(<style\b[^>]*>)([\s\S]*?)(<\/style\s*>|$)/gi, (whole, tag, css, end) => {
+    // A `<style>` with no `@page` in it is left byte-identical, so the no-op case cannot be
+    // disturbed by a rewrite that was never needed.
+    if (!/@page/i.test(css)) return whole;
+    // `body` is matched on its own so that `^` anchors at the first declaration. Applied to
+    // the whole rule instead, `@page{size:A4}` -- size first, nothing before it -- kept its
+    // size, because `^` would have been the `@`.
+    const stripped = css.replace(/(@page[^{]*\{)([^}]*)(\})/gi, (_w: string, open: string, body: string, close: string) =>
+      open +
+      body
+        .replace(/((?:^|;)\s*)\bsize\s*:[^;}]*/gi, '$1')
+        // The separators around the declaration that was taken out. `size` first in the
+        // rule leaves the `;` that followed it leading the body; `size` last leaves the `;`
+        // that preceded it trailing. Neither is a syntax error in CSS, but a page rule that
+        // reads `{;margin:2cm}` is a page rule nobody wrote.
+        .replace(/^\s*;\s*/, '')
+        .replace(/;\s*;/g, ';')
+        .replace(/\s*;\s*$/, '') +
+      close,
+    );
+    return tag + stripped + end;
+  });
+}
+
 export function declaredPageSize(html: string): string | null {
   return declaredPageProp(html, 'size');
 }
@@ -86,8 +122,42 @@ export function declaredPageMargin(html: string): string | null {
   return declaredPageProp(html, 'margin');
 }
 
+/**
+ * The `@page` rules a browser would actually apply to `html`, and nothing else.
+ *
+ * The first version regexed the whole document. Every form of non-CSS text in a page --
+ * an HTML comment, a `<script>` body, an attribute value, a CSS string literal -- matched
+ * `@page { size: ... }` just as well as a stylesheet does, and each one reported a paper
+ * the browser had never been told about. That is not a mislabelled finding: the caller
+ * reads a non-null answer as "the document chose its own paper", turns off
+ * `preferCSSPageSize`, and sends no paper to Chromium at all. Chromium's fallback is
+ * Letter, so an A4 document silently printed on a Letter sheet with nothing reported. A
+ * page builder that embeds a template in a script string triggers it on ordinary pages.
+ *
+ * Comments go first because they are the outer container: `<style>` inside an HTML comment
+ * is the oldest way of toggling a stylesheet off, and the `<!--` is the only thing marking
+ * it as text. The `|$` on each closing delimiter matches the browser, where an unterminated
+ * comment or `<style>` runs to the end of the file rather than being ignored.
+ *
+ * `<template>` contents are the one case left where this can over-report: a `@page` in a
+ * template is not applied, and this cannot tell. No page builder puts page geometry in a
+ * template, and teaching this to parse HTML would cost more than the case is worth.
+ */
 export function pageRules(html: string): string[] {
-  const withoutComments = html.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const withoutHtml = html.replace(/<!--[\s\S]*?(?:-->|$)/g, ' ');
+  const styles = [...withoutHtml.matchAll(/<style\b[^>]*>([\s\S]*?)(?:<\/style\s*>|$)/gi)];
 
-  return [...withoutComments.matchAll(/@page[^{]*\{[^}]*\}/gi)].map((m) => m[0]);
+  return (
+    styles
+      .flatMap((m) => m[1] ?? [])
+      .join('\n')
+      // Quoted strings next, for the same reason. A `@page` rule takes keywords, lengths
+      // and colours; it cannot hold a string literal, so a string that looks like one is
+      // text and not a declaration. This also keeps a brace inside `content: "}"` from
+      // ending the match early.
+      .replace(/"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'/g, '""')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .match(/@page[^{]*\{[^}]*\}/gi) ?? []
+  );
 }
+

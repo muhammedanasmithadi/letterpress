@@ -10,7 +10,13 @@ import { textFlow } from './selection.ts';
 import { mergeTextRuns } from './tjmerge.ts';
 import { repairOrKeep } from './verify.ts';
 import { audit } from './lint.ts';
-import { declaredPageMargin, declaredPageSize, inspect, type PdfInfo } from './pdf.ts';
+import {
+  declaredPageMargin,
+  declaredPageSize,
+  inspect,
+  stripPageSize,
+  type PdfInfo,
+} from './pdf.ts';
 
 export const FORMATS = {
   a3: [11.6929, 16.5354],
@@ -216,7 +222,8 @@ async function capImageResolution(
   const expression = `(() => {
     const MAX = ${maxPpi};
     const report = [];
-    for (const img of document.images) {
+    for (let i = 0; i < document.images.length; i++) {
+      const img = document.images[i];
       if (!img.naturalWidth) continue;
       const wIn = img.getBoundingClientRect().width / 96;
       if (!wIn) continue;
@@ -596,13 +603,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
     }
 
     const override =
-      req.format && src.html && declaredPageSize(src.html)
-        ? src.html.replace(
-            /(@page[^{]*\{)([^}]*)(\})/gi,
-            (_whole, open: string, body: string, close: string) =>
-              open + body.replace(/(^|;)\s*\bsize\s*:[^;}]*/gi, '$1').replace(/;;+/g, ';') + close,
-          )
-        : null;
+      req.format && src.html && declaredPageSize(src.html) ? stripPageSize(src.html) : null;
 
     let srcUrl: string;
     if (fastPath) srcUrl = 'about:blank';
@@ -992,6 +993,12 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         if (flow.tooThin > 0) {
           why.push(`${flow.tooThin} word spaces squeezed below it, which letter-spacing causes`);
         }
+        if (flow.backwards > 0) {
+          why.push(
+            `${flow.backwards} moves back inside a line, which ends a text item -- ` +
+              `right-to-left text does this by design`,
+          );
+        }
         if (flow.unreadable > 0) {
           // Type 3 subsets and simple fonts carry their advances in /Widths, not /W. Their
           // glyphs are counted and skipped rather than guessed, and no gap is measured to or
@@ -1034,7 +1041,10 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           message: `wrote "${docMeta.author}" as the pdf author, from the document's own meta tag. pass --author to override it.`,
         });
       }
-      if (docMeta.subject?.trim()) {
+      // Guarded the way the author branch above is. `--subject "Q3 report"` beats the
+      // document's own meta tag, and the gate may have rejected the whole metadata repair,
+      // so without this the finding names a value that is not in the file.
+      if (docMeta.subject?.trim() && !req.subject?.trim() && !rejected.has('metadata')) {
         findings.push({
           code: 'metadata-subject',
           severity: 'info',

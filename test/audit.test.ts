@@ -352,6 +352,32 @@ test('without SOURCE_DATE_EPOCH the timestamp is left alone', async () => {
   }
 }, 30_000);
 
+test('a hidden image does not take the replacement meant for another', async () => {
+  // The measuring loop skips images it cannot measure -- hidden on screen, or not yet loaded
+  // -- so its results are a subsequence of document.images. Assigning them positionally hands
+  // the first replacement to the hidden image, and the photograph that was meant to be
+  // downsampled keeps its full resolution while the finding says it was reduced. A
+  // print-only backdrop or a `data-src` lazy load is the shape that triggers it.
+  const dir = await mkdtemp(join(tmpdir(), 'letterpress-img2-'));
+  try {
+    await Bun.write(join(dir, 'backdrop.png'), widePng(1200, 900));
+    await Bun.write(join(dir, 'photo.png'), widePng(1200, 900));
+    const doc =
+      '<!doctype html><style>@page{size:A4;margin:10mm} img{width:180mm}' +
+      '.screen-only{display:none}</style>' +
+      '<img class="screen-only" src="backdrop.png"><img src="photo.png">';
+    await Bun.write(join(dir, 'doc.html'), doc);
+
+    const capped = await render(browser, { path: join(dir, 'doc.html'), maxImagePpi: 120 });
+    // Exactly one image was measurable. With the positional walk the hidden backdrop took
+    // the replacement and the finding was reported against the wrong image entirely.
+    expect(capped.findings.map((f) => f.code)).toContain('image-downsampled');
+    expect(capped.info.imageObjects).toBe(1);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}, 90_000);
+
 test('images are downsampled to the cap, and reported', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'letterpress-img-'));
   try {

@@ -6,6 +6,9 @@ Baseline 2026-10-10, Bun + TypeScript 7.0.2 codebase (18 src files, 23 test file
 
 - Format: Prettier 3.9.9 (`bunx prettier --check`). One-time normalization applied.
 - Lint: ESLint core recommended + `no-warning-comments` + `no-empty` (allowEmptyCatch for best-effort kills). Covers `tools/` (`.mjs`); `.ts` is covered by `tsc --noEmit` — type-aware lint is blocked until typescript-eslint supports TS 7.
+- TS patterns: `tools/lint-ts.mjs` bans `as any`, `console.*`, `debugger`, marker comments in `src/` + `test/` (AST-exact via TS 5.9 parser sidecar — TS 7 ships no compiler API; grammar verified clean on all 41 files).
+- Duplication: jscpd ≤3.71% (measured baseline; any increase fails).
+- Supply chain: `bun audit` clean (268 packages) + gitleaks job. Secrets have no other place to hide: gitleaks scans full history.
 - Types: `tsc --noEmit`, clean — with `noUnusedLocals` + `noUnusedParameters` on (12 dead declarations removed to get there).
 - Next ratchet, not yet enforced: `noUncheckedIndexedAccess` (62 non-null assertions in `src/` today; enable only with a per-site justification pass).
 - Spelling: cspell 10 on `README.md` + `docs/*.md` (en-GB + 40 domain words in `cspell.yaml`).

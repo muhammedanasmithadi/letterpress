@@ -340,6 +340,29 @@ describe('fixFontDescriptors', () => {
   });
 });
 
+describe('unresolvedFontMetrics', () => {
+  test('a negative CapHeight without an embedded program is reported', () => {
+    const pdf = Buffer.from(
+      [
+        '%PDF-1.4',
+        '1 0 obj',
+        '<< /Type /Catalog /Pages 2 0 R >>',
+        'endobj',
+        '4 0 obj',
+        '<< /Type /FontDescriptor /FontName /TestFace /CapHeight -100 >>',
+        'endobj',
+        'trailer',
+        '<< /Root 1 0 R >>',
+        'startxref',
+        '999',
+        '%%EOF',
+      ].join('\n'),
+      LATIN1,
+    );
+    expect(unresolvedFontMetrics(pdf)).toEqual([{ fontName: 'TestFace', capHeight: -100 }]);
+  });
+});
+
 describe('rendered output', () => {
   let browser: Browser;
   let profile: string;

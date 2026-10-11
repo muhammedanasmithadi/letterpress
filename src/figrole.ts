@@ -14,7 +14,7 @@ function hasDescription(text: string): boolean {
 }
 
 function rolePattern(role: string): RegExp {
-  return new RegExp(`/S(\\s*)/${role}\\b`);
+  return new RegExp(`/S(\\s*)/${role.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
 }
 
 export function redundantFigures(parts: Parts): number[] {

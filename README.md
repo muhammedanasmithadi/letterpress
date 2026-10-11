@@ -160,6 +160,66 @@ wrapped in `<bdi dir="ltr">`.
 
 It cannot fix the text for you.
 
+## Selecting text in a browser
+
+A browser draws one highlight box per text item, and a text item ends wherever the
+gap between two glyphs leaves a band the viewer recognises. In Firefox's PDF.js —
+the engine behind the built-in viewer — a gap is kept inside the current item only
+between **0.102 and 0.6 em**. Inside that band it becomes a space you can select
+across. Outside it, in either direction, the item ends and the gap becomes a
+highlight of its own.
+
+So a justified paragraph, whose word spaces stretch past 0.6 em, selects as a row of
+separate boxes. So does a table, whose cell gutters are measured in ems. Neither is
+a fault in the file: the gaps are real, the geometry is correct, and every reader
+that applies the same rule does the same thing.
+
+There is a third cause with a different origin. Chromium wraps **every ligature** in
+a marked-content span carrying `/ActualText`, and a reader ends a text item at each of
+them whatever the spacing says. `fi`, `fl` and `ffi` are the usual triggers. It is
+not caused by tagging: a file rendered with `generateTaggedPDF` off is identical,
+because the spans come from the shaping layer rather than the structure tree.
+
+Establishing that last point took an intervention rather than a correlation.
+Stripping the span wrappers from a rendered file while keeping every glyph took a page
+of ordinary prose from 67 text items and 18 whitespace items down to 9 and none — nine
+being its nine lines, which is what the geometry alone produces.
+
+What you can do is all CSS:
+
+```css
+/* justification is the usual cause; left, or a longer measure, brings it inside */
+p {
+  text-align: left;
+  max-width: 34em;
+}
+
+/* tight table gutters */
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+td,
+th {
+  padding: 0 2px;
+}
+
+/* letter-spacing narrows every space, including the ones you want */
+body {
+  letter-spacing: 0;
+}
+```
+
+What you cannot do is change it in the PDF. Nothing in the file alters what a gap
+measures.
+
+`bun tools/selection.ts <file.html>` measures the real numbers on your document: how
+many gaps there are, how wide the widest is, and how many ligature spans. It reads
+the document before it attributes a cause — where justification is absent it says
+so, rather than telling you to change a rule that is not there. It does not yet say
+which element each gap belongs to, so finding the eight flex or grid gaps in your
+document is still a job for the inspector.
+
 ## Templates
 
 `--list-templates` prints what is bundled. Values come from JSON:

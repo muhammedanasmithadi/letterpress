@@ -5,6 +5,11 @@ import { join } from 'node:path';
 const ROOTS = ['src', 'test'];
 const EXT = new Set(['.ts', '.mts', '.cts']);
 const MARKERS = ['todo', 'fixme', 'hack', 'xxx'];
+// A name that exists in the page but not in this process, so it can only be reached by
+// shipping source rather than a value. Written as a property access with no space after the
+// dot: prose says "Acceptance document." and "the document checks could not run", and a
+// looser pattern reported every fixture and message containing the English word.
+const DOM_GLOBAL = /\b(?:document|window|navigator|location|history)\s*\.[A-Za-z_$]/;
 const problems = [];
 
 function files(dir) {
@@ -43,8 +48,50 @@ for (const f of ROOTS.flatMap(files)) {
     if (ts.isPropertyAccessExpression(node) && node.expression.getText(sf) === 'console')
       fail(f, node, 'console.*');
     if (node.kind === ts.SyntaxKind.DebuggerStatement) fail(f, node, 'debugger');
+
+    // Page-side JavaScript that interpolates a value while touching the DOM. Both halves
+    // are needed: a plain string sent to the page can only name things that exist in the
+    // page, so a free identifier there is a loud ReferenceError. An interpolated one can
+    // silently capture a module-scope value instead -- and any identifier it fails to
+    // interpolate is back to being free, throwing only once the browser runs it, after the
+    // page has rendered and after `bun run typecheck` has passed.
+    //
+    // This is the shape that shipped `report.push({ at: i })` into a downsampler with no `i`
+    // in scope, which disabled image downsampling for every document and reported nothing.
+    // Page-side code belongs in src/pageside.ts, where tsc checks it and the caller
+    // interpolates only `(${fn})(...)` with JSON-encoded arguments.
+    if (isPageExpression(node)) {
+      const init = node.initializer;
+      if (init && ts.isTemplateExpression(init) && DOM_GLOBAL.test(init.getText(sf)))
+        fail(f, init, 'interpolated page-side code: move it to src/pageside.ts');
+    }
+    // A named constant sent to the page later -- `const AUDIT = ...` in src/lint.ts. There
+    // is no dataflow here to connect it to the call, so any such constant that interpolates
+    // and touches the DOM is reported. AUDIT itself does not interpolate and is unaffected.
+    const declared = ts.isVariableDeclaration(node) ? node.initializer : undefined;
+    if (declared && ts.isTemplateExpression(declared) && DOM_GLOBAL.test(declared.getText(sf)))
+      fail(f, declared, 'interpolated page-side code: move it to src/pageside.ts');
+
     ts.forEachChild(node, visit);
   };
+
+  /** A property assignment of `expression:` inside an object passed to Runtime.evaluate. */
+  function isPageExpression(node) {
+    if (
+      !ts.isPropertyAssignment(node) ||
+      node.name.getText(sf).replace(/["']/g, '') !== 'expression'
+    )
+      return false;
+    const obj = node.parent;
+    if (!ts.isObjectLiteralExpression(obj) || obj.parent.kind !== ts.SyntaxKind.CallExpression)
+      return false;
+    const call = obj.parent;
+    return (
+      call.arguments.length > 1 &&
+      ts.isStringLiteral(call.arguments[0]) &&
+      call.arguments[0].text === 'Runtime.evaluate'
+    );
+  }
   const fail = (file, node, what) => {
     const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
     problems.push(`${file}:${line + 1}: ${what}`);
@@ -61,4 +108,4 @@ if (problems.length > 0) {
   console.error(problems.join('\n'));
   process.exit(1);
 }
-console.log('lint-ts ok (as any, console, debugger, markers: 0)');
+console.log('lint-ts ok (as any, console, debugger, markers, interpolated page-side code: 0)');

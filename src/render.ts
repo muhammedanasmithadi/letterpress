@@ -8,6 +8,7 @@ import { LINK_DESC_JS, fixLinkDescs, parseLinkDescs } from './linkdesc.ts';
 import { fixRedundantFigures, redundantFigureCount } from './figrole.ts';
 import { textFlow } from './selection.ts';
 import { mergeTextRuns } from './tjmerge.ts';
+import { applyImageReplacements, measureImages } from './pageside.ts';
 import { repairOrKeep, verify } from './verify.ts';
 import { audit } from './lint.ts';
 import {
@@ -219,30 +220,14 @@ async function capImageResolution(
   maxPpi: number,
   timeoutMs: number,
 ): Promise<Array<{ at: number; from: number; to: number; ppi: number }>> {
-  const expression = `(() => {
-    const MAX = ${maxPpi};
-    const report = [];
-    for (let i = 0; i < document.images.length; i++) {
-      const img = document.images[i];
-      if (!img.naturalWidth) continue;
-      const wIn = img.getBoundingClientRect().width / 96;
-      if (!wIn) continue;
-      const ppi = img.naturalWidth / wIn;
-      if (ppi <= MAX) continue;
-      const targetW = Math.max(1, Math.round(wIn * MAX));
-      const scale = targetW / img.naturalWidth;
-      const canvas = document.createElement("canvas");
-      canvas.width = targetW;
-      canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
-      const ctx = canvas.getContext("2d");
-      if (!ctx) continue;
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      report.push({ at: i, from: img.naturalWidth, to: canvas.width, ppi: Math.round(ppi), url: canvas.toDataURL("image/jpeg", 0.9) });
-    }
-    return JSON.stringify(report);
-  })()`;
-
-  const res = await tab.send('Runtime.evaluate', { expression, returnByValue: true }, timeoutMs);
+  const res = await tab.send(
+    'Runtime.evaluate',
+    {
+      expression: `(${measureImages})(${JSON.stringify(maxPpi)})`,
+      returnByValue: true,
+    },
+    timeoutMs,
+  );
   const raw = res?.result?.value;
   if (raw == null) return [];
   let entries: Array<{ at: number; from: number; to: number; ppi: number; url: string }>;
@@ -256,18 +241,9 @@ async function capImageResolution(
   await tab.send(
     'Runtime.evaluate',
     {
-      expression: `(() => {
-      // By index into document.images, not by position in this list: the measuring loop
-      // skips hidden, unloaded and already-small images, so a positional walk hands each
-      // replacement to the wrong image the moment one is skipped. A hidden image took the
-      // first replacement, and the photograph that was meant to be downsampled kept its full
-      // resolution while the finding said it had been reduced.
-      for (const e of ${JSON.stringify(entries.map((e) => ({ at: e.at, url: e.url })))}) {
-        const img = document.images[e.at];
-        if (img) img.src = e.url;
-      }
-      return true;
-    })()`,
+      expression: `(${applyImageReplacements})(${JSON.stringify(
+        entries.map((e) => ({ at: e.at, url: e.url })),
+      )})`,
       returnByValue: true,
     },
     timeoutMs,

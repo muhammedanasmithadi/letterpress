@@ -319,6 +319,52 @@ describe('response format', () => {
     expect(Buffer.from(bytes).subarray(0, 5).toString()).toBe('%PDF-');
   }, 90_000);
 
+  test('a pdf response names its error findings, not just their number', async () => {
+    // A document with a surviving placeholder is an error-severity finding and still a
+    // structurally perfect PDF, so the response is a 200 with real bytes in it. Before
+    // x-letterpress-errors existed the only signal was x-letterpress-findings, a count, and
+    // a client reading it could not tell a clean render from a failed one.
+    const r = await post({
+      html: `<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:15mm}</style>
+        <h1>Report</h1><p>{{leftover}}</p>`,
+      author: 'Someone',
+      responseFormat: 'pdf',
+    });
+    expect(r.status).toBe(200);
+    expect(r.headers.get('x-letterpress-errors')).toBe('unfilled-placeholder');
+    expect(
+      Buffer.from(await r.arrayBuffer())
+        .subarray(0, 5)
+        .toString(),
+    ).toBe('%PDF-');
+  }, 90_000);
+
+  test('a clean pdf response reports no errors', async () => {
+    const r = await post({ html: DOC2, author: 'Someone', responseFormat: 'pdf' });
+    expect(r.status).toBe(200);
+    expect(r.headers.get('x-letterpress-errors')).toBe('');
+  }, 90_000);
+
+  test('the pdf header agrees with the json body about which findings are errors', async () => {
+    // One render, two shapes of the same answer. If these ever disagree, the pdf form is
+    // the one nobody checks, which is how it drifted in the first place.
+    const body = {
+      html: `<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:15mm}</style>
+        <h1>Report</h1><p>{{leftover}}</p>`,
+      author: 'Someone',
+    };
+    const json = (await (await post(body)).json()) as {
+      findings: Array<{ code: string; severity: string }>;
+    };
+    const pdf = await post({ ...body, responseFormat: 'pdf' });
+    const fromJson = json.findings
+      .filter((f) => f.severity === 'error')
+      .map((f) => f.code)
+      .join(',');
+    expect(pdf.headers.get('x-letterpress-errors')).toBe(fromJson);
+    expect(Number(pdf.headers.get('x-letterpress-findings'))).toBe(json.findings.length);
+  }, 120_000);
+
   test('both formats return the same document', async () => {
     process.env.SOURCE_DATE_EPOCH = '1700000000';
     try {

@@ -484,6 +484,20 @@ export async function startServer(opts: ServerOptions = {}) {
             }
 
             if (body.responseFormat === 'pdf') {
+              // A caller that asked for the PDF gets no body to read findings out of, so
+              // x-letterpress-findings -- a bare count -- was the whole of what it learned
+              // about a render that had failed. A document with an unfilled placeholder is
+              // an error-severity finding and still a perfectly valid PDF on a 200, so the
+              // count said 2 and neither number said one of them was a failure.
+              //
+              // The status stays 200: the PDF is real and the client asked for it. Lying
+              // about the status to carry a warning would break every existing caller, and
+              // refusing to serve would throw away work the client wants. The error codes
+              // go in a header instead, and codes are kebab-case so the value is ASCII and
+              // carries no quoting hazards.
+              const errors = result.findings
+                .filter((f) => f.severity === 'error')
+                .map((f) => f.code);
               const headers = new Headers({
                 'content-type': 'application/pdf',
                 'content-length': String(result.pdf.byteLength),
@@ -491,6 +505,7 @@ export async function startServer(opts: ServerOptions = {}) {
                 'x-letterpress-ms': String(result.ms),
                 'x-letterpress-tagged': String(result.info.tagged),
                 'x-letterpress-findings': String(result.findings.length),
+                'x-letterpress-errors': errors.join(','),
               });
 
               return new Response(result.pdf as unknown as BodyInit, {

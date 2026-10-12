@@ -138,6 +138,24 @@ of the summary.
 | `text-runs-merged`          | per-glyph text positioning folded into TJ arrays, glyph positions verified unchanged; also reports any block left alone      |
 | `asset-overwrites-document` | the document references a file named `input.html` or `override.html`, which was not staged because it would replace the page |
 
+### Findings over HTTP
+
+`POST /render` answers in one of two shapes. The default is JSON, with
+`findings` in the body. `"responseFormat": "pdf"` answers with the PDF bytes
+and nothing else, so the findings travel in headers instead:
+
+| header                   | meaning                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------- |
+| `x-letterpress-pages`    | pages in the document                                                                 |
+| `x-letterpress-ms`       | render time in milliseconds                                                           |
+| `x-letterpress-tagged`   | whether the document has a structure tree                                             |
+| `x-letterpress-findings` | how many findings, at any severity                                                    |
+| `x-letterpress-errors`   | the codes of the error-severity findings, comma-separated, empty when there were none |
+
+The status stays `200` for a document with error findings, because the PDF is
+real and you asked for it. `x-letterpress-errors` is the only way to tell a
+clean render from a failed one, so check it.
+
 ## Right-to-left text
 
 Arabic shapes and joins correctly, reading order is right, and numeric columns
@@ -276,7 +294,7 @@ escaped and printed.
 ## Development
 
 ```bash
-bun test          # 577 tests across 32 files
+bun test          # 596 tests across 33 files
 bun tools/selection.ts ~/Documents/a.html   # what a browser will do when a selection is dragged across it
 bun run bench     # cold start, concurrency and footprint, cross-runtime
 bun run typecheck

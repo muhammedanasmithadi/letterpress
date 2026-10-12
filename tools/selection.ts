@@ -125,9 +125,16 @@ for (const file of files) {
     );
   }
   if (flow.spans > 0) {
+    // Says what these are, not what they are usually assumed to be. Chromium emits these
+    // around ligatures and the repair removes the ones /ToUnicode already describes, so any
+    // reaching this report are the ones it had to keep -- which is worth saying, because
+    // "nothing in the document changes that" was both wrong and the reason it was said.
     advice.push(
-      `${flow.spans} ligature spans. A browser may end a text item at each whatever the ` +
-        `spacing; nothing in the document changes that.`,
+      `${flow.spans} marked-content spans carrying /ActualText survived the repair, because ` +
+        `the font does not map their glyphs to the same characters and the span is therefore ` +
+        `the only copy of that text. a browser may end a text item at each whatever the ` +
+        `spacing, so selection still breaks at these and no CSS can change it. they are not ` +
+        `all ligatures.`,
     );
   }
   if (flow.unreadable > 0) {

@@ -42,14 +42,14 @@ function cmaps(pdf: Uint8Array): string[] {
   return out;
 }
 
-function pdfWithCMap(cmap: string): Buffer {
+function pdfWithCMap(cmap: string, dictExtra = ''): Buffer {
   const body = deflateSync(Buffer.from(cmap, LATIN1));
 
   const parts: Array<string | Buffer> = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> >>',
-    `<< /Length ${body.length} /Filter /FlateDecode >>\nstream\n`,
+    `<< ${dictExtra}/Length ${body.length} /Filter /FlateDecode >>\nstream\n`,
     '<< /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+NotoSans /Encoding /Identity-H ' +
       '/DescendantFonts [6 0 R] /ToUnicode 4 0 R >>',
     '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /AAAAAA+NotoSans /CIDSystemInfo ' +
@@ -169,6 +169,33 @@ describe('fixToUnicode', () => {
     expect(text).toContain('<0675> <00660066>');
     expect(text).toContain('<0676> <00660069>');
     expect(text).toContain('<0677> <0066006C>');
+  });
+
+  test('a string in the stream dictionary survives the rewrite', () => {
+    // streamDict blanks the inside of every literal string so a read cannot mistake
+    // /Length 99 for a string that happens to say it. That is right for reading and it was
+    // used for writing: the repair rebuilt the dictionary from the masked text, so this
+    // file came back out as /Producer (            ), the contents gone, with no finding
+    // and no error. The file was corrupt and letterpress said it was fine.
+    const src = pdfWithCMap(cmapOfRange(0x0675, 0x0677, 0xfb00), '/Producer (Acme PDF 3.0) ');
+    const out = Buffer.from(fixToUnicode(src)).toString(LATIN1);
+
+    expect(out, 'the rewrite did not run, so this proves nothing').not.toBe(src.toString(LATIN1));
+    expect(out).toContain('/Producer (Acme PDF 3.0)');
+    expect(out).not.toMatch(/\/Producer \(\s*\)/);
+
+    // And the repair still did its job: the mask must not have cost us the CMap either.
+    expect(cmaps(fixToUnicode(src)).join('')).toContain('<0675> <00660066>');
+  });
+
+  test('the newline before stream is kept', () => {
+    // dictOf trims, so the separator has to be written back by hand. Without it the
+    // dictionary ends up glued to the keyword as `>>stream`.
+    const out = Buffer.from(
+      fixToUnicode(pdfWithCMap(cmapOfRange(0x0675, 0x0677, 0xfb00), '/Producer (Acme PDF 3.0) ')),
+    ).toString(LATIN1);
+    expect(out).toContain('>>\nstream\n');
+    expect(out).not.toContain('>>stream');
   });
 
   test('every glyph a rewritten range covered is still present', () => {

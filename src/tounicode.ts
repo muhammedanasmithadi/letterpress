@@ -1,14 +1,6 @@
 import { deflateSync } from 'node:zlib';
 import { inflateSync } from 'node:zlib';
-import {
-  inflatedStream,
-  join,
-  LATIN1,
-  objsByNum,
-  streamDict,
-  trySplit,
-  type Obj,
-} from './pdfparts.ts';
+import { dictOf, inflatedStream, join, LATIN1, objsByNum, trySplit, type Obj } from './pdfparts.ts';
 
 const PRESENTATION_FORMS: ReadonlyArray<readonly [number, number]> = [
   [0xfb00, 0xfb4f],
@@ -207,9 +199,19 @@ function fixCMapBoth(cmap: string): string | undefined {
 
 function rewrittenStream(o: Obj, cmap: string): Buffer {
   const compressed = deflateSync(Buffer.from(cmap, LATIN1));
-  const dict = streamDict(o).replace(/\/Length\s+\d+/, `/Length ${compressed.length}`);
+  // dictOf, not streamDict. streamDict blanks the body of every literal string so that a
+  // string cannot be mistaken for a keyword when reading -- which is right for reading and
+  // wrong for writing. Using it here meant a ToUnicode stream carrying /Producer (Acme PDF
+  // 3.0) came back out of the repair as /Producer (            ), the contents destroyed,
+  // with no finding and no error. The mask exists to stop a read from being fooled; it must
+  // never reach the file.
+  //
+  // dictOf trims, so the newline before `stream` is written back explicitly. The PDF spec
+  // wants an end-of-line there, and this reproduces the bytes streamDict produced for the
+  // ordinary case, where the trim changes nothing.
+  const dict = dictOf(o).replace(/\/Length\s+\d+/, `/Length ${compressed.length}`);
   return Buffer.concat([
-    Buffer.from(`${dict}stream\n`, LATIN1),
+    Buffer.from(`${dict}\nstream\n`, LATIN1),
     compressed,
     Buffer.from('\nendstream\nendobj\n', LATIN1),
   ]);

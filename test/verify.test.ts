@@ -1,17 +1,17 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { Browser } from '../src/browser.ts';
-import { render } from '../src/render.ts';
-import { addMetadata, readDocInfo } from '../src/meta.ts';
-import { fixFontDescriptors } from '../src/fontdesc.ts';
-import { fixToUnicode, unresolvedLigatures } from '../src/tounicode.ts';
-import { contentPayloads, repairOrKeep, verify } from '../src/verify.ts';
-import { join as joinParts, split } from '../src/pdfparts.ts';
-import { pdfInfo } from './poppler.ts';
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Browser } from "../src/browser.ts";
+import { render } from "../src/render.ts";
+import { addMetadata, readDocInfo } from "../src/meta.ts";
+import { fixFontDescriptors } from "../src/fontdesc.ts";
+import { fixToUnicode, unresolvedLigatures } from "../src/tounicode.ts";
+import { contentPayloads, repairOrKeep, verify } from "../src/verify.ts";
+import { join as joinParts, split } from "../src/pdfparts.ts";
+import { pdfInfo } from "./poppler.ts";
 
-const LATIN1 = 'latin1' as BufferEncoding;
+const LATIN1 = "latin1" as BufferEncoding;
 
 function same(a: Uint8Array, b: Uint8Array) {
   return a.length === b.length && a.every((v, i) => v === b[i]);
@@ -19,17 +19,19 @@ function same(a: Uint8Array, b: Uint8Array) {
 
 function fixture(): Buffer {
   const parts = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 6 0 R >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 7 0 R >>',
-    '<< /Title (Fixture) /Producer (Skia/PDF m154) >>',
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 6 0 R >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 7 0 R >>",
+    "<< /Title (Fixture) /Producer (Skia/PDF m154) >>",
   ];
   const streams = [
-    'BT /F1 12 Tf 10 100 Td (page one) Tj ET',
-    'BT /F1 12 Tf 10 100 Td (page two) Tj ET',
+    "BT /F1 12 Tf 10 100 Td (page one) Tj ET",
+    "BT /F1 12 Tf 10 100 Td (page two) Tj ET",
   ];
-  const chunks: Buffer[] = [Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n', LATIN1)];
+  const chunks: Buffer[] = [
+    Buffer.from("%PDF-1.4\n%\xe2\xe3\xcf\xd3\n", LATIN1),
+  ];
   let length = chunks[0]!.length;
   const offsets: number[] = [];
   for (let i = 0; i < parts.length; i++) {
@@ -51,9 +53,9 @@ function fixture(): Buffer {
   const n = parts.length + streams.length + 1;
   const table = [`xref\n0 ${n}\n0000000000 65535 f \n`];
   for (let k = 1; k < n; k++) {
-    table.push(`${String(offsets[k - 1] ?? 0).padStart(10, '0')} 00000 n \n`);
+    table.push(`${String(offsets[k - 1] ?? 0).padStart(10, "0")} 00000 n \n`);
   }
-  chunks.push(Buffer.from(table.join(''), LATIN1));
+  chunks.push(Buffer.from(table.join(""), LATIN1));
   chunks.push(
     Buffer.from(
       `trailer\n<< /Size ${n} /Root 1 0 R /Info 5 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`,
@@ -65,83 +67,100 @@ function fixture(): Buffer {
 
 function movesGlyphs(pdf: Uint8Array): Uint8Array {
   const text = Buffer.from(pdf).toString(LATIN1);
-  return Buffer.from(text.replace('(page one)', '(page ONE)'), LATIN1);
+  return Buffer.from(text.replace("(page one)", "(page ONE)"), LATIN1);
 }
 
 function breaksXref(pdf: Uint8Array): Uint8Array {
   const text = Buffer.from(pdf).toString(LATIN1);
-  const bad = text.replace(/startxref\n(\d+)/, (_m, at: string) => `startxref\n${Number(at) + 7}`);
+  const bad = text.replace(
+    /startxref\n(\d+)/,
+    (_m, at: string) => `startxref\n${Number(at) + 7}`,
+  );
 
   return Buffer.from(
     bad.replace(
       /\n(\d{10}) 00000 n \n/,
-      (_m, off: string) => `\n${String(Number(off) + 3).padStart(10, '0')} 00000 n \n`,
+      (_m, off: string) =>
+        `\n${String(Number(off) + 3).padStart(10, "0")} 00000 n \n`,
     ),
     LATIN1,
   );
 }
 
-describe('verify', () => {
-  test('a whole file passes', () => {
+describe("verify", () => {
+  test("a whole file passes", () => {
     const r = verify(fixture());
     expect(r.failures).toEqual([]);
     expect(r.ok).toBe(true);
   });
 
-  test('two startxref lines are refused', () => {
+  test("two startxref lines are refused", () => {
     const text = Buffer.from(fixture()).toString(LATIN1);
-    const two = Buffer.from(text.replace(/startxref/, '\nstartxref\n0'), LATIN1);
+    const two = Buffer.from(
+      text.replace(/startxref/, "\nstartxref\n0"),
+      LATIN1,
+    );
     const r = verify(two);
     expect(r.ok).toBe(false);
-    expect(r.failures.join(' ')).toMatch(/startxref/);
+    expect(r.failures.join(" ")).toMatch(/startxref/);
   });
 
-  test('a startxref pointing at the wrong place is refused', () => {
+  test("a startxref pointing at the wrong place is refused", () => {
     const text = Buffer.from(fixture()).toString(LATIN1);
     const at = text.search(/startxref\n(\d+)/);
     const broken = Buffer.from(
-      text.slice(0, at) + text.slice(at).replace(/startxref\n\d+/, 'startxref\n999999'),
+      text.slice(0, at) +
+        text.slice(at).replace(/startxref\n\d+/, "startxref\n999999"),
       LATIN1,
     );
     const r = verify(broken);
     expect(r.ok).toBe(false);
-    expect(r.failures.join(' ')).toMatch(/does not point/);
+    expect(r.failures.join(" ")).toMatch(/does not point/);
   });
 
-  test('a reference to an object that does not exist is refused', () => {
+  test("a reference to an object that does not exist is refused", () => {
     const text = Buffer.from(fixture()).toString(LATIN1);
-    const broken = Buffer.from(text.replace('/Contents 6 0 R', '/Contents 99 0 R'), LATIN1);
+    const broken = Buffer.from(
+      text.replace("/Contents 6 0 R", "/Contents 99 0 R"),
+      LATIN1,
+    );
     const r = verify(broken);
     expect(r.ok).toBe(false);
-    expect(r.failures.join(' ')).toMatch(/does not exist/);
+    expect(r.failures.join(" ")).toMatch(/does not exist/);
   });
 
-  test('a stream whose /Length disagrees with its payload is refused', () => {
+  test("a stream whose /Length disagrees with its payload is refused", () => {
     const text = Buffer.from(fixture()).toString(LATIN1);
-    const broken = Buffer.from(text.replace('/Length 39', '/Length 99'), LATIN1);
+    const broken = Buffer.from(
+      text.replace("/Length 39", "/Length 99"),
+      LATIN1,
+    );
     const r = verify(broken);
     expect(r.ok).toBe(false);
-    expect(r.failures.join(' ')).toMatch(/Length/);
+    expect(r.failures.join(" ")).toMatch(/Length/);
   });
 
-  test('a file that is not a linear pdf fails rather than passing silently', () => {
-    const r = verify(Buffer.from('not a pdf at all'));
+  test("a file that is not a linear pdf fails rather than passing silently", () => {
+    const r = verify(Buffer.from("not a pdf at all"));
     expect(r.ok).toBe(false);
   });
 
-  test('a reference inside a literal string is not a reference', () => {
+  test("a reference inside a literal string is not a reference", () => {
     const text = Buffer.from(fixture()).toString(LATIN1);
     const withAlt = Buffer.from(
-      text.replace('/Contents 6 0 R', '/Alt (see object 999 0 R) /Contents 6 0 R'),
+      text.replace(
+        "/Contents 6 0 R",
+        "/Alt (see object 999 0 R) /Contents 6 0 R",
+      ),
       LATIN1,
     );
 
-    expect(verify(withAlt).failures.join(' ')).not.toMatch(/does not exist/);
+    expect(verify(withAlt).failures.join(" ")).not.toMatch(/does not exist/);
     expect(verify(Buffer.from(fixture())).failures).toEqual([]);
   });
 
-  test('a reference inside a stream payload is not a reference', () => {
-    const payload = Buffer.from('<x>see object 999 0 R</x>', LATIN1);
+  test("a reference inside a stream payload is not a reference", () => {
+    const payload = Buffer.from("<x>see object 999 0 R</x>", LATIN1);
     const text = Buffer.from(fixture()).toString(LATIN1);
     const added = `9 0 obj
 << /Length ${payload.length} >>
@@ -150,32 +169,37 @@ ${payload.toString(LATIN1)}
 endstream
 endobj
 `;
-    const r = verify(Buffer.from(text.replace('trailer', added + 'trailer'), LATIN1));
-    expect(r.failures.join(' ')).not.toMatch(/does not exist/);
+    const r = verify(
+      Buffer.from(text.replace("trailer", added + "trailer"), LATIN1),
+    );
+    expect(r.failures.join(" ")).not.toMatch(/does not exist/);
   });
 
-  test('a genuine dangling reference is still refused with the scan narrowed', () => {
+  test("a genuine dangling reference is still refused with the scan narrowed", () => {
     const text = Buffer.from(fixture()).toString(LATIN1);
-    const broken = Buffer.from(text.replace('/Contents 6 0 R', '/Contents 99 0 R'), LATIN1);
+    const broken = Buffer.from(
+      text.replace("/Contents 6 0 R", "/Contents 99 0 R"),
+      LATIN1,
+    );
     expect(verify(broken).ok).toBe(false);
   });
 
-  test('/Length is read past a string carrying the word stream', () => {
+  test("/Length is read past a string carrying the word stream", () => {
     const text = Buffer.from(fixture()).toString(LATIN1);
     const hidden = Buffer.from(
-      text.replace('/Length 39', '/Producer (upstream) /Length 39'),
+      text.replace("/Length 39", "/Producer (upstream) /Length 39"),
       LATIN1,
     );
     expect(verify(hidden).ok).toBe(false);
   });
 });
 
-describe('content survived', () => {
+describe("content survived", () => {
   test("contentPayloads finds every page's stream", () => {
     expect(contentPayloads(fixture())).toHaveLength(2);
   });
 
-  test('a repair that moves a glyph is caught, and structure cannot', () => {
+  test("a repair that moves a glyph is caught, and structure cannot", () => {
     const original = fixture();
     const moved = movesGlyphs(original);
 
@@ -184,26 +208,30 @@ describe('content survived', () => {
 
     const withOriginal = verify(moved, original);
     expect(withOriginal.ok).toBe(false);
-    expect(withOriginal.failures.join(' ')).toMatch(/content stream 1 was rewritten/);
+    expect(withOriginal.failures.join(" ")).toMatch(
+      /content stream 1 was rewritten/,
+    );
   });
 
-  test('a repair that changes nothing outside the content stream passes', () => {
+  test("a repair that changes nothing outside the content stream passes", () => {
     const original = fixture();
-    const described = fixFontDescriptors(addMetadata(original, { author: 'A Person' }));
+    const described = fixFontDescriptors(
+      addMetadata(original, { author: "A Person" }),
+    );
     const r = verify(described, original);
     expect(r.failures).toEqual([]);
     expect(r.ok).toBe(true);
   });
 
-  test('a page pointing at a different stream is caught', () => {
+  test("a page pointing at a different stream is caught", () => {
     const original = fixture();
     const text = Buffer.from(original).toString(LATIN1);
 
     const swapped = Buffer.from(
       text
-        .replace('/Contents 6 0 R', '/Contents \x00 R')
-        .replace('/Contents 7 0 R', '/Contents 6 0 R')
-        .replace('/Contents \x00 R', '/Contents 7 0 R'),
+        .replace("/Contents 6 0 R", "/Contents \x00 R")
+        .replace("/Contents 7 0 R", "/Contents 6 0 R")
+        .replace("/Contents \x00 R", "/Contents 7 0 R"),
       LATIN1,
     );
     expect(verify(swapped).ok).toBe(true);
@@ -211,8 +239,8 @@ describe('content survived', () => {
   });
 });
 
-describe('repairOrKeep', () => {
-  test('a repair that is already a no-op is not treated as applied', () => {
+describe("repairOrKeep", () => {
+  test("a repair that is already a no-op is not treated as applied", () => {
     const original = fixture();
     const r = repairOrKeep(original, (p) => p);
     expect(r.applied).toBe(false);
@@ -220,14 +248,16 @@ describe('repairOrKeep', () => {
     expect(r.pdf).toBe(original);
   });
 
-  test('a good repair is kept', () => {
+  test("a good repair is kept", () => {
     const original = fixture();
-    const r = repairOrKeep(original, (p) => addMetadata(p, { author: 'A Person' }));
+    const r = repairOrKeep(original, (p) =>
+      addMetadata(p, { author: "A Person" }),
+    );
     expect(r.applied).toBe(true);
-    expect(readDocInfo(r.pdf).author).toBe('A Person');
+    expect(readDocInfo(r.pdf).author).toBe("A Person");
   });
 
-  test('a repair that moves a glyph is discarded and the original kept', () => {
+  test("a repair that moves a glyph is discarded and the original kept", () => {
     const original = fixture();
     const r = repairOrKeep(original, movesGlyphs);
     expect(r.applied).toBe(false);
@@ -235,44 +265,51 @@ describe('repairOrKeep', () => {
     expect(same(r.pdf, original)).toBe(true);
   });
 
-  test('a repair that throws is discarded rather than propagated', () => {
+  test("a repair that throws is discarded rather than propagated", () => {
     const original = fixture();
     const r = repairOrKeep(original, () => {
-      throw new Error('boom');
+      throw new Error("boom");
     });
     expect(r.applied).toBe(false);
-    expect(r.failures.join(' ')).toMatch(/threw/);
+    expect(r.failures.join(" ")).toMatch(/threw/);
     expect(same(r.pdf, original)).toBe(true);
   });
 
-  test('a repair that breaks the file is discarded', () => {
+  test("a repair that breaks the file is discarded", () => {
     const original = fixture();
 
     const broken = breaksXref(original);
-    expect(same(broken, original), 'the corruption helper changed nothing').toBe(false);
-    expect(verify(broken).ok, 'the corrupted file should not verify').toBe(false);
+    expect(
+      same(broken, original),
+      "the corruption helper changed nothing",
+    ).toBe(false);
+    expect(verify(broken).ok, "the corrupted file should not verify").toBe(
+      false,
+    );
 
     const r = repairOrKeep(original, (p) => breaksXref(p));
     expect(r.applied).toBe(false);
     expect(same(r.pdf, original)).toBe(true);
 
-    expect(r.failures.join(' ')).toMatch(/xref|startxref/i);
+    expect(r.failures.join(" ")).toMatch(/xref|startxref/i);
   });
 
-  test('truncating the file is caught', () => {
+  test("truncating the file is caught", () => {
     const original = fixture();
-    const r = repairOrKeep(original, (p) => p.subarray(0, Math.floor(p.length / 2)));
+    const r = repairOrKeep(original, (p) =>
+      p.subarray(0, Math.floor(p.length / 2)),
+    );
     expect(r.applied).toBe(false);
     expect(r.failures.length).toBeGreaterThan(0);
   });
 });
 
-describe('the gate in the render path', () => {
+describe("the gate in the render path", () => {
   let browser: Browser;
   let profile: string;
 
   beforeAll(async () => {
-    profile = await mkdtemp(join(tmpdir(), 'letterpress-gate-'));
+    profile = await mkdtemp(join(tmpdir(), "letterpress-gate-"));
     browser = await Browser.launch({ profile });
   }, 60_000);
 
@@ -281,20 +318,20 @@ describe('the gate in the render path', () => {
     await rm(profile, { recursive: true, force: true }).catch(() => {});
   });
 
-  test('an ordinary render is verified and reported intact', async () => {
+  test("an ordinary render is verified and reported intact", async () => {
     const r = await render(browser, {
       html: `<!doctype html><meta charset="utf-8"><title>T</title>
 <style>@page{size:A4;margin:18mm}</style><h1>H</h1><p>office efficient flags finished</p>`,
-      author: 'A Person',
+      author: "A Person",
     });
 
-    expect(r.findings.filter((f) => f.code === 'repair-rejected')).toEqual([]);
-    expect(readDocInfo(r.pdf).author).toBe('A Person');
+    expect(r.findings.filter((f) => f.code === "repair-rejected")).toEqual([]);
+    expect(readDocInfo(r.pdf).author).toBe("A Person");
     expect(unresolvedLigatures(r.pdf)).toEqual([]);
     expect(verify(r.pdf).ok).toBe(true);
   });
 
-  test('the shipped file always passes its own checks', async () => {
+  test("the shipped file always passes its own checks", async () => {
     for (const html of [
       `<p>plain</p>`,
       `<p style="font-family:serif">office efficient finished</p>`,
@@ -302,14 +339,21 @@ describe('the gate in the render path', () => {
       `<p>你好世界</p>`,
       `<p></p>`,
     ]) {
-      const r = await render(browser, { html: `<!doctype html><meta charset="utf-8">${html}` });
+      const r = await render(browser, {
+        html: `<!doctype html><meta charset="utf-8">${html}`,
+      });
       const v = verify(r.pdf);
       expect(v.failures).toEqual([]);
     }
   });
 
-  test('every repair is a function of its input, on a real render', async () => {
-    for (const style of ['', 'font-family:serif', 'font-weight:700', 'font-style:italic']) {
+  test("every repair is a function of its input, on a real render", async () => {
+    for (const style of [
+      "",
+      "font-family:serif",
+      "font-weight:700",
+      "font-style:italic",
+    ]) {
       const r = await render(browser, {
         html: `<!doctype html><meta charset="utf-8"><p style="${style}">office efficient different flags finished</p>`,
       });
@@ -319,30 +363,30 @@ describe('the gate in the render path', () => {
     }
   }, 120_000);
 
-  test('the repairs still do their work', async () => {
+  test("the repairs still do their work", async () => {
     const r = await render(browser, {
       html: `<!doctype html><meta charset="utf-8"><title>T</title>
 <style>@page{size:A4;margin:18mm}</style><p>office efficient</p>`,
-      author: 'Someone',
+      author: "Someone",
     });
-    expect(readDocInfo(r.pdf).author).toBe('Someone');
+    expect(readDocInfo(r.pdf).author).toBe("Someone");
     expect(unresolvedLigatures(r.pdf)).toEqual([]);
     const text = Buffer.from(r.pdf).toString(LATIN1);
     expect(text).not.toMatch(/\/CapHeight -/);
   });
 
-  describe('split and join round-trip a real render', () => {
+  describe("split and join round-trip a real render", () => {
     const DOC = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Round trip</title>
 <style>@page { size: A4; margin: 15mm }
 body { font-family: 'Noto Serif', serif }
 code { font-family: 'Noto Sans Mono', monospace }
 td { border: 0.5pt solid #999 }</style></head><body>
 <h1>Heading</h1><p>Some prose with a <a href="https://example.com/">link</a> in it.</p>
-<table>${Array.from({ length: 30 }, (_, i) => `<tr><td>Row ${i + 1}</td><td>value ${i}</td></tr>`).join('')}</table>
+<table>${Array.from({ length: 30 }, (_, i) => `<tr><td>Row ${i + 1}</td><td>value ${i}</td></tr>`).join("")}</table>
 </body></html>`;
 
-    test('every object and the trailer survive unchanged, and the result still reads', async () => {
-      const r = await render(browser, { html: DOC, author: 'round trip' });
+    test("every object and the trailer survive unchanged, and the result still reads", async () => {
+      const r = await render(browser, { html: DOC, author: "round trip" });
       const parts = split(Buffer.from(r.pdf));
       const rejoined = joinParts(parts.head, parts.objs, parts.trailer);
 
@@ -352,10 +396,98 @@ td { border: 0.5pt solid #999 }</style></head><body>
       for (const o of after?.objs ?? []) {
         expect(before.get(o.num)?.equals(o.bytes)).toBe(true);
       }
-      expect(parts.trailer.equals(after?.trailer ?? Buffer.alloc(0))).toBe(true);
+      expect(parts.trailer.equals(after?.trailer ?? Buffer.alloc(0))).toBe(
+        true,
+      );
 
       expect(verify(rejoined).ok).toBe(true);
-      expect((await pdfInfo(rejoined)).pages).toBe((await pdfInfo(Buffer.from(r.pdf))).pages);
+      expect((await pdfInfo(rejoined)).pages).toBe(
+        (await pdfInfo(Buffer.from(r.pdf))).pages,
+      );
     }, 120_000);
+  });
+});
+
+describe("an indirect /Length", () => {
+  const PAYLOAD = "BT /F1 12 Tf (hi) Tj ET";
+  const mk = (extra: Array<{ num: number; bytes: Buffer }>, len: string) =>
+    joinParts(
+      Buffer.from("%PDF-1.4\n", LATIN1),
+      [
+        {
+          num: 1,
+          bytes: Buffer.from(
+            "1 0 obj\n<</Type /Catalog /Pages 2 0 R >>\nendobj\n",
+            LATIN1,
+          ),
+        },
+        {
+          num: 2,
+          bytes: Buffer.from(
+            "2 0 obj\n<</Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+            LATIN1,
+          ),
+        },
+        {
+          num: 3,
+          bytes: Buffer.from(
+            "3 0 obj\n<</Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>\nendobj\n",
+            LATIN1,
+          ),
+        },
+        {
+          num: 4,
+          bytes: Buffer.from(
+            `4 0 obj\n<</Length ${len}>>\nstream\n${PAYLOAD}\nendstream\nendobj\n`,
+            LATIN1,
+          ),
+        },
+        ...extra,
+      ],
+      Buffer.from("trailer\n<</Root 1 0 R /Size 9 >>\n", LATIN1),
+    );
+
+  test("an indirect /Length that is correct passes", () => {
+    // The old pattern captured the object number and compared it against a byte count, so
+    // this reported "object 4 declares /Length 21 but carries 23 bytes" and a second,
+    // entirely wrong failure about a dangling reference. `/Length 9 0 R` is legal, and
+    // docs/architecture-assessment.md claims every stream /Length is checked matching.
+    const pdf = mk(
+      [
+        {
+          num: 9,
+          bytes: Buffer.from(`9 0 obj\n${PAYLOAD.length}\nendobj\n`, LATIN1),
+        },
+      ],
+      "9 0 R",
+    );
+    expect(verify(pdf).ok).toBe(true);
+  });
+
+  test("an indirect /Length that lies is caught", () => {
+    const pdf = mk(
+      [{ num: 9, bytes: Buffer.from("9 0 obj\n999\nendobj\n", LATIN1) }],
+      "9 0 R",
+    );
+    const r = verify(pdf);
+    expect(r.ok).toBe(false);
+    expect(r.failures.join(" ")).toMatch(/via object 9 but carries 23 bytes/);
+  });
+
+  test("an indirect /Length pointing at nothing is caught", () => {
+    const r = verify(mk([], "9 0 R"));
+    expect(r.ok).toBe(false);
+    expect(r.failures.join(" ")).toMatch(
+      /does not exist|which is not in the file/,
+    );
+  });
+
+  test("a direct /Length that lies is still caught", () => {
+    // The indirect fix must not have cost the direct check.
+    const r = verify(mk([], "21"));
+    expect(r.ok).toBe(false);
+    expect(r.failures.join(" ")).toMatch(
+      /declares \/Length 21 but carries 23 bytes/,
+    );
   });
 });

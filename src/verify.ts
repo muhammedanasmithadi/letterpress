@@ -1,13 +1,22 @@
-import { dictCode, maskStrings, streamDict, streamRange, trySplit, type Obj } from './pdfparts.ts';
+import {
+  dictCode,
+  dictOf,
+  maskStrings,
+  streamDict,
+  streamRange,
+  trySplit,
+  type Obj,
+} from "./pdfparts.ts";
 
-const LATIN1 = 'latin1' as BufferEncoding;
+const LATIN1 = "latin1" as BufferEncoding;
 
 export type Verification = { ok: boolean; failures: string[] };
 
 function index(pdf: Uint8Array): Map<number, string> {
   const out = new Map<number, string>();
   const parts = trySplit(pdf);
-  if (parts) for (const o of parts.objs) out.set(o.num, o.bytes.toString(LATIN1));
+  if (parts)
+    for (const o of parts.objs) out.set(o.num, o.bytes.toString(LATIN1));
   return out;
 }
 
@@ -23,7 +32,7 @@ export function contentPayloads(pdf: Uint8Array): string[] {
       .matchAll(/\/Contents\s*(?:(\d+)\s+0\s+R|\[([^\]]*)\])/g)) {
       const nums: number[] = m[1]
         ? [Number(m[1])]
-        : [...(m[2] ?? '').matchAll(/(\d+)\s+0\s+R/g)].map((x) => Number(x[1]));
+        : [...(m[2] ?? "").matchAll(/(\d+)\s+0\s+R/g)].map((x) => Number(x[1]));
       for (const n of nums) {
         const target = byNum.get(n);
         if (!target) continue;
@@ -42,25 +51,27 @@ export function verify(pdf: Uint8Array, original?: Uint8Array): Verification {
 
   const pointers = text.match(/startxref/g);
   if (!pointers) {
-    failures.push('no startxref');
+    failures.push("no startxref");
   } else if (pointers.length > 1) {
-    failures.push(`${pointers.length} startxref lines: readers disagree which one is current`);
+    failures.push(
+      `${pointers.length} startxref lines: readers disagree which one is current`,
+    );
   }
   // A reader that reaches the end without %%EOF throws away the cross-reference table and
   // rebuilds one by scanning for object headers, which is a reconstruction, not a read. A
   // truncated write looks exactly like this, so it is a damaged file rather than a
   // tolerated one.
   const eofs = text.match(/%%EOF/g);
-  if (!eofs) failures.push('no %%EOF');
+  if (!eofs) failures.push("no %%EOF");
   else if (eofs.length > 1) failures.push(`${eofs.length} %%EOF markers`);
   const sx = Number(text.match(/startxref\s+(\d+)/)?.[1] ?? -1);
   let size = -1;
-  if (sx < 0 || text.slice(sx, sx + 4) !== 'xref') {
-    failures.push('startxref does not point at a cross-reference table');
+  if (sx < 0 || text.slice(sx, sx + 4) !== "xref") {
+    failures.push("startxref does not point at a cross-reference table");
   } else {
     const header = text.slice(sx).match(/^xref\s+0\s+(\d+)\s/);
     if (!header) {
-      failures.push('cross-reference table has no subsection header');
+      failures.push("cross-reference table has no subsection header");
     } else {
       size = Number(header[1]);
       const table = text.slice(sx + header[0].length);
@@ -71,24 +82,35 @@ export function verify(pdf: Uint8Array, original?: Uint8Array): Verification {
           failures.push(`cross-reference entry ${n} is truncated`);
           break;
         }
-        if (entry[17] !== 'n') continue;
+        if (entry[17] !== "n") continue;
         const off = Number(entry.slice(0, 10));
         if (!text.startsWith(`${n} 0 obj`, off)) {
-          failures.push(`cross-reference entry ${n} points at the wrong object`);
+          failures.push(
+            `cross-reference entry ${n} points at the wrong object`,
+          );
           break;
         }
       }
       if (!text.includes(`/Size ${size}`)) {
-        failures.push(`trailer /Size disagrees with the table's ${size} entries`);
+        failures.push(
+          `trailer /Size disagrees with the table's ${size} entries`,
+        );
       }
     }
   }
 
   const parts = trySplit(pdf);
+  const byNum = new Map<number, Obj>(
+    (parts?.objs ?? []).map((o) => [o.num, o]),
+  );
   const defined = index(pdf);
-  for (const m of text.matchAll(/(?:^|[^0-9])(\d+) \d+ obj\b/g)) defined.set(Number(m[1]), '');
+  for (const m of text.matchAll(/(?:^|[^0-9])(\d+) \d+ obj\b/g))
+    defined.set(Number(m[1]), "");
   const codeRegions: string[] = parts
-    ? [...parts.objs.map((o) => dictCode(o)), maskStrings(parts.trailer.toString(LATIN1))]
+    ? [
+        ...parts.objs.map((o) => dictCode(o)),
+        maskStrings(parts.trailer.toString(LATIN1)),
+      ]
     : [maskStrings(text)];
   for (const region of codeRegions) {
     // The generation is part of the reference and can be anything, so a match on `0 R`
@@ -99,7 +121,7 @@ export function verify(pdf: Uint8Array, original?: Uint8Array): Verification {
         break;
       }
     }
-    if (failures.some((f) => f.startsWith('a reference to'))) break;
+    if (failures.some((f) => f.startsWith("a reference to"))) break;
   }
 
   for (const o of parts?.objs ?? []) {
@@ -112,19 +134,64 @@ export function verify(pdf: Uint8Array, original?: Uint8Array): Verification {
     const opened = (code.match(/<</g) ?? []).length;
     const closed = (code.match(/>>/g) ?? []).length;
     if (opened !== closed) {
-      failures.push(`object ${o.num} opens ${opened} dictionaries and closes ${closed}`);
+      failures.push(
+        `object ${o.num} opens ${opened} dictionaries and closes ${closed}`,
+      );
       break;
     }
-    const len = streamDict(o).match(/\/Length\s+(\d+)/);
-    if (!len) continue;
+    const length = streamDict(o).match(/\/Length\s+(\d+)(\s+0\s+R)?/);
+    if (!length) continue;
+    if (length[2]) {
+      // `/Length` may legally be an indirect reference, and the old pattern captured the
+      // object number and compared it against a byte count. `<< /Length 99 0 R >>` carrying
+      // 12 bytes produced two failures, both wrong: the reference was legitimate, and 99 was
+      // never a length. And `/Length 12 0 R` whose target held 99 read as 12 and passed.
+      // docs/architecture-assessment.md claims every stream /Length is checked matching; for
+      // the indirect form it was not checked at all.
+      const target = byNum.get(Number(length[1]));
+      if (!target) {
+        failures.push(
+          `object ${o.num} declares /Length ${length[1]} 0 R, which is not in the file`,
+        );
+        break;
+      }
+      // Object 9 *is* the integer when a stream says `/Length 9 0 R`; it is not another
+      // dictionary carrying a /Length of its own.
+      const value = dictOf(target)
+        .replace(/^\s*\d+\s+\d+\s+obj\s*/i, "")
+        .replace(/\s*endobj\s*$/i, "")
+        .trim();
+      if (!/^\d+$/.test(value)) {
+        failures.push(
+          `object ${o.num} points /Length at object ${length[1]}, which is not a number`,
+        );
+        break;
+      }
+      const range = streamRange(o.bytes);
+      if (!range) {
+        failures.push(`object ${o.num} has a stream with no endstream`);
+        break;
+      }
+      const payload = range.end - range.start;
+      if (payload !== Number(value)) {
+        failures.push(
+          `object ${o.num} declares /Length ${value} via object ${length[1]} but carries ` +
+            `${payload} bytes`,
+        );
+        break;
+      }
+      continue;
+    }
     const range = streamRange(o.bytes);
     if (!range) {
       failures.push(`object ${o.num} has a stream with no endstream`);
       continue;
     }
     const payload = range.end - range.start;
-    if (payload !== Number(len[1])) {
-      failures.push(`object ${o.num} declares /Length ${len[1]} but carries ${payload} bytes`);
+    if (payload !== Number(length[1])) {
+      failures.push(
+        `object ${o.num} declares /Length ${length[1]} but carries ${payload} bytes`,
+      );
       break;
     }
   }
@@ -162,14 +229,20 @@ export function repairOrKeep(
     return {
       pdf: original,
       applied: false,
-      failures: [`the repair threw: ${e instanceof Error ? e.message : String(e)}`],
+      failures: [
+        `the repair threw: ${e instanceof Error ? e.message : String(e)}`,
+      ],
     };
   }
 
-  if (candidate.length === original.length && candidate.every((v, i) => v === original[i])) {
+  if (
+    candidate.length === original.length &&
+    candidate.every((v, i) => v === original[i])
+  ) {
     return { pdf: original, applied: false, failures: [] };
   }
   const result = verify(candidate, original);
-  if (!result.ok) return { pdf: original, applied: false, failures: result.failures };
+  if (!result.ok)
+    return { pdf: original, applied: false, failures: result.failures };
   return { pdf: candidate, applied: true, failures: [] };
 }

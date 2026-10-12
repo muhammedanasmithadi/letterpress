@@ -4,7 +4,14 @@ import { mkdtemp, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Browser } from './browser.ts';
-import { FORMATS, render, type Format, type Finding } from './render.ts';
+import {
+  FORMATS,
+  render,
+  type Format,
+  type Finding,
+  type RenderRequest,
+  type RenderResult,
+} from './render.ts';
 import {
   TemplateError,
   escapeCss,
@@ -426,6 +433,119 @@ function killBrowserByProfile(profile: string): void {
   } catch {}
 }
 
+/** The document to render, built from whichever input option was given. */
+async function requestFor(opts: Options): Promise<RenderRequest> {
+  if (opts.template && opts.data) {
+    return { html: await fillBundledTemplate(opts.template, opts.data) };
+  }
+  if (opts.input === '-') {
+    return {
+      html: await readStdin({
+        timeoutMs: opts.timeoutMs ?? 30_000,
+        maxBytes: 64 * 1024 * 1024,
+      }),
+    };
+  }
+  if (/^https?:\/\//i.test(opts.input!)) return { url: opts.input! };
+  return { path: opts.input! };
+}
+
+/** Read the JSON data file and fill the bundled template it names. */
+async function fillBundledTemplate(template: string, dataPath: string): Promise<string> {
+  const raw = await Bun.file(dataPath).text();
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`${dataPath} is not valid JSON: ${(e as Error).message}`);
+  }
+  const tplPath = join(import.meta.dir, '..', 'templates', `${template}.html`);
+  if (!(await Bun.file(tplPath).exists())) {
+    throw new Error(`no bundled template named "${template}". try --list-templates`);
+  }
+  return fillTemplate(await Bun.file(tplPath).text(), buildTemplateData(data));
+}
+
+/** Close the browser, sweep temp profiles, and exit with the signal's code. */
+function sweepAndExit(
+  signal: NodeJS.Signals,
+  profile: string,
+  current: () => Browser | undefined,
+): void {
+  const browser = current();
+  if (browser) void browser.close().catch(() => {});
+  killBrowserByProfile(profile);
+
+  try {
+    // Both prefixes, because `render` makes `letterpress-<pid>-n` work directories and
+    // this function makes its own profile with an `letterpress-cli-` mkdtemp name. Sweeping only
+    // first left every crashed run's profile behind for ever, which is the exact thing a
+    // sweep is for.
+    const mine = [`letterpress-${process.pid}-`, 'letterpress-cli-'];
+    for (const entry of readdirSync(tmpdir())) {
+      if (mine.some((p) => entry.startsWith(p)))
+        rmSync(join(tmpdir(), entry), { recursive: true, force: true });
+    }
+    rmSync(profile, { recursive: true, force: true });
+  } catch {}
+
+  process.exit(128 + (signal === 'SIGINT' ? 2 : signal === 'SIGTERM' ? 15 : 1));
+}
+
+/** Write to a sibling and rename, so an interrupted run cannot leave a truncated file. */
+async function writeAtomic(outPath: string, pdf: Uint8Array): Promise<void> {
+  const partial = `${outPath}.${process.pid}.part`;
+  try {
+    await Bun.write(partial, pdf);
+    await rename(partial, outPath);
+  } catch (e) {
+    await rm(partial, { force: true }).catch(() => {});
+    throw e;
+  }
+}
+
+/** Print the findings and the result, and return the process exit code. */
+function reportOutcome(opts: Options, result: RenderResult, outPath: string): number {
+  for (const f of result.findings) process.stderr.write(`${report(f)}\n`);
+  const contradicted = result.findings.some((f) => f.severity === 'error');
+  const bytes = result.pdf.byteLength;
+
+  if (opts.json) {
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          ok: !contradicted,
+          path: outPath,
+          pages: result.info.pages,
+          bytes,
+          ms: result.ms,
+          source: result.source,
+          mediaBoxes: result.info.mediaBoxes,
+          imageObjects: result.info.imageObjects,
+          tagged: result.info.tagged,
+          blocked: result.blocked,
+          findings: result.findings,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  } else if (!opts.quiet) {
+    const shape = result.info.mediaBoxes[0] ?? 'unknown';
+    process.stdout.write(
+      `${outPath}  ${result.info.pages} page${result.info.pages === 1 ? '' : 's'}  ${formatBytes(bytes)}  ${result.ms}ms  ${shape}\n`,
+    );
+  }
+
+  if (contradicted) {
+    process.stderr.write(
+      'the pdf was written, but a finding above is an error: it is not the document you asked for.\n',
+    );
+    return 1;
+  }
+  return result.findings.some((f) => f.code === 'url-render-blocked') ? 1 : 0;
+}
+
 export async function main(argv: string[]): Promise<number> {
   let parsed: ParseResult;
   try {
@@ -453,61 +573,13 @@ export async function main(argv: string[]): Promise<number> {
   const profile = await mkdtemp(join(tmpdir(), 'letterpress-cli-'));
   let browser: Browser | undefined;
 
-  let interrupted: NodeJS.Signals | undefined;
-  const onSignal = (signal: NodeJS.Signals) => {
-    interrupted = signal;
-    if (browser) void browser.close().catch(() => {});
-    killBrowserByProfile(profile);
-
-    try {
-      // Both prefixes, because `render` makes `letterpress-<pid>-n` work directories and
-      // this function makes its own profile with an `letterpress-cli-` mkdtemp name. Sweeping only
-      // first left every crashed run's profile behind for ever, which is the exact thing a
-      // sweep is for.
-      const mine = [`letterpress-${process.pid}-`, 'letterpress-cli-'];
-      for (const entry of readdirSync(tmpdir())) {
-        if (mine.some((p) => entry.startsWith(p)))
-          rmSync(join(tmpdir(), entry), { recursive: true, force: true });
-      }
-      rmSync(profile, { recursive: true, force: true });
-    } catch {}
-
-    process.exit(128 + (signal === 'SIGINT' ? 2 : signal === 'SIGTERM' ? 15 : 1));
-  };
+  const onSignal = (signal: NodeJS.Signals) => sweepAndExit(signal, profile, () => browser);
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
   process.on('SIGHUP', onSignal);
-  void interrupted;
 
   try {
-    let request: { html?: string; path?: string; url?: string };
-    if (opts.template && opts.data) {
-      const raw = await Bun.file(opts.data).text();
-      let data: Record<string, unknown>;
-      try {
-        data = JSON.parse(raw);
-      } catch (e) {
-        throw new Error(`${opts.data} is not valid JSON: ${(e as Error).message}`);
-      }
-      const tplPath = join(import.meta.dir, '..', 'templates', `${opts.template}.html`);
-      if (!(await Bun.file(tplPath).exists())) {
-        throw new Error(`no bundled template named "${opts.template}". try --list-templates`);
-      }
-      request = {
-        html: fillTemplate(await Bun.file(tplPath).text(), buildTemplateData(data)),
-      };
-    } else if (opts.input === '-') {
-      request = {
-        html: await readStdin({
-          timeoutMs: opts.timeoutMs ?? 30_000,
-          maxBytes: 64 * 1024 * 1024,
-        }),
-      };
-    } else if (/^https?:\/\//i.test(opts.input!)) {
-      request = { url: opts.input! };
-    } else {
-      request = { path: opts.input! };
-    }
+    const request = await requestFor(opts);
 
     browser = await Browser.launch({ profile });
     const result = await render(browser, {
@@ -526,58 +598,8 @@ export async function main(argv: string[]): Promise<number> {
       keywords: opts.keywords,
     });
 
-    // Written to a sibling and renamed, so an interrupted run cannot leave a truncated file
-    // where the caller expects a whole one. The signal handler exits synchronously from
-    // wherever it lands, and it can land here: `letterpress -o invoice.pdf` then Ctrl-C left
-    // a partial PDF at that path and reported exit 130, with nothing to tell the two apart.
-    const partial = `${outPath}.${process.pid}.part`;
-    try {
-      await Bun.write(partial, result.pdf);
-      await rename(partial, outPath);
-    } catch (e) {
-      await rm(partial, { force: true }).catch(() => {});
-      throw e;
-    }
-    const bytes = result.pdf.byteLength;
-
-    for (const f of result.findings) process.stderr.write(`${report(f)}\n`);
-
-    const contradicted = result.findings.some((f) => f.severity === 'error');
-
-    if (opts.json) {
-      process.stdout.write(
-        `${JSON.stringify(
-          {
-            ok: !contradicted,
-            path: outPath,
-            pages: result.info.pages,
-            bytes,
-            ms: result.ms,
-            source: result.source,
-            mediaBoxes: result.info.mediaBoxes,
-            imageObjects: result.info.imageObjects,
-            tagged: result.info.tagged,
-            blocked: result.blocked,
-            findings: result.findings,
-          },
-          null,
-          2,
-        )}\n`,
-      );
-    } else if (!opts.quiet) {
-      const shape = result.info.mediaBoxes[0] ?? 'unknown';
-      process.stdout.write(
-        `${outPath}  ${result.info.pages} page${result.info.pages === 1 ? '' : 's'}  ${formatBytes(bytes)}  ${result.ms}ms  ${shape}\n`,
-      );
-    }
-
-    if (contradicted) {
-      process.stderr.write(
-        'the pdf was written, but a finding above is an error: it is not the document you asked for.\n',
-      );
-      return 1;
-    }
-    return result.findings.some((f) => f.code === 'url-render-blocked') ? 1 : 0;
+    await writeAtomic(outPath, result.pdf);
+    return reportOutcome(opts, result, outPath);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     if (opts.json) process.stdout.write(`${JSON.stringify({ ok: false, error: message })}\n`);

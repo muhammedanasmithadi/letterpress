@@ -196,116 +196,172 @@ function blocksOf(stream: string): string[] {
   return [...stream.matchAll(/BT[\s\S]*?ET/g)].map((m) => m[0]);
 }
 
+/** A run of glyphs to show, with the `Td` that preceded it. */
+type GlyphItem = { cids: number[]; dx: number; moved: boolean };
+
 /** One thing inside a text block: a marked-content span, or a string of glyphs to show. */
-type Item = { raw: string } | { cids: number[]; dx: number; moved: boolean };
+type Item = { raw: string } | GlyphItem;
+
+/** Mutable state carried across the tokens of one text block. */
+type ScanState = {
+  tf: string;
+  size: number;
+  tm: string;
+  open: boolean;
+  closed: boolean;
+  dx: number;
+  dy: number;
+  moved: boolean;
+  items: Item[];
+};
+
+/** What a fully scanned, well-formed text block contains. */
+type BlockScan = { items: Item[]; tf: string; size: number; tm: string };
 
 /** Rewrite one text block, or return null when it is not the shape handled. */
 function mergeBlock(block: string, widths: Widths): string | null {
   const text = block.trim();
   if (!text.startsWith('BT') || !text.endsWith('ET')) return null;
+  const scan = scanBlock(text);
+  return scan ? buildBlock(scan, widths) : null;
+}
 
-  // Chromium marks a ligature as its own run for accessibility:
-  //
-  //     /Span<</ActualText (fi) >> BDC
-  //     <0047> Tj
-  //     EMC
-  //
-  // Dropping that loses the two characters a screen reader and a text extractor are given,
-  // so the span is kept and the array is split around it: several TJ arrays in one text
-  // object cost the pen nothing, since the text matrix survives between show operators.
-  //
-  // Tokenize rather than match one anchored pattern: the shape Chromium emits is small,
-  // and a single regex over it is easy to get subtly wrong. Any text not covered by a token
-  // refuses the block, because a rebuild from tokens silently loses whatever it skipped --
-  // which is how the ligature span went missing the first time.
+/**
+ * Tokenize a `BT`/`ET` block, refusing any token outside the shape handled.
+ *
+ * Chromium marks a ligature as its own run for accessibility:
+ *
+ *     /Span<</ActualText (fi) >> BDC
+ *     <0047> Tj
+ *     EMC
+ *
+ * Dropping that loses the two characters a screen reader and a text extractor are given,
+ * so the span is kept and the array is split around it: several TJ arrays in one text
+ * object cost the pen nothing, since the text matrix survives between show operators.
+ *
+ * Tokenize rather than match one anchored pattern: the shape Chromium emits is small,
+ * and a single regex over it is easy to get subtly wrong. Any text not covered by a token
+ * refuses the block, because a rebuild from tokens silently loses whatever it skipped --
+ * which is how the ligature span went missing the first time.
+ */
+function scanBlock(text: string): BlockScan | null {
   const tok =
     /\bBT\b|\bET\b|\/(\w+)\s+([-\d.eE]+)\s+Tf|([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+Tm|([-\d.eE]+)\s+([-\d.eE]+)\s+Td|<([0-9A-Fa-f]*)>\s*Tj|([^\n]*\bBDC\b[^\n]*)|\bEMC\b/g;
 
-  let tf = '';
-  let size = 0;
-  let tm = '';
-  let open = false;
-  let closed = false;
-  let dx = 0;
-  let dy = 0;
-  let moved = false;
+  const st: ScanState = {
+    tf: '',
+    size: 0,
+    tm: '',
+    open: false,
+    closed: false,
+    dx: 0,
+    dy: 0,
+    moved: false,
+    items: [],
+  };
   let at = 0;
-  const items: Item[] = [];
 
   for (let m = tok.exec(text); m; m = tok.exec(text)) {
     if (text.slice(at, m.index).trim() !== '') return null;
     at = m.index + m[0].length;
-
-    if (m[0] === 'BT') {
-      if (open || items.length) return null;
-      open = true;
-      continue;
-    }
-    if (m[0] === 'ET') {
-      if (!open || closed) return null;
-      closed = true;
-      continue;
-    }
-    if (m[12] !== undefined) {
-      items.push({ raw: m[12] });
-      continue;
-    }
-    if (m[0] === 'EMC') {
-      items.push({ raw: m[0] });
-      continue;
-    }
-    if (closed) return null;
-    if (m[1] !== undefined) {
-      // A second Tf means two runs in one block, which this does not merge.
-      if (items.some((i) => 'cids' in i)) return null;
-      tf = `/${m[1]} ${Number(m[2])} Tf`;
-      size = Number(m[2]);
-      continue;
-    }
-    if (m[3] !== undefined) {
-      if (items.some((i) => 'cids' in i)) return null;
-      // `Td tx ty` moves the origin to (e + tx*a + ty*c, f + tx*b + ty*d). Folding a
-      // leading `Td` into `e` is the same move only when a is 1 and b is 0, so anything
-      // with a shear, a rotation or a mirror is refused rather than rewritten.
-      if (Number(m[3]) !== 1 || Number(m[4]) !== 0 || Number(m[5]) !== 0) return null;
-      if (Number(m[6]) !== 1 && Number(m[6]) !== -1) return null;
-      tm = `${m[3]} ${m[4]} ${m[5]} ${m[6]} ${m[7]} ${m[8]} Tm`;
-      continue;
-    }
-    if (m[9] !== undefined) {
-      dx = Number(m[9]);
-      dy = Number(m[10]);
-      moved = true;
-      continue;
-    }
-    if (m[11] === undefined) return null;
-    // A glyph that moves the pen vertically is not a run.
-    if (dy !== 0) return null;
-    const cids = cidsOf(m[11]!);
-    if (!cids) return null;
-    items.push({ cids, dx, moved });
-    moved = false;
-    dx = dy = 0;
+    if (!step(st, m)) return null;
   }
   if (text.slice(at).trim() !== '') return null;
-  if (!open || !closed) return null;
-  if (!items.some((i) => 'cids' in i)) return null;
+  if (!st.open || !st.closed) return null;
+  if (!st.items.some((i) => 'cids' in i)) return null;
+  return { items: st.items, tf: st.tf, size: st.size, tm: st.tm };
+}
 
-  const widthOf = widths.get(tf.slice(1, tf.indexOf(' ')));
-  if (!widthOf || size <= 0) return null;
+/** Apply one matched token to the scan state; false means the block is not handled. */
+function step(st: ScanState, m: RegExpExecArray): boolean {
+  if (m[0] === 'BT') {
+    if (st.open || st.items.length) return false;
+    st.open = true;
+    return true;
+  }
+  if (m[0] === 'ET') {
+    if (!st.open || st.closed) return false;
+    st.closed = true;
+    return true;
+  }
+  if (m[12] !== undefined) {
+    st.items.push({ raw: m[12] });
+    return true;
+  }
+  if (m[0] === 'EMC') {
+    st.items.push({ raw: m[0] });
+    return true;
+  }
+  if (st.closed) return false;
+  if (m[1] !== undefined) return applyFont(st, m);
+  if (m[3] !== undefined) return applyMatrix(st, m);
+  if (m[9] !== undefined) return applyMove(st, m);
+  if (m[11] === undefined) return false;
+  return applyShow(st, m);
+}
+
+/** Record a `Tf`, refusing a second one once glyphs have been seen. */
+function applyFont(st: ScanState, m: RegExpExecArray): boolean {
+  if (st.items.some((i) => 'cids' in i)) return false;
+  st.tf = `/${m[1]} ${Number(m[2])} Tf`;
+  st.size = Number(m[2]);
+  return true;
+}
+
+/**
+ * Record a `Tm`, refusing anything but the untransformed shape.
+ *
+ * `Td tx ty` moves the origin to (e + tx*a + ty*c, f + tx*b + ty*d), and folding a leading
+ * `Td` into `e` is the same move only when a is 1 and b is 0. Any shear, rotation or mirror
+ * therefore changes what a `Td` does to the origin, and reading it as a plain horizontal
+ * move puts glyphs somewhere the proof cannot see, because the proof walks the same mistake.
+ */
+function applyMatrix(st: ScanState, m: RegExpExecArray): boolean {
+  if (st.items.some((i) => 'cids' in i)) return false;
+  if (Number(m[3]) !== 1 || Number(m[4]) !== 0 || Number(m[5]) !== 0) return false;
+  if (Number(m[6]) !== 1 && Number(m[6]) !== -1) return false;
+  st.tm = `${m[3]} ${m[4]} ${m[5]} ${m[6]} ${m[7]} ${m[8]} Tm`;
+  return true;
+}
+
+/** Remember a `Td`, to be resolved against the last advance when the next glyph shows. */
+function applyMove(st: ScanState, m: RegExpExecArray): boolean {
+  st.dx = Number(m[9]);
+  st.dy = Number(m[10]);
+  st.moved = true;
+  return true;
+}
+
+/** Record a shown string, refusing an odd byte count or a vertical move. */
+function applyShow(st: ScanState, m: RegExpExecArray): boolean {
+  // A glyph that moves the pen vertically is not a run.
+  if (st.dy !== 0) return false;
+  const cids = cidsOf(m[11]!);
+  if (!cids) return false;
+  st.items.push({ cids, dx: st.dx, moved: st.moved });
+  st.moved = false;
+  st.dx = st.dy = 0;
+  return true;
+}
+
+/** Rebuild a scanned block as `TJ` arrays, or null when its font or size is unusable. */
+function buildBlock(scan: BlockScan, widths: Widths): string | null {
+  const widthOf = widths.get(scan.tf.slice(1, scan.tf.indexOf(' ')));
+  if (!widthOf || scan.size <= 0) return null;
 
   // `Td` positions the pen against the *line* matrix, so what a run of text costs the pen
   // is the sum of every advance in it, not the width of its last glyph. Chromium writes Latin
   // one glyph per string, where the two coincide, and CJK several per string, where using
   // only the last one puts every following word out by the width of the text before it.
   const advanceOf = (cids: number[]): number =>
-    cids.reduce((sum, cid) => sum + (widthOf(cid) / 1000) * size, 0);
+    cids.reduce((sum, cid) => sum + (widthOf(cid) / 1000) * scan.size, 0);
 
   const out: string[] = [];
   let entries: string[] = [];
   let residue = 0;
   let pending = 0;
   let first = true;
+  let tm = scan.tm;
 
   const flush = (): void => {
     if (!entries.length) return;
@@ -313,7 +369,7 @@ function mergeBlock(block: string, widths: Widths): string | null {
     entries = [];
   };
 
-  for (const item of items) {
+  for (const item of scan.items) {
     if ('raw' in item) {
       flush();
       out.push(item.raw);
@@ -321,22 +377,9 @@ function mergeBlock(block: string, widths: Widths): string | null {
     }
     const sum = advanceOf(item.cids);
     if (item.moved) {
-      if (first) {
-        // The first `Td` in a block moves the line matrix before anything is shown, and a
-        // TJ array cannot express that: it has no position of its own. Folding it into the
-        // text matrix is exactly equivalent, since `Td tx ty` sets Tlm to
-        // [1 0 0 1 tx ty] x Tlm and the shape checked above gives an origin of e + tx. A
-        // block with no Tm at all starts from the identity matrix, so the shift is written
-        // out whole.
-        if (item.dx !== 0) {
-          if (!tm) tm = `1 0 0 -1 ${item.dx} 0 Tm`;
-          else {
-            const m = tm.split(' ');
-            tm = `${m[0]} ${m[1]} ${m[2]} ${m[3]} ${Number(m[4]) + item.dx} ${m[5]} Tm`;
-          }
-        }
-      } else {
-        const exact = -((item.dx - pending) * 1000) / size + residue;
+      if (first) tm = foldFirstTd(tm, item.dx);
+      else {
+        const exact = -((item.dx - pending) * 1000) / scan.size + residue;
         const rounded = Math.round(exact * 10 ** PLACES) / 10 ** PLACES;
         residue = exact - rounded;
         if (rounded !== 0) entries.push(String(rounded));
@@ -350,7 +393,23 @@ function mergeBlock(block: string, widths: Widths): string | null {
       entries.push(`<${cid.toString(16).toUpperCase().padStart(4, '0')}>`);
   }
   flush();
-  return `BT ${tf} ${tm} ${out.join(' ')} ET`;
+  return `BT ${scan.tf} ${tm} ${out.join(' ')} ET`;
+}
+
+/**
+ * Fold a leading `Td` into the text matrix.
+ *
+ * The first `Td` in a block moves the line matrix before anything is shown, and a TJ array
+ * cannot express that: it has no position of its own. Folding it into the text matrix is
+ * exactly equivalent, since `Td tx ty` sets Tlm to [1 0 0 1 tx ty] x Tlm and the shape
+ * checked above gives an origin of e + tx. A block with no Tm at all starts from the
+ * identity matrix, so the shift is written out whole.
+ */
+function foldFirstTd(tm: string, dx: number): string {
+  if (dx === 0) return tm;
+  if (!tm) return `1 0 0 -1 ${dx} 0 Tm`;
+  const m = tm.split(' ');
+  return `${m[0]} ${m[1]} ${m[2]} ${m[3]} ${Number(m[4]) + dx} ${m[5]} Tm`;
 }
 
 /** Every glyph position in a whole content stream, or null if any block is unfamiliar. */

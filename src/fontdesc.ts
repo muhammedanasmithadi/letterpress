@@ -21,25 +21,12 @@ const u32 = (b: Buffer, at: number) => b.readUInt32BE(at);
 
 export function parseSfnt(font: Buffer): Sfnt | undefined {
   if (font.length < 12) return undefined;
-
-  const tag = font.readUInt32BE(0);
-  const isSfnt =
-    tag === 0x00010000 ||
-    font.subarray(0, 4).toString(LATIN1) === 'true' ||
-    font.subarray(0, 4).toString(LATIN1) === 'OTTO';
-  if (!isSfnt) return undefined;
+  if (!isSfntTag(font)) return undefined;
 
   const numTables = u16(font, 4);
   if (numTables === 0 || 12 + numTables * 16 > font.length) return undefined;
 
-  const tables = new Map<string, Table>();
-  for (let i = 0; i < numTables; i++) {
-    const at = 12 + i * 16;
-    const name = font.subarray(at, at + 4).toString(LATIN1);
-    const offset = u32(font, at + 8);
-    const length = u32(font, at + 12);
-    if (offset + length <= font.length) tables.set(name, { offset, length });
-  }
+  const tables = readTableDirectory(font, numTables);
 
   const head = tables.get('head');
   const os2 = tables.get('OS/2');
@@ -59,30 +46,57 @@ export function parseSfnt(font: Buffer): Sfnt | undefined {
 
   if (os2 && out.os2Version >= 2 && os2.length >= 88) out.sCapHeight = i16(font, os2.offset + 86);
 
-  if (post && post.length >= 16) {
-    const fixedPitch = font.readUInt32BE(post.offset + 12);
-    out.italicAngle = i16(font, post.offset + 4) / 65536;
-    if (fixedPitch !== 0 && fixedPitch !== 0xffff_ffff) out.fixedPitch = true;
-  }
-
-  const cmap = tables.get('cmap');
-  if (cmap && cmap.length >= 4) {
-    const n = u16(font, cmap.offset + 2);
-    for (let i = 0; i < n; i++) {
-      const rec = cmap.offset + 4 + i * 8;
-      if (rec + 8 > font.length) break;
-      const platform = u16(font, rec);
-      const encoding = u16(font, rec + 2);
-      const unicode =
-        (platform === 3 && (encoding === 1 || encoding === 10)) ||
-        (platform === 0 && encoding >= 4);
-      if (unicode) {
-        out.unicodeCmap = true;
-        break;
-      }
-    }
-  }
+  if (post) readPost(font, post, out);
+  out.unicodeCmap = hasUnicodeCmap(font, tables.get('cmap'));
   return out;
+}
+
+/** The sfnt magic number, whether big-endian CFF (`OTTO`) or TrueType (`true`/`0x00010000`). */
+function isSfntTag(font: Buffer): boolean {
+  return (
+    font.readUInt32BE(0) === 0x00010000 ||
+    font.subarray(0, 4).toString(LATIN1) === 'true' ||
+    font.subarray(0, 4).toString(LATIN1) === 'OTTO'
+  );
+}
+
+/** The table directory, keeping only tables whose extent lies inside the file. */
+function readTableDirectory(font: Buffer, numTables: number): Map<string, Table> {
+  const tables = new Map<string, Table>();
+  for (let i = 0; i < numTables; i++) {
+    const at = 12 + i * 16;
+    const name = font.subarray(at, at + 4).toString(LATIN1);
+    const offset = u32(font, at + 8);
+    const length = u32(font, at + 12);
+    if (offset + length <= font.length) tables.set(name, { offset, length });
+  }
+  return tables;
+}
+
+/** Italic angle and fixed-pitch flag from the `post` table, when it is long enough. */
+function readPost(font: Buffer, post: Table, out: Sfnt): void {
+  if (post.length < 16) return;
+  const fixedPitch = font.readUInt32BE(post.offset + 12);
+  out.italicAngle = i16(font, post.offset + 4) / 65536;
+  if (fixedPitch !== 0 && fixedPitch !== 0xffff_ffff) out.fixedPitch = true;
+}
+
+/** Whether the `cmap` table names a Unicode platform/encoding pair. */
+function hasUnicodeCmap(font: Buffer, cmap: Table | undefined): boolean {
+  if (!cmap || cmap.length < 4) return false;
+  const n = u16(font, cmap.offset + 2);
+  for (let i = 0; i < n; i++) {
+    const rec = cmap.offset + 4 + i * 8;
+    if (rec + 8 > font.length) break;
+    const platform = u16(font, rec);
+    const encoding = u16(font, rec + 2);
+    if (
+      (platform === 3 && (encoding === 1 || encoding === 10)) ||
+      (platform === 0 && encoding >= 4)
+    )
+      return true;
+  }
+  return false;
 }
 
 export function flagsFrom(font: Sfnt, current: number): number {

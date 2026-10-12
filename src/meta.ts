@@ -54,42 +54,50 @@ export type DocInfo = {
 
 function readString(body: string, key: string): string | undefined {
   const asHex = body.match(new RegExp(`/${key}\\s*<([0-9A-Fa-f]+)>`));
-  if (asHex) {
-    let hex = asHex[1]!;
-
-    if (hex.length >= 4 && /^FEFF/i.test(hex)) {
-      hex = hex.slice(4);
-      let out = '';
-      for (let i = 0; i + 4 <= hex.length; i += 4)
-        out += String.fromCharCode(parseInt(hex.slice(i, i + 4), 16));
-      return out;
-    }
-
-    let out = '';
-    for (let i = 0; i + 2 <= hex.length; i += 2)
-      out += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
-    return out;
-  }
+  if (asHex) return decodeHex(asHex[1]!);
   const m = body.match(new RegExp(`/${key}\\s*\\(((?:[^()\\\\]|\\\\.)*)\\)`));
   if (!m) return undefined;
+  return decodeLiteral(m[1]!);
+}
+
+function decodeHex(hex: string): string {
+  if (hex.length >= 4 && /^FEFF/i.test(hex)) {
+    const body = hex.slice(4);
+    let out = '';
+    for (let i = 0; i + 4 <= body.length; i += 4)
+      out += String.fromCharCode(parseInt(body.slice(i, i + 4), 16));
+    return out;
+  }
   let out = '';
-  const raw = m[1]!;
+  for (let i = 0; i + 2 <= hex.length; i += 2)
+    out += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
+  return out;
+}
+
+const SIMPLE_ESCAPES: Record<string, string> = {
+  n: '\n',
+  r: '\r',
+  t: '\t',
+  b: '\b',
+  f: '\f',
+};
+
+function decodeLiteral(raw: string): string {
+  let out = '';
   for (let i = 0; i < raw.length; i++) {
     if (raw[i] !== '\\') {
       out += raw[i];
       continue;
     }
     const next = raw[++i];
-    if (next === 'n') out += '\n';
-    else if (next === 'r') out += '\r';
-    else if (next === 't') out += '\t';
-    else if (next === 'b') out += '\b';
-    else if (next === 'f') out += '\f';
-    else if (next && /[0-7]/.test(next)) {
+    if (next === undefined) break;
+    const simple = SIMPLE_ESCAPES[next];
+    if (simple !== undefined) out += simple;
+    else if (/[0-7]/.test(next)) {
       let oct = next;
       while (oct.length < 3 && /[0-7]/.test(raw[i + 1] ?? '')) oct += raw[++i];
       out += String.fromCharCode(parseInt(oct, 8));
-    } else out += next ?? '';
+    } else out += next;
   }
   return out;
 }

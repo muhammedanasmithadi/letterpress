@@ -106,20 +106,35 @@ const AUDIT = String.raw`
     // not: Chromium reports "isolate" for every block element by default, so
     // testing it broke out of the walk on the first ancestor and concluded the
     // paragraph was left-to-right whatever it said.
+    //
+    // Three states, not two. "Not right-to-left so far" is not the same as
+    // "declared left-to-right", and collapsing them made the walk's explicit
+    // dir="ltr" indistinguishable from finding nothing at all -- so the content
+    // fallback below overrode the author and the finding fired on the very
+    // markup it tells you to wrap the date in.
+    //
+    // Only the attribute counts as a declaration, and the asymmetry with the
+    // computed style is deliberate: direction:ltr is the initial value, so it is
+    // what every element reports unless something says otherwise and it proves
+    // nothing. direction:rtl is affirmative. Treating the computed ltr as a
+    // declaration instead stopped the walk before the fallback and lost every
+    // date in a right-to-left paragraph.
     let rtl = false;
+    let declared = false;
     // The loop variable is declared without a type annotation. This whole string
     // is evaluated as JavaScript in the page, and a TypeScript annotation on it
     // is a syntax error at runtime that fails silently, taking every finding
     // in this file with it.
     for (let p = el; p; p = p.parentElement) {
       const dirAttr = p.getAttribute && p.getAttribute("dir");
-      if (dirAttr === "rtl") { rtl = true; break; }
-      if (dirAttr === "ltr" || dirAttr === "auto") break;
+      if (dirAttr === "rtl") { rtl = true; declared = true; break; }
+      if (dirAttr === "ltr") { rtl = false; declared = true; break; }
+      if (dirAttr === "auto") break;
       const cs = getComputedStyle(p);
       if (cs.direction === "rtl") { rtl = true; break; }
       if (cs.direction === "ltr") break;
     }
-    if (!rtl) {
+    if (!declared) {
       // No explicit direction anywhere: fall back to the first strong
       // character, which is how a browser infers direction for the paragraph.
       const whole = (el.textContent || "").trim();

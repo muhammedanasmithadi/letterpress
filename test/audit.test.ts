@@ -214,6 +214,30 @@ test('a date with a strong ltr character before it is not reported', async () =>
   expect(codes(two.findings)).not.toContain('rtl-digit-run');
 }, 40_000);
 
+test('an explicit dir="ltr" is honoured, so the finding does not advise itself', async () => {
+  // The finding recommends wrapping the run in <bdi dir="ltr">. The walk broke on
+  // dir="ltr" leaving "not right-to-left so far", which the content fallback then read as
+  // "no opinion" and overrode -- so applying the advice re-triggered it. This is the
+  // narrow case that worked by accident (digits alone) beside the common one that did not.
+  const r = await render(browser, {
+    html: `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
+@page{size:A4;margin:15mm} body{direction:rtl;font-family:'Noto Naskh Arabic',serif}
+</style></head><body><p><bdi dir="ltr">التاريخ 2026-10-03</bdi></p>
+<p><span dir="ltr">التاريخ 2026-10-03</span></p></body></html>`,
+  });
+  expect(codes(r.findings)).not.toContain('rtl-digit-run');
+}, 40_000);
+
+test('dir="auto" still infers from the content', async () => {
+  // The exception: auto means infer, so a bare run inside an RTL paragraph is still found.
+  const r = await render(browser, {
+    html: `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
+@page{size:A4;margin:15mm} body{direction:rtl;font-family:'Noto Naskh Arabic',serif}
+</style></head><body><p dir="auto">التاريخ 2026-10-03</p></body></html>`,
+  });
+  expect(codes(r.findings)).toContain('rtl-digit-run');
+}, 40_000);
+
 test('a date with no dir attribute at all is still reported', async () => {
   const r = await render(browser, {
     html: `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>

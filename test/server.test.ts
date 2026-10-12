@@ -197,6 +197,27 @@ describe('loopback boundary', () => {
     }
   }, 120_000);
 
+  test('accepts an Origin at every loopback spelling, not just 127.0.0.1', async () => {
+    // The Host check above deliberately answers every loopback spelling, and the viewer is
+    // reached by whichever one the user typed. Origin was compared against one fixed string,
+    // so a viewer opened at http://localhost:PORT -- or [::1]:PORT -- was refused by its own
+    // POST with a message about "other web pages".
+    for (const host of ['localhost', '[::1]', '127.0.0.1']) {
+      const r = await post({ html: DOC }, { host, origin: `http://${host}:${s.port}` });
+      expect(r.status, `Origin: ${host}`).toBe(200);
+    }
+  }, 120_000);
+
+  test('refuses an Origin on a different port or a different scheme', async () => {
+    // The loopback check is not the whole answer: same machine, different service is still
+    // another origin, and http://localhost:PORT over the wrong scheme is not this server.
+    const port = s.port ?? 0;
+    for (const bad of [`http://localhost:${port + 1}`, `http://127.0.0.1:${port - 1}`]) {
+      const r = await post({ html: DOC }, { origin: bad });
+      expect(r.status, `Origin: ${bad}`).toBe(403);
+    }
+  }, 60_000);
+
   test('sends no CORS headers, so another origin cannot read responses', async () => {
     const r = await post({ html: DOC }, { origin: 'https://evil.example' });
     expect(r.headers.get('access-control-allow-origin')).toBeNull();

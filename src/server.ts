@@ -48,10 +48,24 @@ export type RenderBody = {
   keywords?: string;
 };
 
-function originAllowed(request: Request, ownOrigin: string): boolean {
+function originAllowed(request: Request, port: number): boolean {
   const origin = request.headers.get('origin');
 
-  if (origin !== null && origin !== ownOrigin) return false;
+  if (origin !== null) {
+    // Any loopback spelling the server answers on, at the port it is listening on.
+    // Comparing against one fixed spelling meant a viewer opened at http://localhost:PORT
+    // -- which hostAllowed accepts on purpose, and which server.test.ts asserts returns
+    // 200 -- was refused by its own POST, with a message about "other web pages".
+    let parsed: URL;
+    try {
+      parsed = new URL(origin);
+    } catch {
+      return false;
+    }
+    if (parsed.protocol !== 'http:') return false;
+    if (!hostAllowed(parsed.host)) return false;
+    if (parsed.port !== String(port)) return false;
+  }
 
   const site = request.headers.get('sec-fetch-site');
   if (site === 'cross-site' || site === 'same-site') return false;
@@ -154,7 +168,7 @@ export async function startServer(opts: ServerOptions = {}) {
           { status: 403 },
         );
       }
-      if (!originAllowed(request, `http://127.0.0.1:${server.port}`)) {
+      if (!originAllowed(request, server.port ?? 0)) {
         return Response.json(
           { ok: false, error: 'this server only answers its own viewer, not other web pages' },
           { status: 403 },

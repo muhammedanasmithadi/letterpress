@@ -47,6 +47,9 @@ words:
     'vendored',
     'Weasy',
     'nosemgrep',
+    'oxfmt',
+    'oxlint',
+    'vars',
     'Xwayland',
     'xref',
   ]

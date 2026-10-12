@@ -12,16 +12,16 @@ repos:
       - id: gitleaks
   - repo: local
     hooks:
-      - id: prettier-check
-        name: prettier --check (check semantics, no --write)
-        entry: bunx prettier --check --ignore-unknown
+      - id: oxfmt-check
+        name: oxfmt --check (check semantics, no --write)
+        entry: bunx oxfmt --check
         language: system
-        types: [text]
-      - id: eslint-tools
-        name: eslint tools
-        entry: bunx eslint tools --max-warnings=0
+        files: \.(ts|mts|cts|tsx|jsx|js|mjs|cjs|json|jsonc|md|markdown|html|htm|css)$
+      - id: oxlint
+        name: oxlint
+        entry: bunx oxlint --max-warnings 0
         language: system
-        files: \.mjs$
+        files: \.(ts|mts|cts|tsx|jsx|js|mjs|cjs)$
       - id: cspell
         name: cspell lint
         entry: bunx cspell lint --no-progress --no-summary --config cspell.yaml

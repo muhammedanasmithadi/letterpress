@@ -1,5 +1,5 @@
-import { deflateSync } from 'node:zlib';
-import { inflateSync } from 'node:zlib';
+import { deflateSync } from "node:zlib";
+import { inflateSync } from "node:zlib";
 import {
   inflatedStream,
   join,
@@ -8,7 +8,7 @@ import {
   streamDict,
   trySplit,
   type Obj,
-} from './pdfparts.ts';
+} from "./pdfparts.ts";
 
 const PRESENTATION_FORMS: ReadonlyArray<readonly [number, number]> = [
   [0xfb00, 0xfb4f],
@@ -28,18 +28,19 @@ export function ligatureExpansion(cp: number): string | undefined {
   if (cp >= 0xd800 && cp <= 0xdfff) return undefined;
   if (!inPresentationForm(cp)) return undefined;
   const ch = String.fromCodePoint(cp);
-  const expanded = ch.normalize('NFKC');
+  const expanded = ch.normalize("NFKC");
   if (expanded === ch) return undefined;
   if ([...expanded].length < 2) return undefined;
   if (!LETTERS.test(expanded)) return undefined;
   return expanded;
 }
 
-const hex = (n: number, width = 4) => n.toString(16).toUpperCase().padStart(width, '0');
+const hex = (n: number, width = 4) =>
+  n.toString(16).toUpperCase().padStart(width, "0");
 
 function readDest(hexText: string): string | undefined {
   if (hexText.length % 4 !== 0) return undefined;
-  let out = '';
+  let out = "";
   for (let i = 0; i < hexText.length; i += 4) {
     out += String.fromCharCode(parseInt(hexText.slice(i, i + 4), 16));
   }
@@ -47,7 +48,7 @@ function readDest(hexText: string): string | undefined {
 }
 
 function writeDest(text: string): string {
-  let out = '';
+  let out = "";
   for (let i = 0; i < text.length; i++) out += hex(text.charCodeAt(i));
   return out;
 }
@@ -103,9 +104,13 @@ export function fixCMap(cmap: string): string | undefined {
  * `null` means the line is not a range row at all, and is kept verbatim. Otherwise `affected`
  * is false when nothing in the row needs expanding, and the line is kept too.
  */
-function rangeRow(line: string): { entries: string[]; affected: boolean } | null {
+function rangeRow(
+  line: string,
+): { entries: string[]; affected: boolean } | null {
   const arr = line.match(/^<([0-9A-Fa-f]+)>\s*\[([\s\S]*)\]$/);
-  const inc = line.match(/^<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]{4})>$/);
+  const inc = line.match(
+    /^<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]{4})>$/,
+  );
 
   const destinations: Array<{ gid: number; cp: number }> = [];
   if (arr) {
@@ -129,7 +134,9 @@ function rangeRow(line: string): { entries: string[]; affected: boolean } | null
   for (const { gid, cp } of destinations) {
     const expansion = ligatureExpansion(cp);
     if (expansion) affected = true;
-    entries.push(`<${hex(gid)}> <${writeDest(expansion ?? String.fromCharCode(cp))}>`);
+    entries.push(
+      `<${hex(gid)}> <${writeDest(expansion ?? String.fromCharCode(cp))}>`,
+    );
   }
   return { entries, affected };
 }
@@ -138,7 +145,9 @@ function fixRanges(cmap: string): string | undefined {
   let hit = false;
 
   const needsWork = [
-    ...cmap.matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]{4})>/g),
+    ...cmap.matchAll(
+      /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]{4})>/g,
+    ),
   ].some((m) => {
     const lo = parseInt(m[1]!, 16);
     const hi = parseInt(m[2]!, 16);
@@ -154,23 +163,29 @@ function fixRanges(cmap: string): string | undefined {
   // way was reported as having unresolved ligatures and never repaired -- and running the
   // checker over it afterwards reported more codepoints than before, because the checker
   // read the array's elements as the operands of an incremental range.
-  const needsArray = [...cmap.matchAll(/<([0-9A-Fa-f]+)>\s*\[([\s\S]*?)\]/g)].some((m) =>
+  const needsArray = [
+    ...cmap.matchAll(/<([0-9A-Fa-f]+)>\s*\[([\s\S]*?)\]/g),
+  ].some((m) =>
     [...m[2]!.matchAll(/<([0-9A-Fa-f]+)>/g)].some((d) =>
-      [...d[1]!.matchAll(/.{4}/g)].some((u) => ligatureExpansion(parseInt(u[0], 16)) !== undefined),
+      [...d[1]!.matchAll(/.{4}/g)].some(
+        (u) => ligatureExpansion(parseInt(u[0], 16)) !== undefined,
+      ),
     ),
   );
   if (!needsWork && !needsArray) return undefined;
 
-  const blocks = [...cmap.matchAll(/(\d+) beginbfrange\r?\n([\s\S]*?)\r?\nendbfrange/g)];
-  let out = '';
+  const blocks = [
+    ...cmap.matchAll(/(\d+) beginbfrange\r?\n([\s\S]*?)\r?\nendbfrange/g),
+  ];
+  let out = "";
   let cursor = 0;
   for (const block of blocks) {
-    const [whole, , body = ''] = block;
+    const [whole, , body = ""] = block;
     const keep: string[] = [];
     const added: string[] = [];
-    for (const raw of body.split('\n')) {
+    for (const raw of body.split("\n")) {
       // A row ends at the newline, and on a CRLF map that newline carries a \r with it.
-      const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+      const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
       const row = rangeRow(line);
       if (row === null) {
         keep.push(line);
@@ -189,9 +204,15 @@ function fixRanges(cmap: string): string | undefined {
       continue;
     }
     const pieces: string[] = [];
-    if (keep.length) pieces.push(`${keep.length} beginbfrange\n${keep.join('\n')}\nendbfrange`);
-    if (added.length) pieces.push(`${added.length} beginbfchar\n${added.join('\n')}\nendbfchar`);
-    out += pieces.join('\n');
+    if (keep.length)
+      pieces.push(
+        `${keep.length} beginbfrange\n${keep.join("\n")}\nendbfrange`,
+      );
+    if (added.length)
+      pieces.push(
+        `${added.length} beginbfchar\n${added.join("\n")}\nendbfchar`,
+      );
+    out += pieces.join("\n");
   }
   out += cmap.slice(cursor);
 
@@ -207,11 +228,14 @@ function fixCMapBoth(cmap: string): string | undefined {
 
 function rewrittenStream(o: Obj, cmap: string): Buffer {
   const compressed = deflateSync(Buffer.from(cmap, LATIN1));
-  const dict = streamDict(o).replace(/\/Length\s+\d+/, `/Length ${compressed.length}`);
+  const dict = streamDict(o).replace(
+    /\/Length\s+\d+/,
+    `/Length ${compressed.length}`,
+  );
   return Buffer.concat([
     Buffer.from(`${dict}stream\n`, LATIN1),
     compressed,
-    Buffer.from('\nendstream\nendobj\n', LATIN1),
+    Buffer.from("\nendstream\nendobj\n", LATIN1),
   ]);
 }
 
@@ -241,12 +265,16 @@ export function fixToUnicode(pdf: Uint8Array): Uint8Array {
 
   const objs = parts.objs.map((o) => {
     const cmap = fixed.get(o.num);
-    return cmap === undefined ? o : { num: o.num, bytes: rewrittenStream(o, cmap) };
+    return cmap === undefined
+      ? o
+      : { num: o.num, bytes: rewrittenStream(o, cmap) };
   });
   return join(parts.head, objs, parts.trailer);
 }
 
-export function unresolvedLigatures(pdf: Uint8Array): Array<{ cp: number; expansion: string }> {
+export function unresolvedLigatures(
+  pdf: Uint8Array,
+): Array<{ cp: number; expansion: string }> {
   const parts = trySplit(pdf);
   if (!parts) return [];
   const out: Array<{ cp: number; expansion: string }> = [];
@@ -272,14 +300,17 @@ export function unresolvedLigatures(pdf: Uint8Array): Array<{ cp: number; expans
 function scanBfchar(cmap: string, note: (cp: number) => void): void {
   for (const m of cmap.matchAll(/beginbfchar\r?\n([\s\S]*?)\r?\nendbfchar/g)) {
     for (const e of m[1]!.matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g)) {
-      for (let i = 0; i + 4 <= e[2]!.length; i += 4) note(parseInt(e[2]!.slice(i, i + 4), 16));
+      for (let i = 0; i + 4 <= e[2]!.length; i += 4)
+        note(parseInt(e[2]!.slice(i, i + 4), 16));
     }
   }
 }
 
 /** `beginbfrange` blocks: `<lo> <hi> <dst>` or `<lo> [ <d0> <d1> ... ]`. */
 function scanBfrange(cmap: string, note: (cp: number) => void): void {
-  for (const m of cmap.matchAll(/beginbfrange\r?\n([\s\S]*?)\r?\nendbfrange/g)) {
+  for (const m of cmap.matchAll(
+    /beginbfrange\r?\n([\s\S]*?)\r?\nendbfrange/g,
+  )) {
     for (const e of m[1]!.matchAll(
       // Either `<lo> <hi> <dst>` or `<lo> [ <d0> <d1> ... ]`.
       //
@@ -296,12 +327,14 @@ function scanBfrange(cmap: string, note: (cp: number) => void): void {
       if (e[2]) {
         const hi = parseInt(e[2]!, 16);
         const base = parseInt(e[3]!.slice(0, 4), 16);
-        for (let gid = lo; gid <= hi && gid - lo <= 0xffff; gid++) note(base + (gid - lo));
+        for (let gid = lo; gid <= hi && gid - lo <= 0xffff; gid++)
+          note(base + (gid - lo));
       } else {
         // An array supplies one destination per code from `<lo>` upwards, and each
         // destination is a codepoint like any other.
-        for (const d of (e[4] ?? '').matchAll(/<([0-9A-Fa-f]+)>/g)) {
-          for (let k = 0; k + 4 <= d[1]!.length; k += 4) note(parseInt(d[1]!.slice(k, k + 4), 16));
+        for (const d of (e[4] ?? "").matchAll(/<([0-9A-Fa-f]+)>/g)) {
+          for (let k = 0; k + 4 <= d[1]!.length; k += 4)
+            note(parseInt(d[1]!.slice(k, k + 4), 16));
         }
       }
     }

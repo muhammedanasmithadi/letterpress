@@ -1,5 +1,13 @@
 import { inflateSync } from 'node:zlib';
-import { inflatedStream, join, LATIN1, objsByNum, trySplit, type Obj } from './pdfparts.ts';
+import {
+  inflatedStream,
+  join,
+  LATIN1,
+  objsByNum,
+  trySplit,
+  type Obj,
+  type Parts,
+} from './pdfparts.ts';
 
 type Table = { offset: number; length: number };
 type Sfnt = {
@@ -120,58 +128,94 @@ function embeddedFont(o: Obj): Buffer | undefined {
   return inflatedStream(o, inflateSync);
 }
 
+type DescriptorFix = { flags: number; capHeight?: number };
+
 export function fixFontDescriptors(pdf: Uint8Array): Uint8Array {
   const parts = trySplit(pdf);
   if (!parts) return pdf;
 
   const byNum = objsByNum(parts);
+  const descriptorNums = referencedDescriptors(parts.objs);
+  if (!descriptorNums.size) return pdf;
 
-  const descriptorNums = new Set<number>();
-  for (const o of parts.objs) {
+  const wanted = fixesFor(descriptorNums, byNum);
+  return wanted.size ? applyDescriptorFixes(parts, wanted) : pdf;
+}
+
+/** The FontDescriptor numbers that CID/TrueType/Type3 fonts point at. */
+function referencedDescriptors(objs: Obj[]): Set<number> {
+  const nums = new Set<number>();
+  for (const o of objs) {
     const text = o.bytes.toString(LATIN1);
     if (!/\/Subtype\s*\/(?:CIDFontType2|TrueType|Type3)\b/.test(text)) continue;
     const d = text.match(/\/FontDescriptor\s+(\d+) 0 R/);
-    if (d) descriptorNums.add(Number(d[1]));
+    if (d) nums.add(Number(d[1]));
   }
-  if (!descriptorNums.size) return pdf;
+  return nums;
+}
 
-  const wanted = new Map<number, { flags: number; capHeight?: number }>();
+/** The corrected flags/cap-height for each descriptor that needs one. */
+function fixesFor(
+  descriptorNums: Set<number>,
+  byNum: Map<number, Obj>,
+): Map<number, DescriptorFix> {
+  const wanted = new Map<number, DescriptorFix>();
   for (const num of descriptorNums) {
     const desc = byNum.get(num);
     if (!desc) continue;
-    const text = desc.bytes.toString(LATIN1);
-    const fileRef = text.match(/\/FontFile2\s+(\d+) 0 R/);
-    if (!fileRef) {
-      const cap = Number(text.match(/\/CapHeight\s+(-?\d+)/)?.[1] ?? NaN);
-      const xHeight = Number(text.match(/\/XHeight\s+(-?\d+)/)?.[1] ?? NaN);
-      if (Number.isFinite(cap) && cap < 0 && Number.isFinite(xHeight) && -cap > xHeight) {
-        wanted.set(num, {
-          flags: Number(text.match(/\/Flags\s+(\d+)/)?.[1] ?? 0),
-          capHeight: -cap,
-        });
-      }
-      continue;
-    }
-    const face = byNum.get(Number(fileRef[1]));
-    if (!face) continue;
-    const font = embeddedFont(face);
-    if (!font) continue;
-    const sfnt = parseSfnt(font);
-    if (!sfnt) continue;
-
-    const flags = Number(text.match(/\/Flags\s+(\d+)/)?.[1] ?? NaN);
-    if (!Number.isFinite(flags)) continue;
-    const cap = Number(text.match(/\/CapHeight\s+(-?\d+)/)?.[1] ?? NaN);
-
-    const next: { flags: number; capHeight?: number } = { flags: flagsFrom(sfnt, flags) };
-
-    if (sfnt.sCapHeight > 0 && sfnt.os2Version >= 2 && (!Number.isFinite(cap) || cap <= 0)) {
-      next.capHeight = Math.round((sfnt.sCapHeight / sfnt.unitsPerEm) * 1000);
-    }
-    if (next.flags !== flags || next.capHeight !== undefined) wanted.set(num, next);
+    const fix = descriptorFix(desc.bytes.toString(LATIN1), byNum);
+    if (fix) wanted.set(num, fix);
   }
-  if (!wanted.size) return pdf;
+  return wanted;
+}
 
+/** The number captured by the first match of `re` in `text`, or `fallback` when absent. */
+function numFrom(text: string, re: RegExp, fallback: number): number {
+  return Number(text.match(re)?.[1] ?? fallback);
+}
+
+/** The CapHeight a descriptor should carry, where the font's own metrics improve on it. */
+function capHeightFix(sfnt: Sfnt, cap: number): number | undefined {
+  if (sfnt.sCapHeight > 0 && sfnt.os2Version >= 2 && (!Number.isFinite(cap) || cap <= 0)) {
+    return Math.round((sfnt.sCapHeight / sfnt.unitsPerEm) * 1000);
+  }
+  return undefined;
+}
+
+/** New flags/cap-height for one descriptor, or undefined when nothing changes. */
+function descriptorFix(text: string, byNum: Map<number, Obj>): DescriptorFix | undefined {
+  const fileRef = text.match(/\/FontFile2\s+(\d+) 0 R/);
+  if (!fileRef) return negativeCapHeightFix(text);
+
+  const face = byNum.get(Number(fileRef[1]));
+  if (!face) return undefined;
+  const font = embeddedFont(face);
+  if (!font) return undefined;
+  const sfnt = parseSfnt(font);
+  if (!sfnt) return undefined;
+
+  const flags = numFrom(text, /\/Flags\s+(\d+)/, NaN);
+  if (!Number.isFinite(flags)) return undefined;
+  const newFlags = flagsFrom(sfnt, flags);
+  const capHeight = capHeightFix(sfnt, numFrom(text, /\/CapHeight\s+(-?\d+)/, NaN));
+  if (newFlags === flags && capHeight === undefined) return undefined;
+  const next: DescriptorFix = { flags: newFlags };
+  if (capHeight !== undefined) next.capHeight = capHeight;
+  return next;
+}
+
+/** A descriptor with no embedded font, where a negative CapHeight exceeds XHeight. */
+function negativeCapHeightFix(text: string): DescriptorFix | undefined {
+  const cap = numFrom(text, /\/CapHeight\s+(-?\d+)/, NaN);
+  const xHeight = numFrom(text, /\/XHeight\s+(-?\d+)/, NaN);
+  if (!(Number.isFinite(cap) && cap < 0 && Number.isFinite(xHeight) && -cap > xHeight)) {
+    return undefined;
+  }
+  return { flags: numFrom(text, /\/Flags\s+(\d+)/, 0), capHeight: -cap };
+}
+
+/** Rewrite the flagged descriptors, leaving every other object untouched. */
+function applyDescriptorFixes(parts: Parts, wanted: Map<number, DescriptorFix>): Uint8Array {
   const objs = parts.objs.map((o) => {
     const fix = wanted.get(o.num);
     if (!fix) return o;
@@ -182,7 +226,6 @@ export function fixFontDescriptors(pdf: Uint8Array): Uint8Array {
     }
     return { num: o.num, bytes: Buffer.from(text, LATIN1) };
   });
-
   return join(parts.head, objs, parts.trailer);
 }
 

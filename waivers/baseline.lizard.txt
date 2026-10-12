@@ -1,5 +1,4 @@
 src/cli.ts::parseArgs
-src/fontdesc.ts::fixFontDescriptors
 src/render.ts::precedenceFindings
 src/selection.ts::glyphsOf
 src/selection.ts::textFlow

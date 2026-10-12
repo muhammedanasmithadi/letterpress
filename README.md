@@ -174,18 +174,27 @@ separate boxes. So does a table, whose cell gutters are measured in ems. Neither
 a fault in the file: the gaps are real, the geometry is correct, and every reader
 that applies the same rule does the same thing.
 
-There is a third cause with a different origin. Chromium wraps **every ligature** in
-a marked-content span carrying `/ActualText`, and a reader ends a text item at each of
-them whatever the spacing says. `fi`, `fl` and `ffi` are the usual triggers. It is
-not caused by tagging: a file rendered with `generateTaggedPDF` off is identical,
-because the spans come from the shaping layer rather than the structure tree.
+There is a third cause with a different origin, and this one is fixed rather than
+explained. Chromium wraps **every ligature** in a marked-content span carrying
+`/ActualText`, and a reader ends a text item at each of them whatever the spacing
+says. `fi`, `fl` and `ffi` are the usual triggers. It is not caused by tagging: a
+file rendered with `generateTaggedPDF` off is identical, because the spans come from
+the shaping layer rather than the structure tree.
 
-Establishing that last point took an intervention rather than a correlation.
-Stripping the span wrappers from a rendered file while keeping every glyph took a page
-of ordinary prose from 67 text items and 18 whitespace items down to 9 and none — nine
-being its nine lines, which is what the geometry alone produces.
+Establishing that took an intervention rather than a correlation. Stripping the span
+wrappers from a rendered file while keeping every glyph took a page of ordinary prose
+from 67 text items and 18 whitespace items down to 9 and none — nine being its nine
+lines, which is what the geometry alone produces.
 
-What you can do is all CSS:
+So this tool removes them. A span is removed only when the text its `/ActualText`
+declares is exactly what the glyphs inside resolve to through `/ToUnicode`. Where the
+two disagree the span is the only copy of that text and it stays. The extracted text
+is unchanged character for character, so there is nothing to trade: on a page of
+prose, 78 highlight boxes before and 8 after, and the 8 are the 8 lines.
+
+`--keep-ligature-spans` turns it off if you want the spans regardless.
+
+The other two causes are geometry, and only CSS touches them:
 
 ```css
 /* justification is the usual cause; left, or a longer measure, brings it inside */
@@ -210,8 +219,9 @@ body {
 }
 ```
 
-What you cannot do is change it in the PDF. Nothing in the file alters what a gap
-measures.
+What you cannot do is change a gap in the PDF. Nothing in the file alters what the
+gap measures — the ligature spans above are removed because they were never measuring
+anything, not because the measurement changed.
 
 `bun tools/selection.ts <file.html>` measures the real numbers on your document: how
 many gaps there are, how wide the widest is, and how many ligature spans. It reads

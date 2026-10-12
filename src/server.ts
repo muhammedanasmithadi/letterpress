@@ -486,7 +486,7 @@ export async function startServer(opts: ServerOptions = {}) {
 
   const stop = async () => {
     if (inFlight.size) {
-      await Promise.race([Promise.allSettled([...inFlight]), Bun.sleep(4_000)]);
+      await Promise.race([Promise.allSettled(inFlight), Bun.sleep(4_000)]);
     }
 
     for (const waiter of waiters.splice(0)) waiter();

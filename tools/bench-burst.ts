@@ -1,5 +1,5 @@
 import { startServer } from '/home/anas/Projects/html2pdf/src/server.ts';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 function doc(n: number) {

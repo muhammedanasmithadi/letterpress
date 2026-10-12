@@ -1,0 +1,30 @@
+{
+  "rules": {
+    "eslint/no-unused-vars": "error",
+    "eslint/no-empty": ["error", { "allowEmptyCatch": true }],
+    "eslint/no-warning-comments": [
+      "error",
+      { "terms": ["todo", "fixme", "hack"], "location": "anywhere" }
+    ],
+    "typescript/no-explicit-any": "error"
+  },
+  "ignorePatterns": ["dist/", "node_modules/", "waivers/"],
+  "overrides": [
+    {
+      "files": ["src/browser.ts", "src/chromium.ts"],
+      "rules": { "typescript/no-explicit-any": "off" }
+    },
+    {
+      "files": ["src/render.ts"],
+      "rules": {
+        "typescript/no-explicit-any": "off",
+        "eslint/no-control-regex": "off",
+        "eslint/no-useless-escape": "off"
+      }
+    },
+    {
+      "files": ["tools/bench-baseline.ts", "tools/bench-burst.ts", "tools/bench-concurrency.ts"],
+      "rules": { "typescript/no-explicit-any": "off" }
+    }
+  ]
+}

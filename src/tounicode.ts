@@ -55,21 +55,83 @@ function writeDest(text: string): string {
 export function fixCMap(cmap: string): string | undefined {
   let changed = false;
 
+  // Only inside a `beginbfchar` block.
+  //
+  // A `bfchar` entry is `<src> <dst>`. A `bfrange` line is `<lo> <hi> <dst>` and a
+  // `codespacerange` line is `<lo> <hi>`, and the old pattern could not tell them apart:
+  // its `\s*` between the operands matched a newline and its lookahead accepted the `<` that
+  // begins the next line, so `<0041>` on one line paired with `<FB00>` on the next. The
+  // result declared `2 beginbfrange` and supplied six operands on one line -- not a valid
+  // `bfrange` at all -- and turned a codespace declaration into a three-byte destination.
+  // `verify` cannot see inside a CMap, so both passed the gate and the report then said the
+  // font was clean.
+  //
+  // Entries inside a block may still be one per line, so the separator is `[ \t]*` and the
+  // lookahead accepts a line end -- a newline is now never consumed as a separator.
+  const fixBlock = (body: string): string =>
+    body.replace(
+      /<([0-9A-Fa-f]+)>[ \t]*<([0-9A-Fa-f]{4})>(?=[ \t]*(?:<|\r?\n|$))/g,
+      (match, key: string, destHex: string) => {
+        const dest = readDest(destHex);
+        if (dest === undefined || dest.length !== 1) return match;
+        const expansion = ligatureExpansion(dest.charCodeAt(0));
+        if (!expansion) return match;
+        changed = true;
+        return `<${key}> <${writeDest(expansion)}>`;
+      },
+    );
+
   const out = cmap.replace(
-    /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]{4})>(?=\s*(?:<|\r?\n|$))/g,
-    (match, key: string, destHex: string) => {
-      const dest = readDest(destHex);
-      if (dest === undefined || dest.length !== 1) return match;
-      const expansion = ligatureExpansion(dest.charCodeAt(0));
-      if (!expansion) return match;
-      changed = true;
-      return `<${key}> <${writeDest(expansion)}>`;
-    },
+    /beginbfchar([\s\S]*?)endbfchar/g,
+    (_whole, body: string) => `beginbfchar${fixBlock(body)}endbfchar`,
   );
 
   if (!changed) return undefined;
 
   return out;
+}
+
+/**
+ * One row of a `bfrange` block, and the `bfchar` rows it becomes.
+ *
+ * Two forms, and they are genuinely different rather than two spellings of the same thing:
+ * `<lo> <hi> <dst>` increments from a base, and `<lo> [ <d0> <d1> ... ]` lists one
+ * destination per code from `<lo>` upwards. Treating the array's first elements as `hi` and
+ * the base is how it used to be read, and it is why the report named codepoints the map does
+ * not contain.
+ *
+ * `null` means the line is not a range row at all, and is kept verbatim. Otherwise `affected`
+ * is false when nothing in the row needs expanding, and the line is kept too.
+ */
+function rangeRow(line: string): { entries: string[]; affected: boolean } | null {
+  const arr = line.match(/^<([0-9A-Fa-f]+)>\s*\[([\s\S]*)\]$/);
+  const inc = line.match(/^<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]{4})>$/);
+
+  const destinations: Array<{ gid: number; cp: number }> = [];
+  if (arr) {
+    const lo = parseInt(arr[1]!, 16);
+    [...arr[2]!.matchAll(/<([0-9A-Fa-f]+)>/g)].forEach((d, i) =>
+      destinations.push({ gid: lo + i, cp: parseInt(d[1]!.slice(0, 4), 16) }),
+    );
+  } else if (inc) {
+    const lo = parseInt(inc[1]!, 16);
+    const hi = parseInt(inc[2]!, 16);
+    const base = parseInt(inc[3]!, 16);
+    if (hi < lo) return null;
+    for (let gid = lo; gid <= hi && gid - lo <= 0xffff; gid++)
+      destinations.push({ gid, cp: base + (gid - lo) });
+  } else {
+    return null;
+  }
+
+  const entries: string[] = [];
+  let affected = false;
+  for (const { gid, cp } of destinations) {
+    const expansion = ligatureExpansion(cp);
+    if (expansion) affected = true;
+    entries.push(`<${hex(gid)}> <${writeDest(expansion ?? String.fromCharCode(cp))}>`);
+  }
+  return { entries, affected };
 }
 
 function fixRanges(cmap: string): string | undefined {
@@ -87,7 +149,17 @@ function fixRanges(cmap: string): string | undefined {
     }
     return false;
   });
-  if (!needsWork) return undefined;
+  // An array form carries one destination per code from `<lo>` upwards. It was skipped
+  // entirely: the line pattern below matched only `<lo> <hi> <dst>`, so a map written this
+  // way was reported as having unresolved ligatures and never repaired -- and running the
+  // checker over it afterwards reported more codepoints than before, because the checker
+  // read the array's elements as the operands of an incremental range.
+  const needsArray = [...cmap.matchAll(/<([0-9A-Fa-f]+)>\s*\[([\s\S]*?)\]/g)].some((m) =>
+    [...m[2]!.matchAll(/<([0-9A-Fa-f]+)>/g)].some((d) =>
+      [...d[1]!.matchAll(/.{4}/g)].some((u) => ligatureExpansion(parseInt(u[0], 16)) !== undefined),
+    ),
+  );
+  if (!needsWork && !needsArray) return undefined;
 
   const blocks = [...cmap.matchAll(/(\d+) beginbfrange\r?\n([\s\S]*?)\r?\nendbfrange/g)];
   let out = '';
@@ -99,24 +171,13 @@ function fixRanges(cmap: string): string | undefined {
     for (const raw of body.split('\n')) {
       // A row ends at the newline, and on a CRLF map that newline carries a \r with it.
       const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
-      const m = line.match(/^<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]{4})>$/);
-      if (!m) {
+      const row = rangeRow(line);
+      if (row === null) {
         keep.push(line);
         continue;
       }
-      const lo = parseInt(m[1]!, 16);
-      const hi = parseInt(m[2]!, 16);
-      const base = parseInt(m[3]!, 16);
-      const entries: string[] = [];
-      let affected = false;
-      for (let gid = lo; gid <= hi; gid++) {
-        const cp = base + (gid - lo);
-        const expansion = ligatureExpansion(cp);
-        if (expansion) affected = true;
-        entries.push(`<${hex(gid)}> <${writeDest(expansion ?? String.fromCharCode(cp))}>`);
-      }
-      if (affected) {
-        added.push(...entries);
+      if (row.affected) {
+        added.push(...row.entries);
         hit = true;
       } else keep.push(line);
     }
@@ -208,17 +269,28 @@ export function unresolvedLigatures(pdf: Uint8Array): Array<{ cp: number; expans
     }
     for (const m of cmap.matchAll(/beginbfrange\r?\n([\s\S]*?)\r?\nendbfrange/g)) {
       for (const e of m[1]!.matchAll(
-        /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(?:<([0-9A-Fa-f]+)>|\[([\s\S]*?)\])/g,
+        // Either `<lo> <hi> <dst>` or `<lo> [ <d0> <d1> ... ]`.
+        //
+        // The array form is a third alternative after the first operand, not a fourth. The
+        // old pattern demanded `<lo> <hex>` before it would consider a bracket, so an array
+        // line failed to match at `<lo>`, the engine advanced, and it started matching at
+        // the first array element -- reading elements one and two as lo and hi and element
+        // three as the increment base. A two-element array therefore reported nothing at
+        // all, and a four-element array reported codepoints the map does not contain while
+        // missing two that it does.
+        /<([0-9A-Fa-f]+)>\s*(?:<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>|\[\s*([\s\S]*?)\s*\])/g,
       )) {
         const lo = parseInt(e[1]!, 16);
-        const hi = parseInt(e[2]!, 16);
-        if (e[3]) {
+        if (e[2]) {
+          const hi = parseInt(e[2]!, 16);
           const base = parseInt(e[3]!.slice(0, 4), 16);
           for (let gid = lo; gid <= hi && gid - lo <= 0xffff; gid++) note(base + (gid - lo));
         } else {
+          // An array supplies one destination per code from `<lo>` upwards, and each
+          // destination is a codepoint like any other.
           for (const d of (e[4] ?? '').matchAll(/<([0-9A-Fa-f]+)>/g)) {
-            for (let i = 0; i + 4 <= d[1]!.length; i += 4)
-              note(parseInt(d[1]!.slice(i, i + 4), 16));
+            for (let k = 0; k + 4 <= d[1]!.length; k += 4)
+              note(parseInt(d[1]!.slice(k, k + 4), 16));
           }
         }
       }

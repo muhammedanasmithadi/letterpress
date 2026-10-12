@@ -72,18 +72,16 @@ const DOCS: Doc[] = [
        p{margin:0 0 .75em;text-align:justify}
        .page{break-after:page}
        .page:last-child{break-after:auto}`,
-      [
-        ...Array.from(
-          { length: 3 },
-          (_, i) => `
+      Array.from(
+        { length: 3 },
+        (_, i) => `
         <section class="page">
           <h2>Chapter ${i + 1}</h2>
           <p>${'The reader of a long document should never have to ask where they are. A running head names the work, a folio numbers the leaf, and the margin holds both without intruding on the text. '.repeat(6)}</p>
           <h2>A second heading</h2>
           <p>${'Kerning is the adjustment of the space between two letters so that the pair looks right rather than merely fits. '.repeat(7)}</p>
         </section>`,
-        ),
-      ].join(''),
+      ).join(''),
     ),
   },
   {

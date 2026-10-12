@@ -9,11 +9,11 @@
     "render": "bun src/cli.ts",
     "typecheck": "tsc --noEmit",
     "serve": "bun src/server.ts",
-    "lint": "eslint tools --max-warnings=0",
+    "lint": "oxlint --max-warnings 0 src test tools viewer",
     "lint:ts": "bun tools/lint-ts.mjs",
     "dup": "bun tools/dup.mjs",
     "audit": "bun audit",
-    "format:check": "prettier --check src test tools templates viewer README.md docs",
+    "format:check": "oxfmt --check src test tools templates viewer README.md docs",
     "spell": "cspell --no-progress --fail-fast --config cspell.yaml README.md docs/*.md",
     "ratchet": "bun tools/ratchet.mjs",
     "coverage": "bun test --coverage --coverage-reporter=lcov && bun tools/coverage.mjs"
@@ -30,6 +30,8 @@
     "cspell": "10.3.6",
     "eslint": "10.12.0",
     "globals": "17.13.0",
+    "oxfmt": "0.72.0",
+    "oxlint": "1.87.0",
     "prettier": "3.9.9",
     "typescript": "7.0.2",
     "typescript-api": "npm:typescript@5.9.3"

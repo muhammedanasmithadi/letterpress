@@ -550,7 +550,7 @@ function buildTemplateData(data: Record<string, unknown>): TemplateData {
       if (claimed === undefined || claimed === null || claimed === '') continue;
 
       const digits =
-        typeof claimed === 'number' ? String(claimed) : String(claimed).replace(/[^\d.\-]/g, '');
+        typeof claimed === 'number' ? String(claimed) : String(claimed).replace(/[^\d.-]/g, '');
       const parsed = typeof claimed === 'number' ? claimed : Number(digits);
       if (!digits.trim() || !Number.isFinite(parsed)) {
         throw new TemplateError([

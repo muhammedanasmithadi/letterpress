@@ -1,5 +1,5 @@
 import { startServer } from '/home/anas/Projects/html2pdf/src/server.ts';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -17,7 +17,6 @@ function doc(sections: number) {
 }
 
 const profile = await mkdtemp(join(tmpdir(), 'lp-scale-'));
-let port = 0;
 const server = await startServer({ profile, port: 0, onReady: () => {} }).catch(() => null);
 void server;
 await Bun.sleep(200);

@@ -135,7 +135,9 @@ test('a format override is applied and reported', async () => {
   const out = join(dir, 'letter.pdf');
   const r = await run([doc, '-o', out, '--format', 'letter', '--json']);
   const parsed = JSON.parse(r.stdout);
-  expect(parsed.findings.some((f: any) => f.code === 'page-size-override')).toBe(true);
+  expect(parsed.findings.some((f: { code?: string }) => f.code === 'page-size-override')).toBe(
+    true,
+  );
   const bytes = new Uint8Array(await Bun.file(out).arrayBuffer());
   expect((await pdfInfo(bytes)).pageSize).toMatch(/612/);
 }, 60_000);

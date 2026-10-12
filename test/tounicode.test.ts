@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { deflateSync, inflateSync } from 'node:zlib';
 import { Browser } from '../src/browser.ts';
 import { render } from '../src/render.ts';
-import { fixToUnicode, ligatureExpansion, unresolvedLigatures } from '../src/tounicode.ts';
+import { fixCMap, fixToUnicode, ligatureExpansion, unresolvedLigatures } from '../src/tounicode.ts';
 import { pdfInfo, pdfText } from './poppler.ts';
 
 const LATIN1 = 'latin1' as BufferEncoding;
@@ -217,6 +217,70 @@ describe('fixToUnicode', () => {
     const text = cmaps(out).join('');
     expect(text).toContain('<0654> <006600660069>');
     expect(text).toContain('<0675> <00660066>');
+  });
+
+  test('a bfrange line is never rewritten as a bfchar entry', () => {
+    // The old pattern had no notion of which block it was in: its separator matched a
+    // newline and its lookahead accepted the `<` beginning the next line, so `<0041>` paired
+    // with `<FB00>`. The result declared `2 beginbfrange` and supplied six operands on one
+    // line -- not a valid bfrange -- and `verify` cannot see inside a CMap, so it passed the
+    // gate and the report then said the font was clean.
+    const cmap = '2 beginbfrange\n<0010> <0012> <0041>\n<FB00> <FB03> <0050>\nendbfrange\n';
+    expect(fixCMap(cmap)).toBeUndefined();
+    expect(
+      fixToUnicode(pdfWithCMap(cmap)) &&
+        sameBytes(fixToUnicode(pdfWithCMap(cmap)), pdfWithCMap(cmap)),
+    ).toBe(true);
+  });
+
+  test('a codespacerange line is never rewritten either', () => {
+    // `<FB00> <FB03>` is a range of two codes, not a source and a destination.
+    const cmap = '1 begincodespacerange\n<FB00> <FB03>\nendcodespacerange\n';
+    expect(fixCMap(cmap)).toBeUndefined();
+  });
+
+  test('bfchar entries are still fixed, one per line and several per line', () => {
+    // The scoping must not cost the actual work.
+    const onePerLine = '2 beginbfchar\n<0041> <FB01>\n<0042> <FB02>\nendbfchar\n';
+    expect(fixCMap(onePerLine)).toBe(
+      '2 beginbfchar\n<0041> <00660069>\n<0042> <0066006C>\nendbfchar\n',
+    );
+    const perLine = '2 beginbfchar\n<0041> <FB01> <0042> <FB02>\nendbfchar\n';
+    expect(fixCMap(perLine)).toBe(
+      '2 beginbfchar\n<0041> <00660069> <0042> <0066006C>\nendbfchar\n',
+    );
+  });
+
+  test('a bfchar entry that is not a ligature is left alone, and the count holds', () => {
+    const cmap = '3 beginbfchar\n<0041> <FB01>\n<0042> <FB02>\n<0043> <0044>\nendbfchar\n';
+    const out = fixCMap(cmap)!;
+    expect(out).toContain('<0043> <0044>');
+    expect(out).toContain('3 beginbfchar');
+    expect(out).not.toContain('<FB01>');
+    expect(out).not.toContain('<FB02>');
+  });
+
+  test('an array-form bfrange is repaired and the repair is idempotent', () => {
+    // The checker read an array line as three operands of an incremental range -- elements
+    // one and two as lo and hi -- so it reported codepoints the map does not contain and
+    // missed ones it does. Then the repair made it worse: four unresolved became nineteen.
+    for (const arr of ['[<FB00> <FB01>]', '[<FB00> <FB01> <FB02> <FB03>]']) {
+      const cmap = `1 beginbfrange\n<0001> ${arr}\nendbfrange\n`;
+      const input = pdfWithCMap(cmap);
+      expect(unresolvedLigatures(input).length, `before: ${arr}`).toBeGreaterThan(0);
+
+      const once = fixToUnicode(input);
+      expect(unresolvedLigatures(once), `after: ${arr}`).toEqual([]);
+      // Idempotence is the property that would have caught this, and it is named as such in
+      // docs/architecture-assessment.md.
+      expect(sameBytes(fixToUnicode(once), once), `twice: ${arr}`).toBe(true);
+    }
+  });
+
+  test('an array-form range that needs no repair is left byte-identical', () => {
+    const cmap = '1 beginbfrange\n<0001> [<0041> <0042> <0043>]\nendbfrange\n';
+    const input = pdfWithCMap(cmap);
+    expect(sameBytes(fixToUnicode(input), input)).toBe(true);
   });
 
   test('the codespacerange line is not mistaken for a glyph mapping', () => {

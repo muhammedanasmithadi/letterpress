@@ -8,7 +8,7 @@
          caller. Page numbers come from @page margin boxes because CDP header and
          footer templates reserve space inside the page box and repaginate. */
       @page {
-        size: {{paper}};
+        size: {{paper_css}};
         margin: 18mm 16mm 16mm;
         /* Running header and footer. A CSS string does not decode HTML entities, so
            these take the _text variants, already escaped for CSS. They are raw
@@ -19,8 +19,8 @@
       }
       :root {
         --ink: #1a1a1a; --muted: #767676; --rule: #d8d8d8;
-        --accent: {{accent}};
-        --font: {{font}};
+        --accent: {{accent_css}};
+        --font: {{font_css}};
       }
       * { box-sizing: border-box }
       html { -webkit-print-color-adjust: exact; print-color-adjust: exact }

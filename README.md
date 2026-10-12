@@ -243,9 +243,24 @@ document is still a job for the inspector.
 }
 ```
 
-`{{token}}` is escaped, so a value cannot inject markup. `{{{token}}}` passes
-HTML through untouched, for the few values that are built markup such as table
-rows.
+`{{token}}` is escaped for markup, so a value cannot inject markup. `{{{token}}}`
+passes HTML through untouched, for the few values that are built markup such as
+table rows.
+
+A slot inside a stylesheet needs a different escaper, because a value that cannot
+break out of an element can still break out of a declaration. Use `_css`:
+
+```html
+@page { size: {{paper_css}}; } :root { --accent: {{accent_css}}; }
+```
+
+`_css` escapes everything a CSS value does not legitimately use — including the
+semicolon and the brace that `{{token}}` leaves alone. An `accent` of
+`red; } body { display: none } :root { --accent: red` printed an invoice with no
+body at all, reported one page, and exited 0.
+
+Use `_text` for a value inside a CSS `content:` string. A CSS string does not
+decode HTML entities, so the markup escaper would be wrong there too.
 
 Totals are computed from `items`, never read from the file. If the file also
 carries a `subtotal`, `vat` or `total`, the computed figure wins and a mismatch

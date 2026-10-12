@@ -34,7 +34,7 @@ const ITEMS = [
   { description: 'Vacuum gauge, 1e-9 mbar', qty: 2, unit: 512 },
 ];
 
-function document(items = ITEMS) {
+function document(items = ITEMS, overrides: Record<string, string> = {}) {
   const totals = invoiceTotals(items);
   return fill(template, {
     paper: 'A4',
@@ -63,6 +63,7 @@ function document(items = ITEMS) {
 
     company_text: escapeCss('Northwind Instruments'),
     invoice_no_text: escapeCss('2026-014'),
+    ...overrides,
   });
 }
 
@@ -110,6 +111,24 @@ test('totals are computed, not hand-written', () => {
   expect(t.vat_rate).toBe('20%');
   expect(money(1234567.891)).toBe('1,234,567.89');
 });
+
+test('a value in a bare CSS slot cannot end the declaration and open a rule', async () => {
+  // `{{accent}}` sits in `--accent: {{accent}};` with nothing around it. The markup escaper
+  // does not touch a semicolon or a brace, so a JSON value could close the declaration and
+  // write a rule of its own. This one printed an invoice with no body at all, reported one
+  // page, and exited 0.
+  const html = document([{ description: 'Consulting', qty: 2, unit: 100 }], {
+    accent: 'red; } body { display: none } :root { --accent: red',
+  });
+
+  const r = await render(browser, { html, author: 't' });
+  const text = await pdfText(r.pdf);
+  // Asserted on the rendered text, not on the escaper: the escaper can be correct and the
+  // slot still wrong, and only the page knows.
+  expect(text).toContain('Consulting');
+  expect(text).toContain('Northwind Instruments');
+  expect(text).toContain('2026-014');
+}, 60_000);
 
 test('item text is escaped, so a description cannot inject markup', () => {
   const t = invoiceTotals([{ description: '<b>Widget</b>', qty: 1, unit: 1 }]);

@@ -12,6 +12,7 @@ import {
   lines,
   money,
   render as fillTemplate,
+  type LineItem,
   type TemplateData,
 } from './template.ts';
 
@@ -605,6 +606,84 @@ export async function listTemplates(): Promise<string[]> {
   return names.sort();
 }
 
+/** The VAT rate from the data, defaulting to the British standard rate. */
+function vatRateOf(data: Record<string, unknown>): number {
+  const rateInput = data.vat_rate ?? data.vatRate ?? 0.2;
+  const vatRate = Number(rateInput);
+  if (!Number.isFinite(vatRate) || vatRate < 0 || vatRate > 1) {
+    throw new TemplateError([
+      `vat_rate must be a number between 0 and 1, got ${JSON.stringify(rateInput)}. ` +
+        `use 0.2 for twenty percent.`,
+    ]);
+  }
+  return vatRate;
+}
+
+/** The item rows, checked for the numeric fields `invoiceTotals` needs. */
+function lineItemsOf(items: Array<Record<string, unknown>>): LineItem[] {
+  const lineItems = items.map((i, at) => {
+    const qty = Number(i.qty ?? i.quantity ?? 1);
+    const unit = Number(i.unit ?? i.price ?? 0);
+
+    if (!Number.isFinite(qty) || !Number.isFinite(unit)) {
+      throw new TemplateError([
+        `items[${at}] has a qty or unit that is not a number: ` +
+          `${JSON.stringify({ qty: i.qty ?? i.quantity, unit: i.unit ?? i.price })}`,
+      ]);
+    }
+    return { description: String(i.description ?? i.item ?? ''), qty, unit };
+  });
+
+  if (!lineItems.length) {
+    throw new TemplateError([
+      'items is empty, so the invoice would print a header and a total with no ' +
+        'line items between them. pass at least one item, or check the data file.',
+    ]);
+  }
+  return lineItems;
+}
+
+/** Refuse a supplied subtotal, vat or total that disagrees with the computed one. */
+function reconcileTotals(
+  data: Record<string, unknown>,
+  totals: ReturnType<typeof invoiceTotals>,
+): void {
+  for (const [key, computed] of [
+    ['subtotal', totals.subtotalValue],
+    ['vat', totals.vatValue],
+    ['total', totals.totalValue],
+  ] as const) {
+    const claimed = data[key];
+    if (claimed === undefined || claimed === null || claimed === '') continue;
+
+    const digits =
+      typeof claimed === 'number' ? String(claimed) : String(claimed).replace(/[^\d.-]/g, '');
+    const parsed = typeof claimed === 'number' ? claimed : Number(digits);
+    if (!digits.trim() || !Number.isFinite(parsed)) {
+      throw new TemplateError([
+        `${key} in the data file is ${JSON.stringify(claimed)}, which is not a number. ` +
+          `remove ${key} to let it be computed from the line items.`,
+      ]);
+    }
+    if (Math.abs(parsed - computed) > 0.005) {
+      throw new TemplateError([
+        `${key} in the data file is ${claimed}, but the line items add up to ${money(computed)}. ` +
+          `the computed figure is printed, because printing the supplied one would send a wrong total. ` +
+          `remove ${key} from the data file to let it always be computed.`,
+      ]);
+    }
+  }
+}
+
+/** Copy the free-text and multi-line fields, escaping what lands in the template. */
+function copyTextFields(data: Record<string, unknown>, out: TemplateData): void {
+  for (const k of ['company', 'invoice_no', 'company_secondary', 'note', 'currency']) {
+    if (typeof data[k] === 'string') out[`${k}_text`] = escapeCss(data[k] as string);
+  }
+  if (Array.isArray(data.bill_to_lines)) out.bill_to_lines = lines(data.bill_to_lines.map(String));
+  if (Array.isArray(data.company_lines)) out.company_lines = lines(data.company_lines.map(String));
+}
+
 function buildTemplateData(data: Record<string, unknown>): TemplateData {
   const out: TemplateData = {};
   for (const [k, v] of Object.entries(data)) out[k] = v as TemplateData[string];
@@ -623,72 +702,16 @@ function buildTemplateData(data: Record<string, unknown>): TemplateData {
     if (!Array.isArray(raw)) throw new TemplateError(['items must be an array']);
     const items = raw as Array<Record<string, unknown>>;
 
-    const rateInput = data.vat_rate ?? data.vatRate ?? 0.2;
-    const vatRate = Number(rateInput);
-    if (!Number.isFinite(vatRate) || vatRate < 0 || vatRate > 1) {
-      throw new TemplateError([
-        `vat_rate must be a number between 0 and 1, got ${JSON.stringify(rateInput)}. ` +
-          `use 0.2 for twenty percent.`,
-      ]);
-    }
-
-    const lineItems = items.map((i, at) => {
-      const qty = Number(i.qty ?? i.quantity ?? 1);
-      const unit = Number(i.unit ?? i.price ?? 0);
-
-      if (!Number.isFinite(qty) || !Number.isFinite(unit)) {
-        throw new TemplateError([
-          `items[${at}] has a qty or unit that is not a number: ` +
-            `${JSON.stringify({ qty: i.qty ?? i.quantity, unit: i.unit ?? i.price })}`,
-        ]);
-      }
-      return { description: String(i.description ?? i.item ?? ''), qty, unit };
-    });
-
-    if (!lineItems.length) {
-      throw new TemplateError([
-        'items is empty, so the invoice would print a header and a total with no ' +
-          'line items between them. pass at least one item, or check the data file.',
-      ]);
-    }
-
-    const totals = invoiceTotals(lineItems, {
+    const vatRate = vatRateOf(data);
+    const totals = invoiceTotals(lineItemsOf(items), {
       vatRate,
       currency: String(data.currency ?? 'EUR'),
     });
     Object.assign(out, totals);
-    for (const [key, computed] of [
-      ['subtotal', totals.subtotalValue],
-      ['vat', totals.vatValue],
-      ['total', totals.totalValue],
-    ] as const) {
-      const claimed = data[key];
-      if (claimed === undefined || claimed === null || claimed === '') continue;
-
-      const digits =
-        typeof claimed === 'number' ? String(claimed) : String(claimed).replace(/[^\d.-]/g, '');
-      const parsed = typeof claimed === 'number' ? claimed : Number(digits);
-      if (!digits.trim() || !Number.isFinite(parsed)) {
-        throw new TemplateError([
-          `${key} in the data file is ${JSON.stringify(claimed)}, which is not a number. ` +
-            `remove ${key} to let it be computed from the line items.`,
-        ]);
-      }
-      if (Math.abs(parsed - computed) > 0.005) {
-        throw new TemplateError([
-          `${key} in the data file is ${claimed}, but the line items add up to ${money(computed)}. ` +
-            `the computed figure is printed, because printing the supplied one would send a wrong total. ` +
-            `remove ${key} from the data file to let it always be computed.`,
-        ]);
-      }
-    }
+    reconcileTotals(data, totals);
   }
 
-  for (const k of ['company', 'invoice_no', 'company_secondary', 'note', 'currency']) {
-    if (typeof data[k] === 'string') out[`${k}_text`] = escapeCss(data[k] as string);
-  }
-  if (Array.isArray(data.bill_to_lines)) out.bill_to_lines = lines(data.bill_to_lines.map(String));
-  if (Array.isArray(data.company_lines)) out.company_lines = lines(data.company_lines.map(String));
+  copyTextFields(data, out);
   return out;
 }
 

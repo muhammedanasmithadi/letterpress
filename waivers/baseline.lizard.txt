@@ -1,4 +1,3 @@
-src/cli.ts::buildTemplateData
 src/cli.ts::main
 src/render.ts::precedenceFindings
 src/selection.ts::glyphsOf

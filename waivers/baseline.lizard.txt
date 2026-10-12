@@ -7,5 +7,4 @@ src/selection.ts::textFlow
 src/server.ts::fetch
 src/textfont.ts::parseW
 src/tjmerge.ts::mergeBlock
-src/tounicode.ts::unresolvedLigatures
 src/verify.ts::verify

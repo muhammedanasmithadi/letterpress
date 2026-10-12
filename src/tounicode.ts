@@ -262,39 +262,48 @@ export function unresolvedLigatures(pdf: Uint8Array): Array<{ cp: number; expans
     const raw = inflatedStream(o, inflateSync);
     if (!raw) continue;
     const cmap = raw.toString(LATIN1);
-    for (const m of cmap.matchAll(/beginbfchar\r?\n([\s\S]*?)\r?\nendbfchar/g)) {
-      for (const e of m[1]!.matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g)) {
-        for (let i = 0; i + 4 <= e[2]!.length; i += 4) note(parseInt(e[2]!.slice(i, i + 4), 16));
-      }
+    scanBfchar(cmap, note);
+    scanBfrange(cmap, note);
+  }
+  return out;
+}
+
+/** `beginbfchar` blocks: one source code to one destination. */
+function scanBfchar(cmap: string, note: (cp: number) => void): void {
+  for (const m of cmap.matchAll(/beginbfchar\r?\n([\s\S]*?)\r?\nendbfchar/g)) {
+    for (const e of m[1]!.matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g)) {
+      for (let i = 0; i + 4 <= e[2]!.length; i += 4) note(parseInt(e[2]!.slice(i, i + 4), 16));
     }
-    for (const m of cmap.matchAll(/beginbfrange\r?\n([\s\S]*?)\r?\nendbfrange/g)) {
-      for (const e of m[1]!.matchAll(
-        // Either `<lo> <hi> <dst>` or `<lo> [ <d0> <d1> ... ]`.
-        //
-        // The array form is a third alternative after the first operand, not a fourth. The
-        // old pattern demanded `<lo> <hex>` before it would consider a bracket, so an array
-        // line failed to match at `<lo>`, the engine advanced, and it started matching at
-        // the first array element -- reading elements one and two as lo and hi and element
-        // three as the increment base. A two-element array therefore reported nothing at
-        // all, and a four-element array reported codepoints the map does not contain while
-        // missing two that it does.
-        /<([0-9A-Fa-f]+)>\s*(?:<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>|\[\s*([\s\S]*?)\s*\])/g,
-      )) {
-        const lo = parseInt(e[1]!, 16);
-        if (e[2]) {
-          const hi = parseInt(e[2]!, 16);
-          const base = parseInt(e[3]!.slice(0, 4), 16);
-          for (let gid = lo; gid <= hi && gid - lo <= 0xffff; gid++) note(base + (gid - lo));
-        } else {
-          // An array supplies one destination per code from `<lo>` upwards, and each
-          // destination is a codepoint like any other.
-          for (const d of (e[4] ?? '').matchAll(/<([0-9A-Fa-f]+)>/g)) {
-            for (let k = 0; k + 4 <= d[1]!.length; k += 4)
-              note(parseInt(d[1]!.slice(k, k + 4), 16));
-          }
+  }
+}
+
+/** `beginbfrange` blocks: `<lo> <hi> <dst>` or `<lo> [ <d0> <d1> ... ]`. */
+function scanBfrange(cmap: string, note: (cp: number) => void): void {
+  for (const m of cmap.matchAll(/beginbfrange\r?\n([\s\S]*?)\r?\nendbfrange/g)) {
+    for (const e of m[1]!.matchAll(
+      // Either `<lo> <hi> <dst>` or `<lo> [ <d0> <d1> ... ]`.
+      //
+      // The array form is a third alternative after the first operand, not a fourth. The
+      // old pattern demanded `<lo> <hex>` before it would consider a bracket, so an array
+      // line failed to match at `<lo>`, the engine advanced, and it started matching at
+      // the first array element -- reading elements one and two as lo and hi and element
+      // three as the increment base. A two-element array therefore reported nothing at
+      // all, and a four-element array reported codepoints the map does not contain while
+      // missing two that it does.
+      /<([0-9A-Fa-f]+)>\s*(?:<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>|\[\s*([\s\S]*?)\s*\])/g,
+    )) {
+      const lo = parseInt(e[1]!, 16);
+      if (e[2]) {
+        const hi = parseInt(e[2]!, 16);
+        const base = parseInt(e[3]!.slice(0, 4), 16);
+        for (let gid = lo; gid <= hi && gid - lo <= 0xffff; gid++) note(base + (gid - lo));
+      } else {
+        // An array supplies one destination per code from `<lo>` upwards, and each
+        // destination is a codepoint like any other.
+        for (const d of (e[4] ?? '').matchAll(/<([0-9A-Fa-f]+)>/g)) {
+          for (let k = 0; k + 4 <= d[1]!.length; k += 4) note(parseInt(d[1]!.slice(k, k + 4), 16));
         }
       }
     }
   }
-  return out;
 }

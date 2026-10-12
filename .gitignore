@@ -4,3 +4,4 @@ node_modules/
 out/
 .orbit
 bench-out/
+coverage/

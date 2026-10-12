@@ -1,11 +1,17 @@
-import type { Finding } from './render.ts';
-import type { Tab } from './browser.ts';
+import type { Finding } from "./render.ts";
+import type { Tab } from "./browser.ts";
 
 const AUDIT = String.raw`
 (() => {
   const out = [];
   const add = (code, severity, message, extra) =>
     out.push(Object.assign({ code, severity, message }, extra || {}));
+  // Everything below runs inside this try. Without it, one throw anywhere past section 1 --
+  // a canvas that will not give a 2d context, a font string getComputedStyle refuses --
+  // discarded every finding computed before it and answered with a single audit-failed
+  // saying none were available. That is true and useless: the placeholder, JSON and
+  // paged-media findings had all been measured. A partial audit is reported as partial.
+  try {
 
   // ---- 1. unfilled template placeholders -------------------------------
   const braces = document.documentElement.innerHTML.match(/\{\{[#/]?\w+\}\}/g) || [];
@@ -28,6 +34,13 @@ const AUDIT = String.raw`
   // Chromium discards an entire 'content' declaration when it meets one of
   // these, so a table of contents built on target-counter renders as nothing,
   // silently.
+  //
+  // Which means this scan, reading the CSSOM, cannot see them: by the time it runs the
+  // rule's cssText is already an empty block. Verified in the page. So the finding fires
+  // only for a function Chromium keeps and renders wrongly, and a target-counter -- the
+  // case the documentation names -- is reported by nothing. Reading the document's own
+  // <style> text alongside the CSSOM would find it; that is a change of shape rather than
+  // a fix, and it is noted rather than done here.
   const unsupported = { "target-counter": 1, "target-text": 1, "leader(": 1, "string(": 1, "running(": 1 };
   const seenCss = {};
   const scanRules = (rules) => {
@@ -51,8 +64,20 @@ const AUDIT = String.raw`
       }
     }
   };
+  let unreadableSheets = 0;
   for (const sheet of document.styleSheets) {
-    try { scanRules(sheet.cssRules); } catch (e) { /* cross-origin sheet */ }
+    // A cross-origin sheet throws on cssRules and contributes nothing. Saying so is the
+    // difference between "no problems found" and "no problems found, in the part I could
+    // read" -- and with --allow-network a remote theme is the normal case, so the absence of
+    // findings was routinely the absence of reading.
+    try { scanRules(sheet.cssRules); } catch (e) { unreadableSheets++; }
+  }
+  if (unreadableSheets > 0) {
+    add("stylesheet-unreadable", "warn",
+      unreadableSheets + " stylesheet" + (unreadableSheets === 1 ? "" : "s") +
+      " could not be read, because a cross-origin sheet will not expose its rules. the " +
+      "layout findings cover only the stylesheets on this origin.",
+      { unreadable: unreadableSheets });
   }
 
   // ---- 4. digits at risk of bidi reordering in right-to-left text -------
@@ -159,11 +184,17 @@ const AUDIT = String.raw`
   }
 
   for (const [key, count] of counts) {
+    // Only claim a reversal when the shown form differs from the original. The split class
+    // covers dash and underscore separators only, so a phone number written with spaces
+    // used to be reported as "will print with its groups reversed (+971 50 123 4567)",
+    // quoting the token back unchanged as its own reversal.
+    const shown = key.split(/\s*[-–—_−×÷]\s*/).reverse().join("-");
     add("rtl-digit-run", "warn",
       "\"" + key + "\" appears in right-to-left text" + (count > 1 ? " (" + count + " times)" : "") +
-      " and will print with its groups reversed (" +
-      key.split(/\s*[-–—_−×÷]\s*/).reverse().join("-") +
-      "). wrap it in <bdi dir=\"ltr\"> or a span with direction:ltr; unicode-bidi:isolate.",
+      (shown === key
+        ? " and its digit groups reorder under right-to-left layout"
+        : " and will print with its groups reversed (" + shown + ")") +
+      ". wrap it in <bdi dir=\"ltr\"> or a span with direction:ltr; unicode-bidi:isolate.",
       { sample: samples.get(key), occurrences: count });
   }
 
@@ -190,6 +221,7 @@ const AUDIT = String.raw`
   }
   const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
   const glyph = (font, ch) => {
+    if (!ctx) return null;
     ctx.font = font;
     ctx.clearRect(0, 0, 40, 40);
     ctx.fillText(ch, 2, 30);
@@ -198,6 +230,10 @@ const AUDIT = String.raw`
   for (const [font, chars] of fonts) {
     const notdef = glyph(font, "\uFFFE");
     const blank = glyph(font, " ");
+    // A .notdef that renders blank, which a broken fallback can do, makes every character
+    // equal to it, so every non-ASCII character in the document is reported as missing. A
+    // baseline that measures nothing is not a baseline.
+    if (notdef === null || notdef === blank) continue;
     for (const ch of chars) {
       if (missing.has(ch)) continue;
       const drawn = glyph(font, ch);
@@ -232,13 +268,26 @@ const AUDIT = String.raw`
   }
 
   return out;
+  } catch (e) {
+    // The findings gathered before the failure are real and were measured. Reporting only
+    // the failure told the reader none were available, which is true and useless.
+    out.push({
+      code: "audit-partial",
+      severity: "warn",
+      message:
+        "the document checks stopped part way (" + (e instanceof Error ? e.message : String(e)) +
+        "), so these findings are incomplete: the ones above were measured, the ones after " +
+        "the failure were not.",
+    });
+    return out;
+  }
 })()
 `;
 
 export async function audit(tab: Tab, timeoutMs: number): Promise<Finding[]> {
   try {
     const res = await tab.send(
-      'Runtime.evaluate',
+      "Runtime.evaluate",
       {
         expression: AUDIT,
         returnByValue: true,
@@ -250,10 +299,10 @@ export async function audit(tab: Tab, timeoutMs: number): Promise<Finding[]> {
     if (!Array.isArray(value)) {
       return [
         {
-          code: 'audit-failed',
-          severity: 'warn',
+          code: "audit-failed",
+          severity: "warn",
           message:
-            'the document checks could not run, so no layout, text or font findings are available. this is a bug in letterpress, not in the document.',
+            "the document checks could not run, so no layout, text or font findings are available. this is a bug in letterpress, not in the document.",
         },
       ];
     }
@@ -261,8 +310,8 @@ export async function audit(tab: Tab, timeoutMs: number): Promise<Finding[]> {
   } catch (e) {
     return [
       {
-        code: 'audit-failed',
-        severity: 'warn',
+        code: "audit-failed",
+        severity: "warn",
         message: `the document checks could not run, so no layout, text or font findings are available: ${e instanceof Error ? e.message : String(e)}`,
       },
     ];

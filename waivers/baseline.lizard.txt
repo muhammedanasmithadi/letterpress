@@ -1,4 +1,3 @@
-src/browser.ts::#onMessage
 src/cli.ts::parseArgs
 src/fontdesc.ts::fixFontDescriptors
 src/fontdesc.ts::parseSfnt

@@ -28,21 +28,24 @@ export class Tab {
     } catch {
       return;
     }
-    if (msg.id != null) {
-      const p = this.#pending.get(msg.id);
-      if (!p) return;
-      this.#pending.delete(msg.id);
-      clearTimeout(p.to);
-      if (msg.error) p.rej(new Error(msg.error.message ?? 'cdp error'));
-      else p.res(msg.result ?? {});
-      return;
-    }
-    if (msg.method) {
-      for (const fn of this.#listeners.get(msg.method) ?? []) {
-        try {
-          fn((msg.params as Record<string, unknown>) ?? {});
-        } catch {}
-      }
+    if (msg.id != null) return this.#settle(msg);
+    if (msg.method) this.#dispatch(msg.method, msg.params);
+  }
+
+  #settle(msg: any) {
+    const p = this.#pending.get(msg.id);
+    if (!p) return;
+    this.#pending.delete(msg.id);
+    clearTimeout(p.to);
+    if (msg.error) p.rej(new Error(msg.error.message ?? 'cdp error'));
+    else p.res(msg.result ?? {});
+  }
+
+  #dispatch(method: string, params: unknown) {
+    for (const fn of this.#listeners.get(method) ?? []) {
+      try {
+        fn((params as Record<string, unknown>) ?? {});
+      } catch {}
     }
   }
 

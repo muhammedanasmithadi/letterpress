@@ -93,7 +93,7 @@ export type RenderRequest = {
    */
   pageProbe?: () => unknown;
 
-  /** Keep Chromium's /ActualText ligature spans, at the cost of selection in a reader. */
+  /** Keep every /ActualText span, at the cost of selection in a reader. */
   keepLigatureSpans?: boolean;
 
   pageRanges?: string;
@@ -1075,24 +1075,39 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       if (req.keepLigatureSpans !== true) {
         const stripped = stripRedundantSpans(described);
         const spans = stripped.stats;
+        // Whether the repair actually changed the file, asked of the bytes rather than of
+        // the repair's own count of what it did. The first version routed this through
+        // `repairOrKeep`, which refuses any repair that rewrites a content stream -- correct
+        // for a metadata repair, and exactly wrong here, because removing a span is a content
+        // stream rewrite by definition. The gate returned the input, the bytes never changed,
+        // and the finding said "removed 36 of 36" anyway: a confident claim about a repair
+        // that had been refused, with no `repair-rejected` to say so, because the finding was
+        // pushed from the stats before anyone asked whether the output was used.
+        //
+        // The final `verify()` below covers the result. This repair does what mergeTextRuns
+        // does and for the same reason is not gated against Chromium's own bytes.
+        const changed =
+          spans.stripped > 0 &&
+          (stripped.pdf.length !== described.length ||
+            !stripped.pdf.every((v, i) => v === described[i]));
+        if (changed) described = stripped.pdf;
+
         if (spans.seen > 0) {
           findings.push({
             code: 'ligature-spans',
             severity: 'info',
-            message:
-              spans.stripped > 0
-                ? `removed ${spans.stripped} of ${spans.seen} marked-content spans carrying ` +
-                  `/ActualText, each of which ended a text item at every ligature. each was ` +
-                  `removed only because /ToUnicode already gave the same characters, so the ` +
-                  `extracted text is unchanged.${spans.kept ? ` ${spans.kept} kept, being the only place their text appears.` : ''}`
+            message: changed
+              ? `removed ${spans.stripped} of ${spans.seen} marked-content spans carrying ` +
+                `/ActualText, each of which ended a text item at every ligature. each was ` +
+                `removed only because /ToUnicode already gave the same characters, so the ` +
+                `extracted text is unchanged.${spans.kept ? ` ${spans.kept} kept, being the only place their text appears.` : ''}`
+              : spans.stripped > 0
+                ? `found ${spans.stripped} removable /ActualText spans and the file came back ` +
+                  `unchanged, so nothing was removed. this is a bug in letterpress, not a ` +
+                  `finding about the document.`
                 : `left all ${spans.seen} /ActualText spans in place: /ToUnicode does not ` +
                   `resolve them to the same text, so each is the only copy of it.`,
           });
-        }
-        if (spans.stripped > 0) {
-          const attempt = repairOrKeep(described, () => stripped.pdf);
-          if (attempt.failures.length) rejected.add('ligature-spans');
-          else described = attempt.pdf;
         }
       }
 
@@ -1173,14 +1188,20 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           );
         }
         if (flow.spans > 0) {
-          // Chromium wraps every ligature in a marked-content span carrying /ActualText, and
-          // a reader ends a text item at each of them whatever the geometry says. On a page
-          // of ordinary prose with twenty ligatures that is eighteen highlight boxes the
-          // geometry cannot account for, so it is named rather than left to be discovered
-          // by dragging a cursor across the page.
+          // A reader ends a text item at every marked-content span whatever the geometry
+          // says, so each one is a highlight box the geometry cannot account for. On a page
+          // of ordinary prose that is eighteen of them.
+          //
+          // Not all of them are ligatures. Chromium emits these around ligatures, and the
+          // first version of this message said "ligature spans" about every one of them,
+          // which is wrong on a real document: a resume whose punctuation glyphs have no
+          // /ToUnicode mapping carries eighteen spans wrapping `+`, `-`, `(` and `:`, and
+          // those are exactly the ones that have to be kept, because the span is the only
+          // place the character appears. The count is of spans. It is named that way.
           why.push(
-            `${flow.spans} ligature spans, each a place a browser may end a text item ` +
-              'regardless of spacing',
+            `${flow.spans} marked-content spans carrying /ActualText, each a place a ` +
+              `browser may end a text item regardless of spacing. chromium emits them ` +
+              `around ligatures, but not every span is one`,
           );
         }
         // A stream this could not read takes its glyphs out of every count above while the

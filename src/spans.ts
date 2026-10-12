@@ -1,6 +1,6 @@
 /**
- * Removing Chromium's ligature spans, and only when they say nothing the file does not
- * already say.
+ * Removing Chromium's /ActualText spans, and only when they say nothing the file does
+ * not already say.
  *
  * Chromium wraps every ligature in a marked-content span carrying `/ActualText`:
  *
@@ -111,6 +111,11 @@ function stripInStream(o: Obj, fonts: Map<string, FontTable> | undefined, stats:
   } catch {
     return o;
   }
+  // Counted before the font check, because this count is what the finding reports. A span in
+  // a stream whose fonts cannot be resolved is left alone and not repaired, so a count taken
+  // afterwards omitted it: the document carried 36 spans and the finding said "removed 18 of
+  // 18" while 18 of them were still in the file.
+  stats.seen += (text.match(/\/ActualText/g) ?? []).length;
   if (!/\/ActualText/.test(text)) return o;
   if (!fonts?.size) return o;
 
@@ -121,7 +126,6 @@ function stripInStream(o: Obj, fonts: Map<string, FontTable> | undefined, stats:
   for (let m = SPAN_OPEN.exec(text); m; m = SPAN_OPEN.exec(text)) {
     const actual = /\/ActualText\s*(\((?:[^()\\]|\\.)*\)|<[0-9A-Fa-f\s]*>)/.exec(m[1] ?? '');
     if (!actual) continue;
-    stats.seen++;
     const declared = unescapePdfString(actual[1] ?? '');
     if (!declared) continue;
 

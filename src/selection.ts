@@ -75,7 +75,7 @@ export type TextFlow = {
   /** The narrowest gap of any kind, in em, including the negative ones a kern produces. */
   narrowest: number;
   /**
-   * Marked-content spans carrying `/ActualText`, which Chromium wraps around every ligature.
+   * Marked-content spans carrying `/ActualText`, which Chromium wraps around ligatures.
    * A reader ends a text item at each of them whatever the geometry says.
    *
    * Established by intervention rather than by correlation: stripping the span wrappers

@@ -74,22 +74,29 @@ describe('word gaps a browser will break a selection on', () => {
     expect(flow!.tooWide).toBe(0);
   }, 120_000);
 
-  test('ligature spans are reported even when no gap is wide', async () => {
-    // Chromium wraps every ligature in a marked-content span carrying /ActualText, and a
-    // reader ends a text item at each of them whatever the spacing is. On a page whose
-    // every gap is inside the band the report used to say nothing at all, which is the
-    // dangerous shape: a confident silence where the highlight is still broken.
-    const r = await render(browser, {
-      html: `<!doctype html><meta charset="utf-8">
-        <style>@page{size:A4;margin:20mm}
-          body{font-family:'Noto Serif',serif;font-size:11pt;text-align:left}</style>
-        <p>${'Body text that fills a line and wraps with office affluent. '.repeat(12)}</p>`,
-      author: 's',
-    });
-    const flow = textFlow(r.pdf);
-    expect(flow).not.toBeNull();
-    expect(flow!.spans).toBeGreaterThan(5);
-    expect(said(r)).toMatch(/ligature span/);
+  test('spans are stripped by default, and reported when kept', async () => {
+    // A reader ends a text item at every marked-content span whatever the spacing is, so
+    // on a page whose every gap is inside the band the highlight is still broken. The
+    // repair removes the spans the font already describes, so this document no longer
+    // fragments and the report is right to be silent.
+    const html = `<!doctype html><meta charset="utf-8">
+      <style>@page{size:A4;margin:20mm}
+        body{font-family:'Noto Serif',serif;font-size:11pt;text-align:left}</style>
+      <p>${'Body text that fills a line and wraps with office affluent. '.repeat(12)}</p>`;
+
+    const r = await render(browser, { html, author: 's' });
+    const spans = r.findings.find((f) => f.code === 'ligature-spans');
+    expect(spans).toBeDefined();
+    expect(spans!.message).toMatch(/removed \d+ of \d+/);
+    // Nothing left for the selection report to complain about.
+    expect(said(r)).toBeUndefined();
+
+    // The opt-out brings them back, and the report names them again -- as spans, not as
+    // ligatures, because not every span Chromium emits is one.
+    const kept = await render(browser, { html, author: 's', keepLigatureSpans: true });
+    expect(kept.findings.map((f) => f.code)).not.toContain('ligature-spans');
+    expect(textFlow(kept.pdf)!.spans).toBeGreaterThan(5);
+    expect(said(kept)).toMatch(/marked-content spans/);
   }, 120_000);
 
   test('a document with no text reports nothing rather than guessing', async () => {

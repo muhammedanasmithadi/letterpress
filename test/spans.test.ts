@@ -54,7 +54,14 @@ const PROSE = `<!doctype html><style>@page{size:A4;margin:15mm}
   <p>${'Body text that fills a line and wraps with specific workflows. '.repeat(18)}</p>`;
 
 test('the repair removes the spans and changes no character', async () => {
-  const r = await render(browser, { html: PROSE, author: 'spans', timeoutMs: 120_000 });
+  // Kept, so this exercises the repair on bytes the pipeline has not touched. The
+  // default path strips them before the caller ever sees the file.
+  const r = await render(browser, {
+    html: PROSE,
+    author: 'spans',
+    keepLigatureSpans: true,
+    timeoutMs: 120_000,
+  });
   const before = await pdfText(r.pdf);
   expect(before.toLowerCase()).toContain('fills');
   expect(before.toLowerCase()).toContain('specific');
@@ -73,7 +80,14 @@ test('the repair removes the spans and changes no character', async () => {
 test('marked content is left balanced', async () => {
   // A content stream with one BDC against nineteen EMC is malformed, and poppler says so and
   // carries on. Skipping the EMC removals passed verify() and every structural check.
-  const r = await render(browser, { html: PROSE, author: 'spans', timeoutMs: 120_000 });
+  // Kept, so this exercises the repair on bytes the pipeline has not touched. The
+  // default path strips them before the caller ever sees the file.
+  const r = await render(browser, {
+    html: PROSE,
+    author: 'spans',
+    keepLigatureSpans: true,
+    timeoutMs: 120_000,
+  });
   const out = stripRedundantSpans(r.pdf);
   // A stream with one BDC against nineteen EMC is malformed. poppler says so and carries on,
   // and verify() passes it, because the gate checks structure and not text.
@@ -84,7 +98,14 @@ test('marked content is left balanced', async () => {
 test('a span whose text the font does not also give is kept', async () => {
   // The guard that makes the default safe. A span is the only copy of its text when the
   // glyphs inside do not resolve to the same characters, and removing it would lose them.
-  const r = await render(browser, { html: PROSE, author: 'spans', timeoutMs: 120_000 });
+  // Kept, so this exercises the repair on bytes the pipeline has not touched. The
+  // default path strips them before the caller ever sees the file.
+  const r = await render(browser, {
+    html: PROSE,
+    author: 'spans',
+    keepLigatureSpans: true,
+    timeoutMs: 120_000,
+  });
   const out = stripRedundantSpans(r.pdf);
   // Everything removed was provably redundant; anything left is kept on purpose.
   expect(marked(out.pdf).actualText).toBe(out.stats.kept);

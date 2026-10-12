@@ -1,5 +1,5 @@
-import type { Finding } from "./render.ts";
-import type { Tab } from "./browser.ts";
+import type { Finding } from './render.ts';
+import type { Tab } from './browser.ts';
 
 const AUDIT = String.raw`
 (() => {
@@ -287,7 +287,7 @@ const AUDIT = String.raw`
 export async function audit(tab: Tab, timeoutMs: number): Promise<Finding[]> {
   try {
     const res = await tab.send(
-      "Runtime.evaluate",
+      'Runtime.evaluate',
       {
         expression: AUDIT,
         returnByValue: true,
@@ -299,10 +299,10 @@ export async function audit(tab: Tab, timeoutMs: number): Promise<Finding[]> {
     if (!Array.isArray(value)) {
       return [
         {
-          code: "audit-failed",
-          severity: "warn",
+          code: 'audit-failed',
+          severity: 'warn',
           message:
-            "the document checks could not run, so no layout, text or font findings are available. this is a bug in letterpress, not in the document.",
+            'the document checks could not run, so no layout, text or font findings are available. this is a bug in letterpress, not in the document.',
         },
       ];
     }
@@ -310,8 +310,8 @@ export async function audit(tab: Tab, timeoutMs: number): Promise<Finding[]> {
   } catch (e) {
     return [
       {
-        code: "audit-failed",
-        severity: "warn",
+        code: 'audit-failed',
+        severity: 'warn',
         message: `the document checks could not run, so no layout, text or font findings are available: ${e instanceof Error ? e.message : String(e)}`,
       },
     ];

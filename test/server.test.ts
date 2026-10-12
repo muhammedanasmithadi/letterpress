@@ -1,6 +1,6 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { limitFromEnv, startServer } from "../src/server.ts";
-import { pdfInfo, pdfText } from "./poppler.ts";
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { limitFromEnv, startServer } from '../src/server.ts';
+import { pdfInfo, pdfText } from './poppler.ts';
 
 type Running = Awaited<ReturnType<typeof startServer>>;
 let s: Running;
@@ -22,13 +22,13 @@ body { font-family: sans-serif }
 
 const post = (body: unknown, headers: Record<string, string> = {}) =>
   fetch(`${origin}/render`, {
-    method: "POST",
-    headers: { "content-type": "application/json", ...headers },
-    body: typeof body === "string" ? body : JSON.stringify(body),
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...headers },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
   });
 
-describe("health", () => {
-  test("reports readiness without rendering", async () => {
+describe('health', () => {
+  test('reports readiness without rendering', async () => {
     const r = await fetch(`${origin}/health`);
     expect(r.status).toBe(200);
     const body = (await r.json()) as { ok: boolean; port: number };
@@ -38,8 +38,8 @@ describe("health", () => {
   });
 });
 
-describe("render", () => {
-  test("returns a real pdf that poppler can read", async () => {
+describe('render', () => {
+  test('returns a real pdf that poppler can read', async () => {
     const r = await post({ html: DOC });
     expect(r.status).toBe(200);
     const body = (await r.json()) as {
@@ -55,34 +55,34 @@ describe("render", () => {
     expect(body.ok).toBe(true);
     expect(body.pages).toBe(1);
     expect(body.tagged).toBe(true);
-    expect(body.mediaBoxes[0]).toContain("594.95996");
+    expect(body.mediaBoxes[0]).toContain('594.95996');
 
     const findings = body.findings as Array<{ code: string; severity: string }>;
-    expect(findings.filter((f) => f.severity === "error")).toEqual([]);
-    for (const f of findings) expect(f.severity).not.toBe("error");
+    expect(findings.filter((f) => f.severity === 'error')).toEqual([]);
+    for (const f of findings) expect(f.severity).not.toBe('error');
 
-    const pdf = Buffer.from(body.pdf, "base64");
+    const pdf = Buffer.from(body.pdf, 'base64');
     expect(pdf.byteLength).toBe(body.bytes);
-    expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
 
     expect((await pdfInfo(new Uint8Array(pdf))).pages).toBe(1);
-    expect(await pdfText(new Uint8Array(pdf))).toContain("Rendered over HTTP");
+    expect(await pdfText(new Uint8Array(pdf))).toContain('Rendered over HTTP');
   }, 60_000);
 
-  test("honours a format and reports the conflict with @page", async () => {
-    const r = await post({ html: DOC, format: "letter" });
+  test('honours a format and reports the conflict with @page', async () => {
+    const r = await post({ html: DOC, format: 'letter' });
     const body = (await r.json()) as {
       mediaBoxes: string[];
       findings: Array<{ code: string }>;
     };
     expect(body.mediaBoxes[0]).toMatch(/612/);
-    expect(body.findings.map((f) => f.code)).toContain("page-size-override");
+    expect(body.findings.map((f) => f.code)).toContain('page-size-override');
   }, 60_000);
 
-  test("pageRanges is marked partial so the count is not read as a total", async () => {
+  test('pageRanges is marked partial so the count is not read as a total', async () => {
     const many = `<!doctype html><style>@page{size:A4;margin:6mm}
 body{margin:0}.s{break-before:page;height:275mm;font-size:30pt}</style>
-${Array.from({ length: 6 }, (_, i) => `<div class="s">PAGE_${i + 1}</div>`).join("")}`;
+${Array.from({ length: 6 }, (_, i) => `<div class="s">PAGE_${i + 1}</div>`).join('')}`;
 
     const full = (await (await post({ html: many })).json()) as {
       pages: number;
@@ -91,84 +91,75 @@ ${Array.from({ length: 6 }, (_, i) => `<div class="s">PAGE_${i + 1}</div>`).join
     expect(full.pages).toBe(6);
     expect(full.partial).toBe(false);
 
-    const part = (await (
-      await post({ html: many, pageRanges: "2-3" })
-    ).json()) as {
+    const part = (await (await post({ html: many, pageRanges: '2-3' })).json()) as {
       pages: number;
       partial: boolean;
       pdf: string;
     };
     expect(part.pages).toBe(2);
     expect(part.partial).toBe(true);
-    const text = await pdfText(new Uint8Array(Buffer.from(part.pdf, "base64")));
-    expect(text).toContain("PAGE_2");
-    expect(text).toContain("PAGE_3");
-    expect(text).not.toContain("PAGE_1");
+    const text = await pdfText(new Uint8Array(Buffer.from(part.pdf, 'base64')));
+    expect(text).toContain('PAGE_2');
+    expect(text).toContain('PAGE_3');
+    expect(text).not.toContain('PAGE_1');
   }, 90_000);
 
-  test("rejects a body with no html", async () => {
-    const r = await post({ format: "a4" });
+  test('rejects a body with no html', async () => {
+    const r = await post({ format: 'a4' });
     expect(r.status).toBe(400);
-    expect(((await r.json()) as { error: string }).error).toContain("html");
+    expect(((await r.json()) as { error: string }).error).toContain('html');
   });
 
-  test("rejects an unknown format rather than guessing", async () => {
-    const r = await post({ html: DOC, format: "a9" });
+  test('rejects an unknown format rather than guessing', async () => {
+    const r = await post({ html: DOC, format: 'a9' });
     expect(r.status).toBe(400);
     const { error } = (await r.json()) as { error: string };
-    expect(error).toContain("unknown format");
-    expect(error).toContain("a4");
+    expect(error).toContain('unknown format');
+    expect(error).toContain('a4');
   });
 
-  test("rejects malformed json", async () => {
-    const r = await post("{not json");
+  test('rejects malformed json', async () => {
+    const r = await post('{not json');
     expect(r.status).toBe(400);
-    expect(((await r.json()) as { error: string }).error).toContain(
-      "not valid JSON",
-    );
+    expect(((await r.json()) as { error: string }).error).toContain('not valid JSON');
   });
 
-  test("refuses an oversized document with 413", async () => {
-    const huge = `<!doctype html><p>${"x".repeat(9 * 1024 * 1024)}</p>`;
+  test('refuses an oversized document with 413', async () => {
+    const huge = `<!doctype html><p>${'x'.repeat(9 * 1024 * 1024)}</p>`;
     const r = await post(huge);
     expect(r.status).toBe(413);
     const { error } = (await r.json()) as { error: string };
     expect(error).toMatch(/over the 8MB limit/);
   }, 60_000);
 
-  test("a path is refused by name rather than read from disk", async () => {
-    const r = await post({ path: "/tmp/definitely-not-here.html" });
+  test('a path is refused by name rather than read from disk', async () => {
+    const r = await post({ path: '/tmp/definitely-not-here.html' });
     expect(r.status).toBe(400);
     const { error } = (await r.json()) as { error: string };
-    expect(error).toContain("path is not accepted");
+    expect(error).toContain('path is not accepted');
   });
 
-  test("the server is still healthy after a failure", async () => {
+  test('the server is still healthy after a failure', async () => {
     const r = await fetch(`${origin}/health`);
     expect(((await r.json()) as { ok: boolean }).ok).toBe(true);
     const again = await post({ html: DOC });
     expect(((await again.json()) as { ok: boolean }).ok).toBe(true);
   }, 60_000);
 
-  test("a burst waits rather than being refused", async () => {
+  test('a burst waits rather than being refused', async () => {
     const burst = 8;
-    const results = await Promise.all(
-      Array.from({ length: burst }, () => post({ html: DOC })),
-    );
+    const results = await Promise.all(Array.from({ length: burst }, () => post({ html: DOC })));
     const ok = results.filter((r) => r.status === 200);
     expect(ok).toHaveLength(burst);
-    for (const r of ok)
-      expect(((await r.json()) as { ok: boolean }).ok).toBe(true);
+    for (const r of ok) expect(((await r.json()) as { ok: boolean }).ok).toBe(true);
   }, 120_000);
 
-  test("a burst beyond the queue is refused, and says so", async () => {
-    const results = await Promise.all(
-      Array.from({ length: 40 }, () => post({ html: DOC })),
-    );
+  test('a burst beyond the queue is refused, and says so', async () => {
+    const results = await Promise.all(Array.from({ length: 40 }, () => post({ html: DOC })));
     const refused = results.filter((r) => r.status === 429);
     expect(refused.length).toBeGreaterThan(0);
     for (const r of refused) {
-      expect(r.headers.get("retry-after")).toBe("2");
+      expect(r.headers.get('retry-after')).toBe('2');
       const body = (await r.json()) as { ok: boolean; error: string };
       expect(body.ok).toBe(false);
       expect(body.error).toMatch(/retry/i);
@@ -178,10 +169,8 @@ ${Array.from({ length: 6 }, (_, i) => `<div class="s">PAGE_${i + 1}</div>`).join
     expect(ok.length).toBeGreaterThan(0);
   }, 180_000);
 
-  test("a queued render still produces a whole pdf", async () => {
-    const results = await Promise.all(
-      Array.from({ length: 6 }, () => post({ html: DOC })),
-    );
+  test('a queued render still produces a whole pdf', async () => {
+    const results = await Promise.all(Array.from({ length: 6 }, () => post({ html: DOC })));
     for (const r of results) {
       expect(r.status).toBe(200);
       const body = (await r.json()) as {
@@ -191,95 +180,77 @@ ${Array.from({ length: 6 }, (_, i) => `<div class="s">PAGE_${i + 1}</div>`).join
       };
       expect(body.ok).toBe(true);
       expect(body.pages).toBe(1);
-      expect(Buffer.from(body.pdf, "base64").subarray(0, 5).toString()).toBe(
-        "%PDF-",
-      );
+      expect(Buffer.from(body.pdf, 'base64').subarray(0, 5).toString()).toBe('%PDF-');
     }
   }, 120_000);
 });
 
-describe("loopback boundary", () => {
-  test("refuses a request whose Host is not loopback", async () => {
-    const r = await post({ html: DOC }, { host: "attacker.example" });
+describe('loopback boundary', () => {
+  test('refuses a request whose Host is not loopback', async () => {
+    const r = await post({ html: DOC }, { host: 'attacker.example' });
     expect(r.status).toBe(403);
-    expect(((await r.json()) as { error: string }).error).toContain("loopback");
+    expect(((await r.json()) as { error: string }).error).toContain('loopback');
   });
 
-  test("refuses a Host whose port is out of range", async () => {
-    for (const host of [
-      "localhost:99999",
-      "127.0.0.1:70000",
-      "localhost:abc",
-    ]) {
+  test('refuses a Host whose port is out of range', async () => {
+    for (const host of ['localhost:99999', '127.0.0.1:70000', 'localhost:abc']) {
       const r = await post({ html: DOC }, { host });
       expect([400, 403], `Host: ${host}`).toContain(r.status);
-      expect(await r.text()).not.toContain("source_lines");
+      expect(await r.text()).not.toContain('source_lines');
     }
   });
 
-  test("accepts every loopback spelling of Host", async () => {
-    for (const host of [
-      "127.0.0.1",
-      `127.0.0.1:${s.port}`,
-      "localhost",
-      "[::1]",
-      "LOCALHOST",
-    ]) {
+  test('accepts every loopback spelling of Host', async () => {
+    for (const host of ['127.0.0.1', `127.0.0.1:${s.port}`, 'localhost', '[::1]', 'LOCALHOST']) {
       const r = await post({ html: DOC }, { host });
       expect(r.status, `Host: ${host}`).toBe(200);
     }
   }, 120_000);
 
-  test("accepts an Origin at every loopback spelling, not just 127.0.0.1", async () => {
+  test('accepts an Origin at every loopback spelling, not just 127.0.0.1', async () => {
     // The Host check above deliberately answers every loopback spelling, and the viewer is
     // reached by whichever one the user typed. Origin was compared against one fixed string,
     // so a viewer opened at http://localhost:PORT -- or [::1]:PORT -- was refused by its own
     // POST with a message about "other web pages".
-    for (const host of ["localhost", "[::1]", "127.0.0.1"]) {
-      const r = await post(
-        { html: DOC },
-        { host, origin: `http://${host}:${s.port}` },
-      );
+    for (const host of ['localhost', '[::1]', '127.0.0.1']) {
+      const r = await post({ html: DOC }, { host, origin: `http://${host}:${s.port}` });
       expect(r.status, `Origin: ${host}`).toBe(200);
     }
   }, 120_000);
 
-  test("refuses an Origin on a different port or a different scheme", async () => {
+  test('refuses an Origin on a different port or a different scheme', async () => {
     // The loopback check is not the whole answer: same machine, different service is still
     // another origin, and http://localhost:PORT over the wrong scheme is not this server.
     const port = s.port ?? 0;
-    for (const bad of [
-      `http://localhost:${port + 1}`,
-      `http://127.0.0.1:${port - 1}`,
-    ]) {
+    for (const bad of [`http://localhost:${port + 1}`, `http://127.0.0.1:${port - 1}`]) {
       const r = await post({ html: DOC }, { origin: bad });
       expect(r.status, `Origin: ${bad}`).toBe(403);
     }
   }, 60_000);
 
-  test("sends no CORS headers, so another origin cannot read responses", async () => {
-    const r = await post({ html: DOC }, { origin: "https://evil.example" });
-    expect(r.headers.get("access-control-allow-origin")).toBeNull();
-    expect(r.headers.get("access-control-allow-headers")).toBeNull();
+  test('sends no CORS headers, so another origin cannot read responses', async () => {
+    const r = await post({ html: DOC }, { origin: 'https://evil.example' });
+    expect(r.headers.get('access-control-allow-origin')).toBeNull();
+    expect(r.headers.get('access-control-allow-headers')).toBeNull();
   }, 60_000);
 });
 
-describe("routing", () => {
-  test("unknown paths are 404", async () => {
+describe('routing', () => {
+  test('unknown paths are 404', async () => {
     expect((await fetch(`${origin}/nope`)).status).toBe(404);
   });
 
-  test("GET on /render is 404, not a render", async () => {
+  test('GET on /render is 404, not a render', async () => {
     expect((await fetch(`${origin}/render`)).status).toBe(404);
   });
 
-  test("asset paths cannot escape the viewer directory", async () => {
+  test('asset paths cannot escape the viewer directory', async () => {
     const r = await fetch(`${origin}/assets/..%2f..%2fpackage.json`);
     expect([403, 404]).toContain(r.status);
-    if (r.status === 200) throw new Error("traversal succeeded");
+    if (r.status === 200) throw new Error('traversal succeeded');
   });
 });
-describe("page limit", () => {
+describe('page limit', () => {
   const sections = (n: number) =>
     `<!doctype html><meta charset="utf-8"><title>T</title>
 <style>@page{size:A4;margin:18mm}</style>` +
@@ -289,19 +260,18 @@ describe("page limit", () => {
         `<h2>Section ${i + 1}</h2>` +
         Array.from(
           { length: 8 },
-          () =>
-            `<p>office efficient different flags finished warehouse loading invoices.</p>`,
-        ).join(""),
-    ).join("");
+          () => `<p>office efficient different flags finished warehouse loading invoices.</p>`,
+        ).join(''),
+    ).join('');
 
-  test("a document inside the limit is served", async () => {
+  test('a document inside the limit is served', async () => {
     const r = await post({ html: sections(2) });
     expect(r.status).toBe(200);
     expect(((await r.json()) as { ok: boolean }).ok).toBe(true);
   }, 90_000);
 
-  test("pageRanges is exempt, because its count is what was emitted not the document", async () => {
-    const r = await post({ html: sections(120), pageRanges: "1-2" });
+  test('pageRanges is exempt, because its count is what was emitted not the document', async () => {
+    const r = await post({ html: sections(120), pageRanges: '1-2' });
 
     expect(r.status).toBe(200);
     const body = (await r.json()) as {
@@ -315,13 +285,13 @@ describe("page limit", () => {
   }, 120_000);
 });
 
-describe("response format", () => {
+describe('response format', () => {
   const DOC2 = `<!doctype html><meta charset="utf-8"><title>Format</title>
 <style>@page{size:A4;margin:12mm}</style><h1>Report</h1><p>office efficient flags finished</p>`;
 
-  test("json is the default and carries the report", async () => {
-    const r = await post({ html: DOC2, author: "Someone" });
-    expect(r.headers.get("content-type")).toMatch(/application\/json/);
+  test('json is the default and carries the report', async () => {
+    const r = await post({ html: DOC2, author: 'Someone' });
+    expect(r.headers.get('content-type')).toMatch(/application\/json/);
     const body = (await r.json()) as {
       ok: boolean;
       pdf: string;
@@ -331,41 +301,35 @@ describe("response format", () => {
     expect(body.ok).toBe(true);
     expect(body.pages).toBe(1);
     expect(Array.isArray(body.findings)).toBe(true);
-    expect(Buffer.from(body.pdf, "base64").subarray(0, 5).toString()).toBe(
-      "%PDF-",
-    );
+    expect(Buffer.from(body.pdf, 'base64').subarray(0, 5).toString()).toBe('%PDF-');
   }, 90_000);
 
-  test("responseFormat pdf returns the bytes and the report as headers", async () => {
+  test('responseFormat pdf returns the bytes and the report as headers', async () => {
     const r = await post({
       html: DOC2,
-      author: "Someone",
-      responseFormat: "pdf",
+      author: 'Someone',
+      responseFormat: 'pdf',
     });
     expect(r.status).toBe(200);
-    expect(r.headers.get("content-type")).toBe("application/pdf");
-    expect(r.headers.get("x-letterpress-pages")).toBe("1");
-    expect(r.headers.get("x-letterpress-tagged")).toBe("true");
-    expect(Number(r.headers.get("content-length"))).toBeGreaterThan(1000);
+    expect(r.headers.get('content-type')).toBe('application/pdf');
+    expect(r.headers.get('x-letterpress-pages')).toBe('1');
+    expect(r.headers.get('x-letterpress-tagged')).toBe('true');
+    expect(Number(r.headers.get('content-length'))).toBeGreaterThan(1000);
     const bytes = new Uint8Array(await r.arrayBuffer());
-    expect(Buffer.from(bytes).subarray(0, 5).toString()).toBe("%PDF-");
+    expect(Buffer.from(bytes).subarray(0, 5).toString()).toBe('%PDF-');
   }, 90_000);
 
-  test("both formats return the same document", async () => {
-    process.env.SOURCE_DATE_EPOCH = "1700000000";
+  test('both formats return the same document', async () => {
+    process.env.SOURCE_DATE_EPOCH = '1700000000';
     try {
-      const viaJson = (await (
-        await post({ html: DOC2, author: "Someone" })
-      ).json()) as {
+      const viaJson = (await (await post({ html: DOC2, author: 'Someone' })).json()) as {
         pdf: string;
         pages: number;
       };
       const viaPdf = new Uint8Array(
-        await (
-          await post({ html: DOC2, author: "Someone", responseFormat: "pdf" })
-        ).arrayBuffer(),
+        await (await post({ html: DOC2, author: 'Someone', responseFormat: 'pdf' })).arrayBuffer(),
       );
-      const fromJson = Buffer.from(viaJson.pdf, "base64");
+      const fromJson = Buffer.from(viaJson.pdf, 'base64');
       expect(fromJson.byteLength).toBe(viaPdf.byteLength);
       expect(fromJson.equals(Buffer.from(viaPdf))).toBe(true);
       expect(viaJson.pages).toBe(1);
@@ -374,93 +338,87 @@ describe("response format", () => {
     }
   }, 120_000);
 
-  test("the binary response is smaller, because base64 inflates by a third", async () => {
-    const jsonBytes = (await (await post({ html: DOC2 })).arrayBuffer())
+  test('the binary response is smaller, because base64 inflates by a third', async () => {
+    const jsonBytes = (await (await post({ html: DOC2 })).arrayBuffer()).byteLength;
+    const pdfBytes = (await (await post({ html: DOC2, responseFormat: 'pdf' })).arrayBuffer())
       .byteLength;
-    const pdfBytes = (
-      await (await post({ html: DOC2, responseFormat: "pdf" })).arrayBuffer()
-    ).byteLength;
     expect(pdfBytes).toBeLessThan(jsonBytes);
   }, 120_000);
 
-  test("an unknown responseFormat is refused rather than ignored", async () => {
-    const r = await post({ html: DOC2, responseFormat: "nope" });
+  test('an unknown responseFormat is refused rather than ignored', async () => {
+    const r = await post({ html: DOC2, responseFormat: 'nope' });
     expect(r.status).toBe(400);
-    expect(((await r.json()) as { error: string }).error).toMatch(
-      /responseFormat/,
-    );
+    expect(((await r.json()) as { error: string }).error).toMatch(/responseFormat/);
   }, 60_000);
 
-  test("metadata reaches the renderer over http", async () => {
+  test('metadata reaches the renderer over http', async () => {
     const r = await post({
       html: DOC2,
-      author: "Ahammed Sahad",
-      subject: "CV",
+      author: 'Ahammed Sahad',
+      subject: 'CV',
     });
     const body = (await r.json()) as { pdf: string };
-    const info = Buffer.from(body.pdf, "base64").toString("latin1");
-    expect(info).toContain("/Author (Ahammed Sahad)");
-    expect(info).toContain("/Subject (CV)");
+    const info = Buffer.from(body.pdf, 'base64').toString('latin1');
+    expect(info).toContain('/Author (Ahammed Sahad)');
+    expect(info).toContain('/Subject (CV)');
   }, 90_000);
 });
 
-describe("a limit that cannot be read", () => {
+describe('a limit that cannot be read', () => {
   // `Number('abc')` is NaN and every comparison against NaN is false, so a typo did not
   // disable a limit loudly. It disabled it silently: the queue grew without bound and
   // neither the 429 nor the page-limit message ever appeared, while the 413 body still
   // quoted "the 6000-page limit". The limits are read once at import, so this exercises the
   // reader directly rather than standing up a server under a different environment.
-  test("an unreadable limit falls back and says so", () => {
+  test('an unreadable limit falls back and says so', () => {
     const seen: string[] = [];
     const warn = (m: string) => seen.push(m);
     const previous = process.env.HTML2PDF_MAX_PAGES;
     try {
-      process.env.HTML2PDF_MAX_PAGES = "abc";
-      expect(limitFromEnv("HTML2PDF_MAX_PAGES", 6000, 1, warn)).toBe(6000);
-      expect(seen.join("\n")).toMatch(
-        /HTML2PDF_MAX_PAGES="abc" is not a number/,
-      );
-      expect(seen.join("\n")).toMatch(/using 6000/);
+      process.env.HTML2PDF_MAX_PAGES = 'abc';
+      expect(limitFromEnv('HTML2PDF_MAX_PAGES', 6000, 1, warn)).toBe(6000);
+      expect(seen.join('\n')).toMatch(/HTML2PDF_MAX_PAGES="abc" is not a number/);
+      expect(seen.join('\n')).toMatch(/using 6000/);
 
       // Zero and negatives are no better than NaN: they are numbers, so nothing above
       // catches them, and a concurrency limit of 0 admits nothing at all.
       seen.length = 0;
-      process.env.HTML2PDF_MAX_PAGES = "0";
-      expect(limitFromEnv("HTML2PDF_MAX_PAGES", 6000, 1, warn)).toBe(6000);
-      expect(seen.join("\n")).toMatch(/is not a number of at least 1/);
+      process.env.HTML2PDF_MAX_PAGES = '0';
+      expect(limitFromEnv('HTML2PDF_MAX_PAGES', 6000, 1, warn)).toBe(6000);
+      expect(seen.join('\n')).toMatch(/is not a number of at least 1/);
     } finally {
       if (previous === undefined) delete process.env.HTML2PDF_MAX_PAGES;
       else process.env.HTML2PDF_MAX_PAGES = previous;
     }
   });
 
-  test("a readable limit is used, and an absent one is the default", () => {
+  test('a readable limit is used, and an absent one is the default', () => {
     const previous = process.env.HTML2PDF_MAX_PAGES;
     const warn = () => {};
     try {
-      process.env.HTML2PDF_MAX_PAGES = "42.9";
-      expect(limitFromEnv("HTML2PDF_MAX_PAGES", 6000, 1, warn)).toBe(42);
+      process.env.HTML2PDF_MAX_PAGES = '42.9';
+      expect(limitFromEnv('HTML2PDF_MAX_PAGES', 6000, 1, warn)).toBe(42);
       delete process.env.HTML2PDF_MAX_PAGES;
-      expect(limitFromEnv("HTML2PDF_MAX_PAGES", 6000, 1, warn)).toBe(6000);
-      process.env.HTML2PDF_MAX_PAGES = "   ";
-      expect(limitFromEnv("HTML2PDF_MAX_PAGES", 6000, 1, warn)).toBe(6000);
+      expect(limitFromEnv('HTML2PDF_MAX_PAGES', 6000, 1, warn)).toBe(6000);
+      process.env.HTML2PDF_MAX_PAGES = '   ';
+      expect(limitFromEnv('HTML2PDF_MAX_PAGES', 6000, 1, warn)).toBe(6000);
     } finally {
       if (previous === undefined) delete process.env.HTML2PDF_MAX_PAGES;
       else process.env.HTML2PDF_MAX_PAGES = previous;
     }
   });
 
-  test("author, subject and keywords are type-checked like every other field", async () => {
+  test('author, subject and keywords are type-checked like every other field', async () => {
     // Every other field is checked and answers 400. These three were the exception, so
     // `{"author": 123}` returned 200, wrote no author, and reported nothing.
-    for (const key of ["author", "subject", "keywords"]) {
+    for (const key of ['author', 'subject', 'keywords']) {
       const r = await post({ html: DOC, [key]: 123 });
       expect(r.status, key).toBe(400);
       expect(await r.text(), key).toContain(`${key} must be a string`);
     }
   }, 60_000);
 
-  test("timeoutMs of 0 falls back rather than becoming a zero deadline", async () => {
+  test('timeoutMs of 0 falls back rather than becoming a zero deadline', async () => {
     // It is a number, so it passed the numeric check, and `render` reads it with `?? DEFAULT`
     // which keeps the 0. The deadline expired on the next tick and the caller got a 500
     // about a cdp socket, while the CLI refuses the same input with a usage error.

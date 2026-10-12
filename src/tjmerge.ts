@@ -133,6 +133,21 @@ function replay(block: string, widths: Widths): { placed: Placed[]; simple: bool
     return true;
   };
 
+  // A TJ array: strings and numbers interleaved, a number (in thousandths of an em)
+  // shifting the pen back before the next string.
+  const showArray = (spec: string): void => {
+    for (const piece of spec.split(/\s+/)) {
+      if (!piece) continue;
+      const hex = /^<([0-9A-Fa-f]*)>$/.exec(piece);
+      if (hex) {
+        if (!show(hex[1]!)) break;
+        continue;
+      }
+      const num = Number(piece);
+      if (Number.isFinite(num)) x -= (num / 1000) * size;
+    }
+  };
+
   const tok =
     /\/(\w+)\s+([-\d.eE]+)\s+Tf|([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+Tm|([-\d.eE]+)\s+([-\d.eE]+)\s+Td|<([0-9A-Fa-f]*)>\s*Tj|\[([^\]]*)\]\s*TJ|\b(Tz|Tc|Tw|TL|T\*|Ts)\b/g;
 
@@ -168,17 +183,7 @@ function replay(block: string, widths: Widths): { placed: Placed[]; simple: bool
       continue;
     }
     if (m[12] !== undefined) {
-      // A TJ array: strings and numbers interleaved, a number shifting the pen back.
-      for (const piece of m[12]!.split(/\s+/)) {
-        if (!piece) continue;
-        const hex = /^<([0-9A-Fa-f]*)>$/.exec(piece);
-        if (hex) {
-          if (!show(hex[1]!)) break;
-          continue;
-        }
-        const num = Number(piece);
-        if (Number.isFinite(num)) x -= (num / 1000) * size;
-      }
+      showArray(m[12]!);
       continue;
     }
     if (m[13] !== undefined) simple = false;

@@ -15,6 +15,35 @@ import { render } from '../src/render.ts';
 
 type TableSpec = { tag: string; data: Buffer };
 
+/**
+ * Every font descriptor in the file, with null for a key it never carried.
+ *
+ * This used to skip any descriptor that lacked `/Flags` or `/CapHeight`, which is a
+ * reasonable-looking filter and quietly hid two defects: a descriptor the repair was
+ * supposed to add a key to, and a descriptor it was supposed to rewrite, both looked
+ * exactly like a descriptor the repair had never touched.
+ *
+ * It lives up here rather than beside the pdfWith builder below because the two files'
+ * fixture builders already clone against tounicode.test.ts line for line, and a reader
+ * helper sitting directly after a writer helper extends the match.
+ */
+type Descriptor = { flags: number | null; cap: number | null; hasProgram: boolean };
+
+function descriptors(pdf: Uint8Array): Array<Descriptor> {
+  const text = Buffer.from(pdf).toString(LATIN1);
+  const out: Array<Descriptor> = [];
+  for (const m of text.matchAll(/\/Type \/FontDescriptor([\s\S]*?)>>/g)) {
+    const flags = m[1]!.match(/\/Flags (\d+)/);
+    const cap = m[1]!.match(/\/CapHeight (-?\d+)/);
+    out.push({
+      flags: flags ? Number(flags[1]) : null,
+      cap: cap ? Number(cap[1]) : null,
+      hasProgram: /\/FontFile\d? \d+ 0 R/.test(m[1]!),
+    });
+  }
+  return out;
+}
+
 function sfnt(tables: TableSpec[], version = 0x00010000): Buffer {
   const num = tables.length;
   let power = 1;
@@ -92,7 +121,8 @@ function pdfWith(fileKey: string, font: Buffer, overrides: Record<string, string
   const descriptorBody =
     '<< /Type /FontDescriptor /FontName /BAAAAA+NotoSans-Regular ' +
     `/Flags ${overrides.Flags ?? '4'} /FontBBox [-1000 -300 2000 900] /ItalicAngle 0 ` +
-    `/Ascent 900 /Descent -300 /CapHeight ${overrides.CapHeight ?? '-714'} /StemV 80 /${fileKey} 6 0 R >>`;
+    `/Ascent 900 /Descent -300 /CapHeight ${overrides.CapHeight ?? '-714'} ` +
+    `/StemV 80 /${fileKey} 6 0 R >>`;
 
   const parts: Array<string | Buffer> = [
     '<< /Type /Catalog /Pages 2 0 R >>',
@@ -134,23 +164,6 @@ function pdfWith(fileKey: string, font: Buffer, overrides: Record<string, string
   return Buffer.concat(chunks);
 }
 
-function descriptors(pdf: Uint8Array): Array<{ flags: number; cap: number; hasProgram: boolean }> {
-  const text = Buffer.from(pdf).toString(LATIN1);
-  const out: Array<{ flags: number; cap: number; hasProgram: boolean }> = [];
-  for (const m of text.matchAll(/\/Type \/FontDescriptor([\s\S]*?)>>/g)) {
-    const flags = m[1]!.match(/\/Flags (\d+)/);
-    const cap = m[1]!.match(/\/CapHeight (-?\d+)/);
-    if (flags && cap) {
-      out.push({
-        flags: Number(flags[1]),
-        cap: Number(cap[1]),
-        hasProgram: /\/FontFile\d? \d+ 0 R/.test(m[1]!),
-      });
-    }
-  }
-  return out;
-}
-
 describe('parseSfnt', () => {
   test("reads cap height from the font's own OS/2 table", () => {
     const s = parseSfnt(notoSans())!;
@@ -181,6 +194,37 @@ describe('parseSfnt', () => {
   test('a font with only a symbol cmap is not a Unicode text font', () => {
     const s = parseSfnt(sfnt([head(1000, 0), os2(4, 0x0040, 536), post(0, 0), cmap(3, 0)]))!;
     expect(s.unicodeCmap).toBe(false);
+  });
+
+  test('a proportional font reports fixedPitch false, not unknown', () => {
+    // readPost used to set the field only for a monospaced font, so it could only be true.
+    // flagsFrom() could then set the FixedPitch bit but never clear it, and a descriptor
+    // wrongly claiming a proportional font was monospaced survived the repair. An explicit
+    // 0 in the font is the font saying "proportional", which is data; a short table, which
+    // still yields undefined, is the absence of data.
+    const s = parseSfnt(notoSans())!;
+    expect(s.fixedPitch).toBe(false);
+  });
+
+  test('the legacy monospaced marker counts as monospaced', () => {
+    // Old Mac fonts wrote 0xFFFFFFFF rather than 0x00010000. The field was read unsigned
+    // and that value was excluded alongside 0, so a legacy monospaced font produced
+    // `undefined` -- "no opinion" -- instead of `true`.
+    const legacy = parseSfnt(
+      sfnt([head(1000, 0), os2(4, 0x00c0, 536), post(0, 0xffff_ffff), cmap(3, 1)]),
+    )!;
+    expect(legacy.fixedPitch).toBe(true);
+  });
+
+  test('a short post table leaves fixedPitch unknown', () => {
+    // The guard is unchanged: without 16 bytes there is no isFixedPitch to read, and the
+    // field stays undefined so the descriptor's bit is left alone.
+    const b = Buffer.alloc(12);
+    b.writeInt32BE(0, 4);
+    const s = parseSfnt(
+      sfnt([head(1000, 0), os2(4, 0x00c0, 536), { tag: 'post', data: b }, cmap(3, 1)]),
+    )!;
+    expect(s.fixedPitch).toBeUndefined();
   });
 });
 
@@ -281,6 +325,51 @@ describe('fixFontDescriptors', () => {
     expect(descriptors(out)).toEqual([{ flags: 32, cap: -714, hasProgram: true }]);
   });
 
+  test('a descriptor with no CapHeight key is given one', () => {
+    // capHeightFix() treats an absent CapHeight the same as a non-positive one -- both
+    // mean the producer had nothing to say -- and returns the font's own sCapHeight.
+    // applyDescriptorFixes() then replaced /CapHeight\s+-?\d+, which matches nothing when
+    // the key was never there. The value was computed, carried through the whole repair,
+    // and thrown away at the last step, with no finding. A viewer reads the missing key as
+    // "unknown", not as "wrong".
+    //
+    // The key is stripped from the fixture rather than omitted by the builder, so the
+    // shared builder keeps the shape the other suites clone against.
+    const bare = Buffer.from(
+      Buffer.from(pdfWith('FontFile2', notoSans(), {}))
+        .toString(LATIN1)
+        .replace(' /CapHeight -714', ''),
+      LATIN1,
+    );
+    const out = fixFontDescriptors(bare);
+    const fields = descriptors(out);
+    expect(fields).toEqual([{ flags: 32, cap: 536, hasProgram: true }]);
+    // And it is inside the dictionary, not merely mentioned somewhere.
+    const text = Buffer.from(out).toString(LATIN1);
+    expect(text).toMatch(/\/Type \/FontDescriptor[^\n]*\/CapHeight 536/);
+  });
+
+  test('a descriptor with no Flags key is still corrected', () => {
+    // descriptorFix() read /Flags with a NaN fallback and returned undefined for anything
+    // that was not a finite number, so a descriptor missing the one key it needed to
+    // compute flags was skipped entirely -- taking the CapHeight fix with it, even though
+    // the font had supplied everything needed to repair it.
+    const bare = Buffer.from(
+      Buffer.from(pdfWith('FontFile2', notoSans(), {}))
+        .toString(LATIN1)
+        .replace(' /Flags 4', ''),
+      LATIN1,
+    );
+    const out = fixFontDescriptors(bare);
+    const fields = descriptors(out);
+    expect(fields[0]!.cap).toBe(536);
+    const text = Buffer.from(out).toString(LATIN1);
+    expect(text).toMatch(/\/Flags 32/);
+    expect(text).toMatch(/\/CapHeight 536/);
+    // The keys around it are untouched.
+    expect(text).toContain('/StemV 80');
+  });
+
   test('a positive cap height already in place is left alone', () => {
     const out = fixFontDescriptors(pdfWith('FontFile2', notoSans(), { CapHeight: '700' }));
     expect(descriptors(out)).toEqual([{ flags: 32, cap: 700, hasProgram: true }]);
@@ -341,13 +430,16 @@ describe('fixFontDescriptors', () => {
 });
 
 describe('unresolvedFontMetrics', () => {
-  test('a negative CapHeight without an embedded program is reported', () => {
-    const pdf = Buffer.from(
+  // Two cases, one shape: a descriptor with a negative cap and no embedded program,
+  // differing only in whether an owning font exists to name the subtype from.
+  const barePdf = (fontObj: string[]) =>
+    Buffer.from(
       [
         '%PDF-1.4',
         '1 0 obj',
         '<< /Type /Catalog /Pages 2 0 R >>',
         'endobj',
+        ...fontObj,
         '4 0 obj',
         '<< /Type /FontDescriptor /FontName /TestFace /CapHeight -100 >>',
         'endobj',
@@ -359,7 +451,27 @@ describe('unresolvedFontMetrics', () => {
       ].join('\n'),
       LATIN1,
     );
-    expect(unresolvedFontMetrics(pdf)).toEqual([{ fontName: 'TestFace', capHeight: -100 }]);
+
+  test('a negative CapHeight without an embedded program is reported', () => {
+    const pdf = barePdf([
+      // The owning font is here so the report can name its subtype: the entry used to
+      // say nothing about which kind of font it was, while the finding in render.ts
+      // told the reader every one of them was a Type 3.
+      '3 0 obj',
+      '<< /Type /Font /Subtype /TrueType /BaseFont /TestFace /FontDescriptor 4 0 R >>',
+      'endobj',
+    ]);
+    expect(unresolvedFontMetrics(pdf)).toEqual([
+      { fontName: 'TestFace', capHeight: -100, subtype: 'TrueType' },
+    ]);
+  });
+
+  test('a descriptor with no owning font is reported with an unknown subtype', () => {
+    // No /FontDescriptor reference anywhere points at it, so there is no subtype to read.
+    // The report says "unknown" rather than defaulting to the common case.
+    expect(unresolvedFontMetrics(barePdf([]))).toEqual([
+      { fontName: 'TestFace', capHeight: -100, subtype: 'unknown' },
+    ]);
   });
 });
 
@@ -395,9 +507,13 @@ describe('rendered output', () => {
     const withProgram = descriptors(r.pdf).filter((d) => d.hasProgram);
 
     expect(withProgram.length).toBeGreaterThan(0);
-    for (const d of withProgram) {
-      expect(d.flags & 4).toBe(0);
-      expect(d.flags & 32).toBe(32);
+    // The descriptor helper no longer drops a descriptor for lacking a key, so this
+    // asserts the key is there instead of assuming it.
+    const flagged = withProgram.filter((d) => d.flags !== null);
+    expect(flagged.length, 'a rendered descriptor carries no /Flags').toBe(withProgram.length);
+    for (const d of flagged) {
+      expect(d.flags! & 4).toBe(0);
+      expect(d.flags! & 32).toBe(32);
     }
   });
 
@@ -406,8 +522,10 @@ describe('rendered output', () => {
       html: `<!doctype html><p>upright</p><p><i>italic text</i></p>`,
     });
     const faces = descriptors(r.pdf).filter((d) => d.hasProgram);
-    const italic = faces.filter((d) => d.flags & 64);
-    const upright = faces.filter((d) => !(d.flags & 64));
+    expect(faces.length).toBeGreaterThan(0);
+    expect(faces.filter((d) => d.flags !== null).length).toBe(faces.length);
+    const italic = faces.filter((d) => d.flags! & 64);
+    const upright = faces.filter((d) => !(d.flags! & 64));
     expect(italic.length).toBeGreaterThan(0);
     expect(upright.length).toBeGreaterThan(0);
   });
@@ -416,9 +534,11 @@ describe('rendered output', () => {
     const r = await render(browser, {
       html: `<!doctype html><style>body{font-family:"DejaVu Serif",serif}</style><p><i>italic</i></p>`,
     });
-    const italic = descriptors(r.pdf).filter((d) => d.hasProgram && d.flags & 64);
+    const italic = descriptors(r.pdf).filter(
+      (d) => d.hasProgram && d.flags !== null && d.flags & 64,
+    );
     expect(italic.length).toBeGreaterThan(0);
-    for (const d of italic) expect(d.flags & 2).toBe(2);
+    for (const d of italic) expect(d.flags! & 2).toBe(2);
   });
 
   test('a face the font calls monospaced is marked FixedPitch', async () => {
@@ -431,8 +551,8 @@ describe('rendered output', () => {
         ),
       ),
     );
-    expect(embedded[0]!.flags & 1).toBe(1);
-    expect(embedded[0]!.flags & 1).not.toBe(0);
+    expect(embedded[0]!.flags).not.toBeNull();
+    expect(embedded[0]!.flags! & 1).not.toBe(0);
   });
 
   test('cap heights differ between faces, so they are read per font', async () => {
@@ -443,13 +563,14 @@ describe('rendered output', () => {
         .filter((d) => d.hasProgram)
         .map((d) => d.cap),
     );
+    expect(caps.has(null), 'a rendered descriptor carries no /CapHeight').toBe(false);
     expect(caps.size).toBeGreaterThan(1);
   });
 
   test('a descriptor with no embedded font is reported, not invented', async () => {
     const r = await render(browser, { html: threeFaces });
     const gaps = unresolvedFontMetrics(r.pdf);
-    const leftover = descriptors(r.pdf).filter((d) => d.cap <= 0);
+    const leftover = descriptors(r.pdf).filter((d) => d.cap !== null && d.cap <= 0);
     expect(leftover.length).toBe(gaps.length);
     for (const g of gaps) {
       expect(g.capHeight).toBeLessThan(0);

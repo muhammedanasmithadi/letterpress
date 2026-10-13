@@ -1,6 +1,7 @@
 import { inflateSync } from 'node:zlib';
 import {
   inflatedStream,
+  insertIntoDict,
   join,
   LATIN1,
   objsByNum,
@@ -84,9 +85,19 @@ function readTableDirectory(font: Buffer, numTables: number): Map<string, Table>
 /** Italic angle and fixed-pitch flag from the `post` table, when it is long enough. */
 function readPost(font: Buffer, post: Table, out: Sfnt): void {
   if (post.length < 16) return;
-  const fixedPitch = font.readUInt32BE(post.offset + 12);
+  // isFixedPitch sits at offset 12 in every post format, including 3.0, which omits
+  // everything after the 32-byte header. It is a Fixed 16.16: 0 means proportional, and
+  // both 0x00010000 and the legacy 0xFFFFFFFF mean monospaced.
+  //
+  // The old code read it unsigned and set the field only for values other than 0 and
+  // 0xFFFFFFFF, so the legacy "yes" was treated as "no" and `fixedPitch` could only ever
+  // be true. That meant flagsFrom() could set the FixedPitch bit but never clear it: a
+  // descriptor wrongly claiming a proportional font was monospaced was never repaired.
+  // An explicit 0 from the font is data, not absence -- absence is a short table, which
+  // still leaves the field undefined and the descriptor's bit untouched.
+  const raw = font.readInt32BE(post.offset + 12);
   out.italicAngle = i16(font, post.offset + 4) / 65536;
-  if (fixedPitch !== 0 && fixedPitch !== 0xffff_ffff) out.fixedPitch = true;
+  out.fixedPitch = raw !== 0;
 }
 
 /** Whether the `cmap` table names a Unicode platform/encoding pair. */
@@ -195,10 +206,16 @@ function descriptorFix(text: string, byNum: Map<number, Obj>): DescriptorFix | u
   if (!sfnt) return undefined;
 
   const flags = numFrom(text, /\/Flags\s+(\d+)/, NaN);
-  if (!Number.isFinite(flags)) return undefined;
-  const newFlags = flagsFrom(sfnt, flags);
+  // A descriptor with no /Flags key is still worth repairing. The old code returned
+  // undefined for anything that was not a finite number, so one missing key skipped the
+  // whole descriptor -- taking the CapHeight fix with it, even when the embedded font
+  // had supplied everything needed to compute both. The PDF spec's default for an absent
+  // /Flags is 0; flagsFrom() then derives what the font supports from there, and the
+  // missing key is written back by applyDescriptorFixes rather than silently omitted.
+  const current = Number.isFinite(flags) ? flags : 0;
+  const newFlags = flagsFrom(sfnt, current);
   const capHeight = capHeightFix(sfnt, numFrom(text, /\/CapHeight\s+(-?\d+)/, NaN));
-  if (newFlags === flags && capHeight === undefined) return undefined;
+  if (newFlags === current && capHeight === undefined) return undefined;
   const next: DescriptorFix = { flags: newFlags };
   if (capHeight !== undefined) next.capHeight = capHeight;
   return next;
@@ -214,15 +231,27 @@ function negativeCapHeightFix(text: string): DescriptorFix | undefined {
   return { flags: numFrom(text, /\/Flags\s+(\d+)/, 0), capHeight: -cap };
 }
 
+/** Set a numeric key in a descriptor: replace it when present, insert it when absent. */
+function setDescriptorKey(text: string, key: string, value: number): string {
+  // A replace that matches nothing changes nothing, so a key the producer never wrote --
+  // which is exactly the case a repair exists to fix -- stayed absent while the value
+  // travelled through the whole repair and was thrown away at the last step. A viewer
+  // reads the missing key as "unknown", not as "wrong".
+  const re = new RegExp(`/${key}\\s+-?\\d+`);
+  return re.test(text)
+    ? text.replace(re, `/${key} ${value}`)
+    : insertIntoDict(text, `/${key} ${value}`);
+}
+
 /** Rewrite the flagged descriptors, leaving every other object untouched. */
 function applyDescriptorFixes(parts: Parts, wanted: Map<number, DescriptorFix>): Uint8Array {
   const objs = parts.objs.map((o) => {
     const fix = wanted.get(o.num);
     if (!fix) return o;
     let text = o.bytes.toString(LATIN1);
-    text = text.replace(/\/Flags\s+\d+/, `/Flags ${fix.flags}`);
+    text = setDescriptorKey(text, 'Flags', fix.flags);
     if (fix.capHeight !== undefined) {
-      text = text.replace(/\/CapHeight\s+-?\d+/, `/CapHeight ${fix.capHeight}`);
+      text = setDescriptorKey(text, 'CapHeight', fix.capHeight);
     }
     return { num: o.num, bytes: Buffer.from(text, LATIN1) };
   });
@@ -231,19 +260,34 @@ function applyDescriptorFixes(parts: Parts, wanted: Map<number, DescriptorFix>):
 
 export function unresolvedFontMetrics(
   pdf: Uint8Array,
-): Array<{ fontName: string; capHeight: number }> {
-  const out: Array<{ fontName: string; capHeight: number }> = [];
+): Array<{ fontName: string; capHeight: number; subtype: string }> {
+  const out: Array<{ fontName: string; capHeight: number; subtype: string }> = [];
   const parts = trySplit(pdf);
   if (!parts) return out;
+  const ownerOf = new Map<number, string>();
+  for (const o of parts.objs) {
+    const text = o.bytes.toString(LATIN1);
+    const d = text.match(/\/FontDescriptor\s+(\d+)\s+0\s+R/);
+    const sub = text.match(/\/Subtype\s*\/(\S+)/);
+    if (d && sub) ownerOf.set(Number(d[1]), sub[1]!);
+  }
   for (const o of parts.objs) {
     const text = o.bytes.toString(LATIN1);
     if (!/\/Type\s*\/FontDescriptor\b/.test(text)) continue;
     const cap = Number(text.match(/\/CapHeight\s+(-?\d+)/)?.[1]);
     if (!(cap < 0)) continue;
     if (/\/FontFile\d?\s+\d+\s+0\s+R/.test(text)) continue;
+    // The subtype is read from the owning font rather than assumed. This filter selects
+    // on "no embedded program", and until now this function said nothing about which kind
+    // of font that was -- while the finding in render.ts told the reader every one of them
+    // was a Type 3. Measured on rendered documents the two coincide, because the only
+    // program-less descriptor Chromium emits is a Type 3, but a synthetic or future file
+    // can have a CIDFontType2 with no program, and then "emitted as Type 3" is a lie about
+    // the reader's own document.
     out.push({
       fontName: text.match(/\/FontName\s*\/([^\s/>\]]+)/)?.[1] ?? 'unnamed',
       capHeight: cap,
+      subtype: ownerOf.get(o.num) ?? 'unknown',
     });
   }
   return out;

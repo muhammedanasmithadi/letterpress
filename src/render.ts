@@ -1306,16 +1306,25 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
 
       const unresolved = unresolvedFontMetrics(pdf);
       if (unresolved.length) {
+        // The cause is named per face from what unresolvedFontMetrics measured, not from
+        // what this path usually is. A Type 3's glyphs are drawing procedures with no
+        // embedded font to read the metric from, so the value cannot be derived; a face
+        // of any other subtype with no embedded program is one Chromium did not embed,
+        // for which the same holds. Saying "Type 3" for both would be a confident claim
+        // about something nobody checked.
+        const named = unresolved.map((u) =>
+          u.subtype === 'Type3'
+            ? `${u.fontName} ${u.capHeight} (Type 3, whose glyphs are drawing procedures with no embedded font to read the metric from)`
+            : `${u.fontName} ${u.capHeight} (${u.subtype}, emitted without an embedded font program)`,
+        );
         findings.push({
           code: 'font-metrics',
           severity: 'warn',
           message:
-            `${unresolved.length} font descriptor${unresolved.length === 1 ? ' still carries' : 's still carry'} a negative cap height (${unresolved
-              .map((u) => `${u.fontName} ${u.capHeight}`)
-              .slice(0, 3)
-              .join(', ')}). ` +
+            `${unresolved.length} font descriptor${unresolved.length === 1 ? ' still carries' : 's still carry'} a negative cap height ` +
+            `(${named.slice(0, 3).join(', ')}). ` +
             `The PDF specification calls a negative CapHeight an error a viewer may refuse to render text over. ` +
-            `Chromium emitted ${unresolved.length === 1 ? 'this face' : 'these faces'} as Type 3 fonts, whose glyphs are drawing procedures with no embedded font to read the metric from, so the value cannot be derived and was left as produced. ` +
+            `There is nothing to derive the metric from, so the value was left as produced. ` +
             `Embedding the font as a file rather than relying on a system face usually removes it.`,
         });
       }

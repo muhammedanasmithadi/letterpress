@@ -35,14 +35,24 @@ const AUDIT = String.raw`
   // these, so a table of contents built on target-counter renders as nothing,
   // silently.
   //
-  // Which means this scan, reading the CSSOM, cannot see them: by the time it runs the
-  // rule's cssText is already an empty block. Verified in the page. So the finding fires
-  // only for a function Chromium keeps and renders wrongly, and a target-counter -- the
-  // case the documentation names -- is reported by nothing. Reading the document's own
-  // <style> text alongside the CSSOM would find it; that is a change of shape rather than
-  // a fix, and it is noted rather than done here.
+  // The CSSOM scan below cannot see every case: for leader(), string() and running()
+  // the rule's cssText is already an empty block by the time it runs (verified in the
+  // page), so a scan of the computed rules finds nothing. The document's own <style>
+  // text still has the declaration, so it is scanned too. Linked stylesheets cannot be
+  // read synchronously -- a same-origin <link> whose declaration was discarded is the
+  // one case this still cannot see, and that limit is stated rather than hidden.
   const unsupported = { "target-counter": 1, "target-text": 1, "leader(": 1, "string(": 1, "running(": 1 };
   const seenCss = {};
+  const unsupportedMessage = (name, where) =>
+    "the stylesheet uses " + name.replace("(", "()") + ", which Chromium does not " +
+    "implement. it silently drops the whole content declaration, so anything that " +
+    "depends on it renders as nothing: no error, no text. " + where +
+    "page numbers must come from @page margin boxes with counter(page) instead. " +
+    "for a table of contents, resolve the numbers in a second pass.";
+  // A function name inside a quoted string is prose, not a declaration:
+  // content:"a string( of text" is valid CSS that Chromium keeps and renders.
+  const unquoted = (text) =>
+    text.replace(/"(\\.|[^"\\])*"/g, '""').replace(/'(\\.|[^'\\])*'/g, "''");
   const scanRules = (rules) => {
     for (const rule of rules || []) {
       // Recurse only when there is something nested. A plain style rule exposes
@@ -51,15 +61,11 @@ const AUDIT = String.raw`
       if (rule.cssRules && rule.cssRules.length) { scanRules(rule.cssRules); }
       const text = rule.cssText || "";
       if (!/content|@page|::after|::before|::marker/.test(text)) continue;
+      const code = unquoted(text);
       for (const name of Object.keys(unsupported)) {
-        if (text.includes(name) && !seenCss[name]) {
+        if (code.includes(name) && !seenCss[name]) {
           seenCss[name] = 1;
-          add("unsupported-paged-media", "error",
-            "the stylesheet uses " + name.replace("(", "()") + ", which Chromium does not " +
-            "implement. it silently drops the whole content declaration, so anything that " +
-            "depends on it renders as nothing: no error, no text. page numbers must come " +
-            "from @page margin boxes with counter(page) instead. for a table of contents, " +
-            "resolve the numbers in a second pass.");
+          add("unsupported-paged-media", "error", unsupportedMessage(name, ""));
         }
       }
     }
@@ -78,6 +84,30 @@ const AUDIT = String.raw`
       " could not be read, because a cross-origin sheet will not expose its rules. the " +
       "layout findings cover only the stylesheets on this origin.",
       { unreadable: unreadableSheets });
+  }
+  // The declarations Chromium discarded before the CSSOM scan could see them. Only the
+  // document's own <style> elements can be read synchronously; a linked sheet's source
+  // needs a fetch, which a synchronous audit cannot do.
+  //
+  // Precision matters more than recall here, because these names also occur as ordinary
+  // words. Comments, quoted strings and everything outside a content: declaration are
+  // stripped first, so content:"a string( of text" and /* content:leader('.') */ stay
+  // silent -- neither is an active declaration. A name the CSSOM scan already reported is
+  // skipped, so a kept declaration is reported once, not twice.
+  for (const el of document.querySelectorAll("style")) {
+    const src = unquoted((el.textContent || "").replace(/\/\*[\s\S]*?\*\//g, ""));
+    const decls = src.match(/content\s*:([^;{}]+)/g) || [];
+    for (const decl of decls) {
+      for (const name of Object.keys(unsupported)) {
+        if (decl.includes(name) && !seenCss[name]) {
+          seenCss[name] = 1;
+          add("unsupported-paged-media", "error",
+            unsupportedMessage(name,
+              "it was found in the document's own <style> text: Chromium had already " +
+              "discarded the declaration, so the rule reads as an empty block. "));
+        }
+      }
+    }
   }
 
   // ---- 4. digits at risk of bidi reordering in right-to-left text -------

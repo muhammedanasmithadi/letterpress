@@ -150,6 +150,59 @@ test('target-counter in a stylesheet is reported, because it prints nothing', as
   expect(f.message).toContain('target-counter');
 }, 30_000);
 
+test('a discarded leader() is reported from the style text, not missed', async () => {
+  // Chromium empties the whole content declaration when it meets leader(), so the rule's
+  // cssText is already `.c::after { }` by the time the CSSOM scan runs and the finding
+  // was silent. The document's own <style> text still has the declaration.
+  const html = `<!doctype html><style>
+@page{size:A4;margin:15mm}
+.c::after{content: leader('.')}
+</style><h1>T</h1><p class="c">Section</p>`;
+  const r = await render(browser, { html });
+  const found = r.findings.filter((x) => x.code === 'unsupported-paged-media');
+  expect(found.length).toBe(1);
+  expect(found[0]!.message).toContain('leader()');
+  expect(found[0]!.message).toContain('<style>');
+  expect(found[0]!.severity).toBe('error');
+}, 30_000);
+
+test('string() and running() are reported from the style text', async () => {
+  const html = `<!doctype html><style>
+@page{size:A4;margin:15mm}
+.d{content: string(chapter)} .e{content: running(head)}
+</style><h1>T</h1><p class="d">Body</p>`;
+  const r = await render(browser, { html });
+  const found = r.findings.filter((x) => x.code === 'unsupported-paged-media');
+  expect(found.map((f) => f.message)).toContainEqual(expect.stringContaining('string()'));
+  expect(found.map((f) => f.message)).toContainEqual(expect.stringContaining('running()'));
+}, 30_000);
+
+test('a kept declaration is reported once, not twice', async () => {
+  // A valid target-counter survives in the CSSOM, so both scans see it. The CSSOM scan
+  // runs first and the style-text scan skips names it already reported.
+  const html = `<!doctype html><style>
+@page{size:A4;margin:15mm}
+.a::after{content: target-counter(attr(href url), page)}
+</style><h1>T</h1><p><a href="#s">Section</a></p><h2 id="s">Section</h2>`;
+  const r = await render(browser, { html });
+  const found = r.findings.filter((x) => x.code === 'unsupported-paged-media');
+  expect(found.length).toBe(1);
+  expect(found[0]!.message).toContain('target-counter');
+  expect(found[0]!.message).not.toContain('<style>');
+}, 30_000);
+
+test('a function name inside a string or a comment is not a declaration', async () => {
+  // Precision matters more than recall: these names occur as ordinary words, and a
+  // scan of raw text that cried at every mention would train people to ignore it.
+  const html = `<!doctype html><style>
+@page{size:A4;margin:15mm}
+/* content: leader('.') */
+.q::after{content: "a string( of text"} .w::before{content: 'running( late)'}
+</style><h1>T</h1><p class="q">Body</p>`;
+  const r = await render(browser, { html });
+  expect(r.findings.map((x) => x.code)).not.toContain('unsupported-paged-media');
+}, 30_000);
+
 test('digits at risk of bidi reversal in arabic text are reported', async () => {
   const html = `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
 @page{size:A4;margin:15mm} body{direction:rtl;font-family:'Noto Naskh Arabic',serif}

@@ -517,7 +517,7 @@ With a loadable image there is no 7.1 failure, so **no content-stream surgery is
 and `verify()` keeps its byte-identity guarantee rather than being weakened to
 "text operators in the same order".
 
-### The one remaining failure
+### The one remaining failure -- closed 2026-10-13
 
 ```
 39 Figure   no /Alt                <- the <figure> element
@@ -528,6 +528,12 @@ Chromium makes both the `<figure>` and the `<img>` a Figure. A nested Figure who
 element is a pure grouping is a modelling artefact, and 7.3 fails on it. Re-tagging the
 outer element `Div` when it has a child Figure carrying an `/Alt` would close it with one
 key on one dictionary, inventing no text and announcing nothing twice.
+
+That fix has since landed as `fixRedundantFigures`, verified end to end 2026-10-13: a
+`<figure><img alt><figcaption>` document reports `figure-role-corrected` and veraPDF
+fails only clause 5 (the deliberate one); the structure tree shows `Div > Figure[Alt] +
+Caption`. An `<img>` with no `alt` is correctly left alone -- there is no description to
+preserve -- and 7.3 keeps failing on it, which is the document's fault, surfaced.
 
 ### The lesson
 

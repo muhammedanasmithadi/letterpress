@@ -2,7 +2,9 @@
 
 Every number here was produced on this machine: Fedora 44, Chromium 154.0.8037.57,
 Bun 1.4.0, Deno 2.9.5, Node 22.23.2. Reproduce with `tools/bench.mjs`, which runs
-unmodified on all three runtimes and prints one JSON line per phase.
+unmodified on all three runtimes and prints one JSON line per phase
+(`deno run --allow-run --allow-read --allow-write --allow-net --allow-env`;
+probe documents generate into the system temp dir unless `$BENCH_DIR` says otherwise).
 
 ## Renderer
 

@@ -11,7 +11,7 @@ document with a 24-row table per page:
 
 | property                    | value                                         |
 | --------------------------- | --------------------------------------------- |
-| print time, warm browser    | ~65 ms                                        |
+| print time, warm browser    | ~20 ms                                        |
 | print time, 400 pages       | ~5.2–5.7 s                                    |
 | print time, 2,000 pages     | 25.7 s, 820 MB peak RSS                       |
 | print time, 3,664 pages     | 76.5 s, 1,262 MB peak RSS                     |
@@ -42,8 +42,13 @@ boxes with `counter(page)`, which work natively and reserve nothing.
 | RSS after concurrency      | 80 MB   | **40 MB** | 59 MB      |
 | RSS after 400-page render  | 155 MB  | 116 MB    | 110 MB     |
 
-Each warm-render figure includes a 600 ms settle sleep inside the timed region,
-so the true render cost is the ~65 ms above, not the ~670 ms.
+Each warm-render figure includes a 600 ms settle sleep inside the timed region.
+An earlier version of this paragraph derived "~65 ms" by subtracting the sleep
+from the ~670 ms total. That arithmetic was never a measurement, and a direct
+one disagrees: raw `Page.printToPDF` on a warm browser takes ~20 ms (five runs,
+19–22 ms), while a full `render()` -- navigate, settle, print, repairs, verify,
+metadata -- takes ~0.3 s warm. The README quotes the pipeline number, which is
+the one a caller experiences.
 
 **Speed is a tie.** Every phase lands within noise. The runtime moves bytes; the
 engine does the work. Choosing a runtime on render speed would be choosing noise.

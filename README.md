@@ -23,7 +23,7 @@ bun src/cli.ts --template invoice --data order.json -o invoice.pdf
 
 |                              |                                                                                                                                 |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| warm render                  | ~65 ms                                                                                                                          |
+| warm render                  | ~0.3 s                                                                                                                          |
 | A4 from `@page { size: A4 }` | exactly 594.96 × 841.92 pt                                                                                                      |
 | text                         | selectable and searchable, with `ToUnicode` maps                                                                                |
 | structure                    | tagged PDF, bookmarks from `<h1>`–`<h6>`                                                                                        |

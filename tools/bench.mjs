@@ -1,11 +1,47 @@
 // Cold-start and concurrency bench for the print service.
 // Runs unmodified on Bun, Deno and Node. Prints one JSON line per phase.
 import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const CHROME = process.env.CHROME ?? 'chromium';
-const SMALL = process.env.SMALL_DOC ?? 'file:///tmp/opencode/probe.html';
-const BIG = process.env.BIG_DOC ?? 'file:///tmp/opencode/big.html';
-const PROFILE = '/tmp/opencode/bench-service';
+// The probe documents are generated, not assumed: an earlier default pointed at a
+// scratch file that did not exist, so every phase quietly measured rendering a
+// missing file (the error page) plus the fixed settle sleep below.
+const DIR = process.env.BENCH_DIR ?? join(tmpdir(), 'letterpress-bench');
+const SMALL = process.env.SMALL_DOC ?? join(DIR, 'probe.html');
+const BIG = process.env.BIG_DOC ?? join(DIR, 'big.html');
+const PROFILE = join(DIR, 'profile');
+
+function fixtures() {
+  mkdirSync(DIR, { recursive: true });
+  if (!existsSync(SMALL)) {
+    writeFileSync(
+      SMALL,
+      '<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:15mm}</style>' +
+        '<h1>Probe</h1><p>Body text for the timing run.</p>\n',
+    );
+  }
+  if (!existsSync(BIG)) {
+    const rows = Array.from(
+      { length: 400 },
+      (_, i) => `<tr>${Array.from({ length: 24 }, (_, j) => `<td>r${i}c${j}</td>`).join('')}</tr>`,
+    ).join('');
+    writeFileSync(
+      BIG,
+      '<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:10mm}table{border-collapse:collapse}</style>' +
+        `<table>${rows}</table>\n`,
+    );
+  }
+}
+
+fixtures();
+
+// Navigate targets are file URLs; the *_DOC overrides keep working because they
+// were URLs already, and the generated defaults are converted here.
+const smallUrl = SMALL.startsWith('file:') ? SMALL : `file://${SMALL}`;
+const bigUrl = BIG.startsWith('file:') ? BIG : `file://${BIG}`;
 
 function launch() {
   const t0 = performance.now();
@@ -126,7 +162,7 @@ let t0 = performance.now();
 const { proc, port, spawned } = await launch();
 const endpointMs = performance.now() - spawned;
 const c0 = await waitForPageSession(port);
-const bytes = await render(c0, SMALL);
+const bytes = await render(c0, smallUrl);
 console.log(
   JSON.stringify({
     rt: RT,
@@ -144,7 +180,7 @@ console.log(
   const times = [];
   for (let i = 0; i < 5; i++) {
     const a = performance.now();
-    await render(c0, SMALL);
+    await render(c0, smallUrl);
     times.push(Math.round(performance.now() - a));
   }
   console.log(
@@ -166,7 +202,7 @@ for (const N of [2, 4, 8]) {
   const lat = await Promise.all(
     clients.map(async (c) => {
       const a = performance.now();
-      await render(c, SMALL);
+      await render(c, smallUrl);
       return Math.round(performance.now() - a);
     }),
   );
@@ -187,7 +223,7 @@ for (const N of [2, 4, 8]) {
 // ---- Phase 4: one big render, the serial worst case ----
 {
   const a = performance.now();
-  const n = await render(c0, BIG);
+  const n = await render(c0, bigUrl);
   console.log(
     JSON.stringify({
       rt: RT,

@@ -245,3 +245,40 @@ export function wideGaps(limitEm = 0.6): WideGap[] {
   }
   return [...found.values()].sort((a, b) => b.em - a.em).slice(0, 20);
 }
+
+/**
+ * Fetch same-origin linked stylesheets for the paged-media scan, and stash the
+ * texts where the audit script reads them.
+ *
+ * A synchronous audit cannot fetch, and the CSSOM no longer holds declarations
+ * Chromium discarded -- so the audit would never see a leader() living in a
+ * linked sheet. This runs first, over plain fetch: same-origin sheets resolve
+ * through the staging server, cross-origin and missing ones reject, and each
+ * failure is skipped rather than reported (the CSSOM scan and the
+ * stylesheet-unreadable finding already cover what can be said about them).
+ * Slow sheets abort rather than delay every render behind them.
+ *
+ * Cap of eight sheets and 256KB each: past that the audit is sampling, and a
+ * cap stated here beats a stall discovered in production.
+ */
+export async function collectLinkedCss(): Promise<number> {
+  const urls = [...document.querySelectorAll('link[rel="stylesheet"]')]
+    .map((l) => (l as HTMLLinkElement).href)
+    .filter((h) => h && !h.startsWith('data:'))
+    .slice(0, 8);
+  const out: string[] = [];
+  for (const u of urls) {
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 2500);
+      const res = await fetch(u, { signal: ctl.signal });
+      clearTimeout(timer);
+      if (!res.ok) continue;
+      out.push((await res.text()).slice(0, 262144));
+    } catch {
+      continue;
+    }
+  }
+  (globalThis as Record<string, unknown>).__letterpressLinkedCss = out;
+  return out.length;
+}

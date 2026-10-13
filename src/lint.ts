@@ -1,5 +1,6 @@
 import type { Finding } from './render.ts';
 import type { Tab } from './browser.ts';
+import { collectLinkedCss } from './pageside.ts';
 
 const AUDIT = String.raw`
 (() => {
@@ -85,29 +86,40 @@ const AUDIT = String.raw`
       "layout findings cover only the stylesheets on this origin.",
       { unreadable: unreadableSheets });
   }
-  // The declarations Chromium discarded before the CSSOM scan could see them. Only the
-  // document's own <style> elements can be read synchronously; a linked sheet's source
-  // needs a fetch, which a synchronous audit cannot do.
+  // The declarations Chromium discarded before the CSSOM scan could see them. The
+  // document's own <style> elements read synchronously; linked sheets were fetched
+  // into globalThis.__letterpressLinkedCss before this script ran, because a
+  // synchronous audit cannot fetch. A same-origin <link> whose declaration was
+  // discarded is covered; a remote one fails the fetch and stays invisible.
   //
   // Precision matters more than recall here, because these names also occur as ordinary
   // words. Comments, quoted strings and everything outside a content: declaration are
   // stripped first, so content:"a string( of text" and /* content:leader('.') */ stay
   // silent -- neither is an active declaration. A name the CSSOM scan already reported is
   // skipped, so a kept declaration is reported once, not twice.
-  for (const el of document.querySelectorAll("style")) {
-    const src = unquoted((el.textContent || "").replace(/\/\*[\s\S]*?\*\//g, ""));
-    const decls = src.match(/content\s*:([^;{}]+)/g) || [];
+  const scanSourceText = (src, where) => {
+    const clean = unquoted(src.replace(/\/\*[\s\S]*?\*\//g, ""));
+    const decls = clean.match(/content\s*:([^;{}]+)/g) || [];
     for (const decl of decls) {
       for (const name of Object.keys(unsupported)) {
         if (decl.includes(name) && !seenCss[name]) {
           seenCss[name] = 1;
-          add("unsupported-paged-media", "error",
-            unsupportedMessage(name,
-              "it was found in the document's own <style> text: Chromium had already " +
-              "discarded the declaration, so the rule reads as an empty block. "));
+          add("unsupported-paged-media", "error", unsupportedMessage(name, where));
         }
       }
     }
+  };
+  for (const el of document.querySelectorAll("style")) {
+    scanSourceText(el.textContent || "",
+      "it was found in the document's own <style> text: Chromium had already " +
+      "discarded the declaration, so the rule reads as an empty block. ");
+  }
+  const linked = globalThis.__letterpressLinkedCss || [];
+  for (const src of linked) {
+    if (typeof src !== "string") continue;
+    scanSourceText(src,
+      "it was found in a linked stylesheet: Chromium had already discarded the " +
+      "declaration, so the rule reads as an empty block. ");
   }
 
   // ---- 4. digits at risk of bidi reordering in right-to-left text -------
@@ -339,6 +351,22 @@ const AUDIT = String.raw`
 
 export async function audit(tab: Tab, timeoutMs: number): Promise<Finding[]> {
   try {
+    // Linked stylesheets, fetched before the synchronous script runs. Contained on
+    // purpose: any failure here -- a hung fetch, a closed socket -- must leave the
+    // audit running as before, without the linked sources, rather than break it.
+    try {
+      await tab.send(
+        'Runtime.evaluate',
+        {
+          expression: `(${collectLinkedCss})()`,
+          awaitPromise: true,
+          returnByValue: true,
+        },
+        timeoutMs,
+      );
+    } catch {
+      /* the audit runs without linked sources */
+    }
     const res = await tab.send(
       'Runtime.evaluate',
       {

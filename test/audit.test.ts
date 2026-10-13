@@ -203,6 +203,71 @@ test('a function name inside a string or a comment is not a declaration', async 
   expect(r.findings.map((x) => x.code)).not.toContain('unsupported-paged-media');
 }, 30_000);
 
+// File-based renders for linked stylesheets: the document and its print.css sit in a
+// scratch directory so the staging server serves the sheet same-origin, which is the
+// case the fetch pre-pass covers. Factored out because three copies of the setup is
+// what the duplication gate counts.
+async function withLinkedDoc(prefix: string, css: string, run: (path: string) => Promise<void>) {
+  const dir = await mkdtemp(join(tmpdir(), prefix));
+  try {
+    await Bun.write(join(dir, 'print.css'), css);
+    await Bun.write(
+      join(dir, 'doc.html'),
+      '<!doctype html><meta charset="utf-8">' +
+        '<link rel="stylesheet" href="print.css">' +
+        '<h1>T</h1><p>Body.</p>',
+    );
+    await run(join(dir, 'doc.html'));
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+test('a discarded declaration in a linked sheet is reported', async () => {
+  // leader() empties the rule before the CSSOM scan runs, and a linked sheet has no
+  // textContent to fall back on -- so this was silent until the fetch pre-pass.
+  await withLinkedDoc(
+    'letterpress-audit-link-',
+    "@page{size:A4;margin:15mm} .c::after{content: leader('.')}",
+    async (path) => {
+      const r = await render(browser, { path });
+      const found = r.findings.filter((x) => x.code === 'unsupported-paged-media');
+      expect(found.length).toBe(1);
+      expect(found[0]!.message).toContain('leader()');
+      expect(found[0]!.message).toContain('linked stylesheet');
+    },
+  );
+}, 60_000);
+
+test('a clean linked sheet stays silent', async () => {
+  await withLinkedDoc(
+    'letterpress-audit-link-',
+    '@page{size:A4;margin:15mm} p{color:#111}',
+    async (path) => {
+      const r = await render(browser, { path });
+      expect(r.findings.map((x) => x.code)).not.toContain('unsupported-paged-media');
+    },
+  );
+}, 60_000);
+
+test('a missing linked sheet breaks nothing', async () => {
+  // The fetch rejects; the audit runs without linked sources, as before.
+  const dir = await mkdtemp(join(tmpdir(), 'letterpress-audit-link-'));
+  try {
+    await Bun.write(
+      join(dir, 'doc.html'),
+      '<!doctype html><meta charset="utf-8">' +
+        '<link rel="stylesheet" href="absent.css">' +
+        '<h1>T</h1><p>Body.</p>',
+    );
+    const r = await render(browser, { path: join(dir, 'doc.html') });
+    expect(r.findings.map((x) => x.code)).not.toContain('unsupported-paged-media');
+    expect(r.info.pages).toBe(1);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}, 60_000);
+
 test('digits at risk of bidi reversal in arabic text are reported', async () => {
   const html = `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
 @page{size:A4;margin:15mm} body{direction:rtl;font-family:'Noto Naskh Arabic',serif}

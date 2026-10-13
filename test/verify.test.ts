@@ -281,6 +281,43 @@ describe('the gate in the render path', () => {
     await rm(profile, { recursive: true, force: true }).catch(() => {});
   });
 
+  test('dropping any single object from a rendered document is caught', async () => {
+    // The gate is what stands between a repair and a shipped file, so what matters is not
+    // that verify() is thorough in general but that it refuses the damage a repair could
+    // actually do. Every object in a Chromium-produced file is reached from a dictionary
+    // or the trailer, so every one of them is a reference this check can follow.
+    //
+    // `joinParts` rewrites the cross-reference table around whatever survived, so the
+    // result parses cleanly -- it is not a file that trips over for a second, unrelated
+    // reason. Every deletion must be refused on the missing reference alone.
+    const r = await render(browser, {
+      html: `<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:15mm}</style>
+        <h1>Report</h1><p>Body text that wraps onto more than one line.</p>`,
+      author: 'Someone',
+    });
+    const parts = split(Buffer.from(r.pdf));
+    expect(parts.objs.length, 'the fixture has too few objects to mean anything').toBeGreaterThan(
+      10,
+    );
+
+    const missed: string[] = [];
+    for (const o of parts.objs) {
+      const dropped = joinParts(
+        parts.head,
+        parts.objs.filter((x) => x.num !== o.num),
+        parts.trailer,
+      );
+      const v = verify(dropped);
+      if (v.ok) missed.push(String(o.num));
+      // And it must fail on the missing reference, not on something incidental that a
+      // rewritten cross-reference table happened to break.
+      else if (!v.failures.some((f) => f.startsWith('a reference to object'))) {
+        missed.push(`${o.num} (${v.failures[0]})`);
+      }
+    }
+    expect(missed, `verify accepted a document missing objects: ${missed.join(', ')}`).toEqual([]);
+  }, 60_000);
+
   test('an ordinary render is verified and reported intact', async () => {
     const r = await render(browser, {
       html: `<!doctype html><meta charset="utf-8"><title>T</title>

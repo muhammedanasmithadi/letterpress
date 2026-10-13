@@ -9,7 +9,10 @@ const QUEUE_PROBE = `
 process.env.HTML2PDF_MAX_RENDERS = "1";
 process.env.HTML2PDF_MAX_QUEUE = "4";
 const { startServer } = await import(${JSON.stringify(join(import.meta.dir, '..', 'src', 'server.ts'))});
-const s = await startServer();
+// Port 0, not the default: the probe runs alongside anything else on this machine --
+// including a server started for a human -- and the default port belongs to whoever
+// got there first. startServer reports the port it actually bound.
+const s = await startServer({ port: 0 });
 const url = "http://127.0.0.1:" + s.port + "/render";
 // Big enough that a render takes far longer than the few milliseconds between the two
 // posts, so the second one is certainly still waiting when stop() runs.

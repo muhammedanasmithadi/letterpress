@@ -237,8 +237,17 @@ const AUDIT = String.raw`
     for (const ch of chars) {
       if (missing.has(ch)) continue;
       const drawn = glyph(font, ch);
-      if (drawn === notdef || drawn === blank) {
+      if (drawn === notdef) {
         missing.set(ch, font);
+      } else if (drawn === blank) {
+        // Blank pixels with an advance width is spacing, not a missing glyph. U+00A0 has
+        // no glyph in most fonts, so it renders pixel-identical to a space -- and the old
+        // test reported it as "will print as a blank box" on nearly every document
+        // containing &nbsp;. Measured in the page: A&nbsp;B and A B have identical
+        // widths, so the character occupies exactly a space and prints as one. Only a
+        // character that draws nothing AND occupies nothing is still suspect here.
+        ctx.font = font;
+        if (ctx.measureText(ch).width === 0) missing.set(ch, font);
       }
     }
   }
@@ -249,6 +258,10 @@ const AUDIT = String.raw`
   // fonts but occupies exactly a space's width and prints as one, so grouping it
   // with the formatting characters made ordinary documents report a phantom
   // problem and described it as invisible, which it is not.
+  // Nor is it reported as missing: the loop above measures advance width, so a
+  // blank-but-wide character is recognised as spacing before it ever reaches this
+  // filter. What remains here are the characters that draw nothing and occupy
+  // nothing, which print as nothing at all.
   const invisible = /^[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF\uFE0E\uFE0F]$/;
   // No cap. A truncated list that does not say so reads as "that was all of
   // them", which is how a document ends up with 12 problems and one warning.

@@ -180,14 +180,18 @@ test('every missing glyph is listed, not capped', async () => {
   expect(r.findings.filter((x) => x.code === 'missing-glyph').length).toBe(20);
 }, 30_000);
 
-test('a no-break space is reported as a real space, not as an invisible format character', async () => {
+test('a no-break space is spacing, not a missing glyph', async () => {
+  // U+00A0 has no glyph in most fonts, so the canvas comparison used to report it as
+  // "will print as a blank box". Measured in the page, A&nbsp;B and A B have identical
+  // widths: it occupies exactly a space and prints as one. A finding that fires on
+  // &nbsp; fires on nearly every HTML file, which teaches people to ignore the rest.
   const html = `<!doctype html><head><meta charset="utf-8"><style>
 @page{size:A4;margin:15mm} body{font-family:'Noto Naskh Arabic',serif}
 </style></head><body><p>a&nbsp;b</p></body></html>`;
   const r = await render(browser, { html });
   const joined = r.findings.map((x) => x.message).join(' ');
+  expect(joined).not.toContain('U+00A0');
   expect(joined).not.toContain('invisible formatting characters');
-  expect(joined).toContain('U+00A0');
 }, 30_000);
 
 test('a character covered by the font fallback chain is not reported', async () => {

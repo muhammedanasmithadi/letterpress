@@ -247,6 +247,25 @@ test('a no-break space is spacing, not a missing glyph', async () => {
   expect(joined).not.toContain('invisible formatting characters');
 }, 30_000);
 
+test('format characters that print as nothing are not reported as boxes', async () => {
+  // U+180E, a bidi isolate and a variation selector have no glyph in DejaVu Sans, so
+  // the canvas test finds them "missing" -- but Chromium shapes format characters to
+  // nothing rather than tofu (measured: blank pixels, unequal to .notdef, zero advance
+  // for each of these). Predicting a "blank box" for them is the NBSP phantom again.
+  // U+FE1F rides along as the control: it renders as a .notdef box and must report.
+  const html = `<!doctype html><head><meta charset="utf-8"><style>
+@page{size:A4;margin:15mm} body{font-family:'DejaVu Sans',sans-serif}
+</style></head><body><p>A&#x180E;B&#x2066;C&#xFE02;D&#xFE1F;E</p></body></html>`;
+  const r = await render(browser, { html });
+  const missing = r.findings.filter((x) => x.code === 'missing-glyph');
+  expect(missing.length).toBe(1);
+  expect(missing[0]!.message).toContain('U+FE1F');
+  const joined = r.findings.map((x) => x.message).join(' ');
+  expect(joined).not.toContain('U+180E');
+  expect(joined).not.toContain('U+2066');
+  expect(joined).not.toContain('U+FE02');
+}, 30_000);
+
 test('a character covered by the font fallback chain is not reported', async () => {
   const html = `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
 @page{size:A4;margin:15mm} body{direction:rtl;font-family:'Noto Naskh Arabic',serif}

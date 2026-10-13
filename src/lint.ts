@@ -292,7 +292,17 @@ const AUDIT = String.raw`
   // blank-but-wide character is recognised as spacing before it ever reaches this
   // filter. What remains here are the characters that draw nothing and occupy
   // nothing, which print as nothing at all.
-  const invisible = /^[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF\uFE0E\uFE0F]$/;
+  //
+  // This list was measured, not assembled from the standard: for each candidate the
+  // page rendered it in DejaVu Sans and compared canvas pixels against .notdef and
+  // blank, plus advance width. Every entry below rendered blank, unequal to .notdef,
+  // and zero-wide -- Chromium shapes format characters to nothing rather than tofu,
+  // so none of them can produce the box the finding predicts. Deliberately absent:
+  // FE10-FE19, which have glyphs; FE1A-FE1E and FE1F, which render as .notdef boxes
+  // and must keep reporting; U+2065, which is unassigned and may change meaning; and
+  // the wide space-likes (U+115F/1160, U+2800, U+3000), which the width check above
+  // already recognises as spacing.
+  const invisible = /^[\u00AD\u034F\u061C\u17B4\u17B5\u180B-\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFE00-\uFE0F\uFEFF\u{E0020}-\u{E007F}\u{1D173}-\u{1D17A}]$/u;
   // No cap. A truncated list that does not say so reads as "that was all of
   // them", which is how a document ends up with 12 problems and one warning.
   const shown = [...missing.entries()].filter(([ch]) => !invisible.test(ch));

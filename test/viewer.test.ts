@@ -290,6 +290,31 @@ describe('the toolbar wiring holds', () => {
     expect(js).not.toMatch(/\bbackground:\s*el\.background/);
   });
 
+  test('the preview draws the returned bytes, not a placeholder', async () => {
+    // The preview pane used to keep a text placeholder after every render. It now holds
+    // an iframe on the same object URL Download hands out, drawn by the browser's own
+    // PDF renderer -- selectable text and real pagination with no vendored renderer.
+    const js = await script();
+    expect(js).toContain(`document.createElement('iframe')`);
+    expect(js).toContain(`frame.title = 'PDF preview'`);
+    expect(js).toContain('navigator.pdfViewerEnabled');
+    // A titled frame, because an untitled one is announced as noise.
+    const page = await shell();
+    expect(page).not.toContain('next phase');
+  });
+
+  test('a new render releases the previous object URL', async () => {
+    // Held URLs pile up: each render minted one for Download and never let go.
+    const js = await script();
+    expect(js).toContain('URL.revokeObjectURL(objectUrl)');
+  });
+
+  test('the preview frame fills its pane', async () => {
+    const sheet = await css();
+    expect(sheet).toMatch(/#preview iframe\s*\{[^}]*width:\s*100%/s);
+    expect(sheet).toMatch(/#preview iframe\s*\{[^}]*height:\s*100%/s);
+  });
+
   test('an unprintable background is actually not painted', async () => {
     const doc = `<!doctype html><style>@page{size:a4;margin:5mm}body{margin:0}
 div{height:250px;background:#c03030}</style><div>BOX</div>`;

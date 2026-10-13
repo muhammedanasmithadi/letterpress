@@ -5,9 +5,10 @@
   goes to the same server the CLI is built on. Nothing here inspects or rewrites
   HTML: the preview must show what render() produced, or it is not a preview.
 
-  Deliberately not in this file: CodeMirror and PDF.js. The shell is verified on
-  its own first, so a layout or control fault is not hidden behind a
-  half-configured editor.
+  Deliberately not in this file: CodeMirror. The shell is verified on its own
+  first, so a layout or control fault is not hidden behind a half-configured
+  editor. The preview is the browser's own PDF renderer drawing the returned
+  bytes -- no vendored renderer, which is what keeps this repo dependency-free.
 */
 
 const $ = (id) => document.getElementById(id);
@@ -154,6 +155,26 @@ function showPreview(main, sub) {
   box.replaceChildren(p);
 }
 
+/**
+ * Draw the returned bytes in the preview pane.
+ *
+ * The browser's own PDF renderer draws them: real pagination, selectable text,
+ * no vendored renderer and no megabyte of third-party code in this repo (which
+ * has no npm dependencies on purpose). `navigator.pdfViewerEnabled` is false
+ * where no viewer exists, and there the text placeholder stays instead of a
+ * dead frame. The preview shows exactly these bytes -- the same object URL the
+ * Download button hands out -- so what is on screen and what is saved cannot
+ * diverge.
+ */
+function showPdf() {
+  if (navigator.pdfViewerEnabled === false) return false;
+  const frame = document.createElement('iframe');
+  frame.title = 'PDF preview';
+  frame.src = objectUrl;
+  el.preview.replaceChildren(frame);
+  return true;
+}
+
 function markStale(on, why = '') {
   el.previewNote.hidden = !on;
   if (on) {
@@ -165,6 +186,14 @@ function markStale(on, why = '') {
 }
 
 let lastBytes = null;
+let objectUrl = null;
+
+/** Hold new bytes, releasing the previous object URL so renders do not pile up. */
+function setBytes(bytes) {
+  if (objectUrl) URL.revokeObjectURL(objectUrl);
+  lastBytes = bytes;
+  objectUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+}
 
 async function render() {
   const mine = ++seq;
@@ -211,11 +240,9 @@ async function render() {
 
     // Held as bytes rather than a data URL, so a large document is not a string
     // in memory twice.
-    lastBytes = Uint8Array.from(atob(body.pdf), (c) => c.charCodeAt(0));
-    let objectUrl = null;
+    setBytes(Uint8Array.from(atob(body.pdf), (c) => c.charCodeAt(0)));
     el.download.disabled = false;
     el.download.onclick = () => {
-      objectUrl ??= URL.createObjectURL(new Blob([lastBytes], { type: 'application/pdf' }));
       const a = document.createElement('a');
       a.href = objectUrl;
       a.download = 'document.pdf';
@@ -229,12 +256,14 @@ async function render() {
         : `${(body.bytes / 1048576).toFixed(1)} MB`;
     const pages = `${body.pages} page${body.pages === 1 ? '' : 's'}`;
     el.metrics.textContent = `${pages} · ${kb} · ${body.ms} ms`;
-    showPreview(
-      `${pages}, ${kb}.`,
-      body.partial
-        ? 'Only the requested pages were rendered, so this is not the document length.'
-        : 'PDF.js draws these bytes here in the next phase.',
-    );
+    if (!showPdf()) {
+      showPreview(
+        `${pages}, ${kb}.`,
+        body.partial
+          ? 'Only the requested pages were rendered, so this is not the document length.'
+          : 'This browser has no PDF viewer, so the pages cannot be drawn here. Download still works.',
+      );
+    }
 
     const findings = body.findings ?? [];
     if (!findings.length) {

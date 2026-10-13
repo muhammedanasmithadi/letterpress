@@ -31,6 +31,32 @@ function dictClose(window: string): number {
   return -1;
 }
 
+/** The bytes of one object, from its header to its end keyword or the next header. */
+function sliceObject(text: string, raw: Buffer, num: number, from: number, next: number): Obj {
+  const window = text.slice(from, next);
+  const marker = maskStrings(window).match(/stream\r?\n/);
+  let to: number;
+  if (marker && marker.index !== undefined) {
+    const endKw = window.lastIndexOf('\nendstream');
+    if (endKw !== -1) {
+      let end = endKw + '\nendstream'.length;
+      const tail = /^\s*endobj/.exec(window.slice(end));
+      if (tail) end += tail[0].length;
+      to = from + end;
+    } else {
+      to = next;
+    }
+  } else {
+    const maskedWindow = maskStrings(window);
+    const dictEnd = dictClose(maskedWindow);
+
+    const after = dictEnd === -1 ? 0 : dictEnd;
+    const m = /\bendobj[ \t]*[\r\n]/.exec(maskedWindow.slice(after));
+    to = m ? from + after + m.index + 6 : next;
+  }
+  return { num, bytes: raw.subarray(from, Math.min(to, next)) };
+}
+
 export function split(raw: Buffer): Parts {
   const text = raw.toString(LATIN1);
 
@@ -41,34 +67,21 @@ export function split(raw: Buffer): Parts {
   const trailerAt = text.indexOf('\ntrailer\n');
   const first = starts[0];
   if (first === undefined || trailerAt === -1) throw new Error('not a linear pdf');
+  // Object headers at or past the trailer are not objects of this revision: trailing
+  // garbage after %%EOF, or a second file concatenated behind the first, both match
+  // the header pattern. Reading them as objects gave the last one an end before its
+  // start (its "next" is the trailer behind it), so it round-tripped as empty bytes
+  // while join still wrote its xref entry -- and every repair using split/join turned
+  // a verifying file into one whose table points at the wrong object. Found by
+  // mutation fuzzing: `file.pdf` + `42 0 obj...` past %%EOF verifies, then breaks.
+  // Bytes past the trailer never reach the output; no PDF parser reads past %%EOF.
+  const bodyStarts = starts.filter((s) => s.at < trailerAt);
+  if (bodyStarts.length === 0) throw new Error('no objects before the trailer');
   const objs: Obj[] = [];
-  for (const [i, s] of starts.entries()) {
+  for (const [i, s] of bodyStarts.entries()) {
     const from = s.at;
-    const n = starts[i + 1];
-    const next = n === undefined ? trailerAt : n.at;
-
-    const window = text.slice(from, next);
-    const marker = maskStrings(window).match(/stream\r?\n/);
-    let to: number;
-    if (marker && marker.index !== undefined) {
-      const endKw = window.lastIndexOf('\nendstream');
-      if (endKw !== -1) {
-        let end = endKw + '\nendstream'.length;
-        const tail = /^\s*endobj/.exec(window.slice(end));
-        if (tail) end += tail[0].length;
-        to = from + end;
-      } else {
-        to = next;
-      }
-    } else {
-      const maskedWindow = maskStrings(window);
-      const dictEnd = dictClose(maskedWindow);
-
-      const after = dictEnd === -1 ? 0 : dictEnd;
-      const m = /\bendobj[ \t]*[\r\n]/.exec(maskedWindow.slice(after));
-      to = m ? from + after + m.index + 6 : next;
-    }
-    objs.push({ num: s.num, bytes: raw.subarray(from, Math.min(to, next)) });
+    const n = bodyStarts[i + 1];
+    objs.push(sliceObject(text, raw, s.num, from, n === undefined ? trailerAt : n.at));
   }
 
   const oldStartxref = text.indexOf('\nstartxref', trailerAt);

@@ -16,6 +16,37 @@ import {
 } from '../src/pdfparts.ts';
 import { contentPayloads, verify } from '../src/verify.ts';
 
+describe('objects past the trailer', () => {
+  test('trailing garbage matching the object pattern is not parsed as an object', () => {
+    // Found by mutation fuzzing: `file.pdf` plus `42 0 obj…` past %%EOF verifies, but
+    // split() read the junk as object 42 with an end before its start (its "next" is
+    // the trailer behind it), so it round-tripped as empty bytes while join still
+    // wrote its xref entry -- and every repair using split/join turned a verifying
+    // file into one whose table points at the wrong object.
+    const pdf = build('BT /F1 12 Tf 10 100 Td (hi) Tj ET');
+    expect(verify(pdf).ok).toBe(true);
+    const junk = Buffer.from('42 0 obj\n<< /Type /Junk >>\nendobj\n', LATIN1);
+    const mutant = Buffer.concat([pdf, junk]);
+    expect(verify(mutant).ok).toBe(true);
+
+    const parts = trySplit(mutant)!;
+    expect(parts.objs.map((o) => o.num)).not.toContain(42);
+    const out = joinParts(parts.head, parts.objs, parts.trailer);
+    expect(verify(out).ok).toBe(true);
+    expect(Buffer.from(out).toString(LATIN1)).not.toContain('/Type /Junk');
+  });
+
+  test('a concatenated second file behind the first does not corrupt the first', () => {
+    const a = build('BT /F1 12 Tf 10 100 Td (aaa) Tj ET', false);
+    const b = build('BT /F1 12 Tf 10 100 Td (bbb) Tj ET');
+    const both = Buffer.concat([a, b]);
+    const parts = trySplit(both)!;
+    const out = joinParts(parts.head, parts.objs, parts.trailer);
+    expect(verify(out).ok).toBe(true);
+    expect(Buffer.from(out).toString(LATIN1)).toContain('(aaa)');
+  });
+});
+
 function build(contents: string, compress = true): Buffer {
   const chunks: Buffer[] = [];
   const offsets: number[] = [];

@@ -137,6 +137,21 @@ of the summary.
 | `selection-fragmented`      | a word gap is wider than 0.6 em, so a browser will break the selection into separate boxes at it                             |
 | `text-runs-merged`          | per-glyph text positioning folded into TJ arrays, glyph positions verified unchanged; also reports any block left alone      |
 | `asset-overwrites-document` | the document references a file named `input.html` or `override.html`, which was not staged because it would replace the page |
+| `audit-failed`              | the document checks could not run at all; a bug in letterpress, not in the document                                          |
+| `audit-partial`             | the document checks stopped part way; findings above the failure were measured, the rest were not                            |
+| `figure-role-corrected`     | a grouping `Figure` around a described inner figure was re-tagged `Div`                                                      |
+| `font-metrics`              | a font descriptor still carries a negative cap height, which a viewer may refuse to render text over                         |
+| `glyphs-skipped`            | further characters with no glyph are invisible formatting, so they are counted, not listed                                   |
+| `image-downsampled`         | an image was downsampled to the PPI cap; pass `--max-image-ppi 0` to disable                                                 |
+| `ligature-spans`            | redundant `/ActualText` spans around ligatures were removed; extraction verified unchanged                                   |
+| `metadata-authored`         | the document's own `<meta name="author">` was written as the pdf author                                                      |
+| `metadata-subject`          | the document's own `<meta name="subject">` was written as the pdf subject                                                    |
+| `orientation-overridden`    | `--format` with `--landscape` transposed the paper despite the document's `@page size`                                       |
+| `output-unverified`         | the finished file failed the structural check; an error, never a warning                                                     |
+| `page-probe-failed`         | a page-side probe threw, so its measurement is absent                                                                        |
+| `repair-rejected`           | a repair was discarded because it did not leave a valid pdf; the file is unchanged                                           |
+| `stylesheet-unreadable`     | a cross-origin stylesheet could not be read, so layout findings cover only this origin                                       |
+| `url-render-blocked`        | a remote URL needs `allowNetwork`; without it its subresource loads and usually the document itself is blocked               |
 
 ### Findings over HTTP
 

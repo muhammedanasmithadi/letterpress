@@ -69,7 +69,13 @@ notes
   contents built that way prints nothing at all. the tool reports it.
 
 exit codes
-  0 rendered   1 render failed   2 bad usage
+  0 rendered, nothing contradicted the request
+  1 the render failed and no pdf was written, OR the pdf was written and a finding
+    says it is not the document you asked for. These are not the same event and
+    share a code, so a script cannot tell them from the status alone: with --json
+    a failure carries an "error" key and a contradiction carries "findings". If
+    you are not using --json, test for the output file rather than assuming.
+  2 bad usage
 `;
 
 type Options = {

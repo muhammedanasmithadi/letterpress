@@ -1,5 +1,6 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pdfInfo, pdfText } from './poppler.ts';
@@ -236,3 +237,58 @@ test('--root lets a document in a subdirectory reach its assets', async () => {
   expect(withRoot.stdout).not.toContain('asset-outside-root');
   expect(withRoot.stdout).not.toContain('subresource-failed');
 }, 60_000);
+
+describe('what exit code 1 means', () => {
+  // The usage text said "1 render failed". Two of the three things that return 1
+  // happen after a complete PDF has been written, so a script that trusted the
+  // documented line and cleaned up on a non-zero status threw away the file it had
+  // just been given.
+  test('an error finding exits 1 and leaves a complete pdf on disk', async () => {
+    const src = join(dir, 'contradicted.html');
+    const out = join(dir, 'contradicted.pdf');
+    await writeFile(
+      src,
+      '<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:15mm}</style>' +
+        '<h1>Report</h1><p>{{leftover}}</p>',
+      'utf8',
+    );
+
+    const r = await run(['--out', out, src]);
+    expect(r.code, 'the finding is an error, so the status must be non-zero').toBe(1);
+    expect(existsSync(out), 'exit 1 does not mean there is no pdf').toBe(true);
+    expect(Bun.file(out).size).toBeGreaterThan(1000);
+    // And it really is a readable PDF, not a truncated write.
+    expect((await pdfInfo(new Uint8Array(await Bun.file(out).arrayBuffer()))).pages).toBe(1);
+  }, 60_000);
+
+  test('a render that produced nothing also exits 1, and writes nothing', async () => {
+    const out = join(dir, 'never-written.pdf');
+    const r = await run(['--out', out, join(dir, 'does-not-exist.html')]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/render failed/);
+    expect(existsSync(out)).toBe(false);
+  }, 60_000);
+
+  test('the two are told apart by --json, and the usage text says so', async () => {
+    const src = join(dir, 'contradicted.html');
+    const okJson = JSON.parse(
+      (await run(['--json', '--out', join(dir, 'j1.pdf'), join(dir, 'does-not-exist.html')]))
+        .stdout,
+    ) as Record<string, unknown>;
+    const badJson = JSON.parse(
+      (await run(['--json', '--out', join(dir, 'j2.pdf'), src])).stdout,
+    ) as Record<string, unknown>;
+
+    // A machine can separate them; the bare status cannot.
+    expect(okJson.error, 'a failure must say so').toBeString();
+    expect(badJson.error, 'a contradiction is not a failure').toBeUndefined();
+    expect(Array.isArray(badJson.findings)).toBe(true);
+
+    // And the documented contract must not claim otherwise. If someone tightens the
+    // wording, this test is the thing that notices.
+    const help = await run(['--help']);
+    expect(help.stdout).not.toMatch(/1\s+render failed/);
+    expect(help.stdout).toMatch(/no pdf was written/);
+    expect(help.stdout).toMatch(/not the document you asked for/);
+  }, 90_000);
+});

@@ -2,19 +2,14 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deflateSync, inflateSync } from 'node:zlib';
+import { inflateSync } from 'node:zlib';
 import { Browser } from '../src/browser.ts';
 import { render } from '../src/render.ts';
 import { fixCMap, fixToUnicode, ligatureExpansion, unresolvedLigatures } from '../src/tounicode.ts';
+import { assemblePdf, deflated, sameBytes } from './fixtures.ts';
 import { pdfInfo, pdfText } from './poppler.ts';
 
 const LATIN1 = 'latin1' as BufferEncoding;
-
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
 
 function cmaps(pdf: Uint8Array): string[] {
   const text = Buffer.from(pdf).toString(LATIN1);
@@ -43,45 +38,20 @@ function cmaps(pdf: Uint8Array): string[] {
 }
 
 function pdfWithCMap(cmap: string, dictExtra = ''): Buffer {
-  const body = deflateSync(Buffer.from(cmap, LATIN1));
-
-  const parts: Array<string | Buffer> = [
+  const body = deflated(cmap);
+  return assemblePdf([
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> >>',
-    `<< ${dictExtra}/Length ${body.length} /Filter /FlateDecode >>\nstream\n`,
+    {
+      dict: `<< ${dictExtra}/Length ${body.length} /Filter /FlateDecode >>`,
+      payload: body,
+    },
     '<< /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+NotoSans /Encoding /Identity-H ' +
       '/DescendantFonts [6 0 R] /ToUnicode 4 0 R >>',
     '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /AAAAAA+NotoSans /CIDSystemInfo ' +
       '<< /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> >>',
-  ];
-  const chunks: Buffer[] = [Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n', LATIN1)];
-  let length = chunks[0]!.length;
-  const offsets: number[] = [];
-  for (let i = 0; i < parts.length; i++) {
-    offsets.push(length);
-    const head = Buffer.from(`${i + 1} 0 obj\n${parts[i]}`, LATIN1);
-    chunks.push(head);
-    length += head.length;
-    if (typeof parts[i] === 'string' && parts[i]!.includes('\nstream\n')) {
-      const tail = Buffer.from('\nendstream\nendobj\n', LATIN1);
-      chunks.push(body, tail);
-      length += body.length + tail.length;
-    } else {
-      chunks.push(Buffer.from('endobj\n', LATIN1));
-      length += 7;
-    }
-  }
-  const xrefAt = length;
-  const table = ['xref\n0 7\n0000000000 65535 f \n'];
-  for (let n = 1; n <= 6; n++) {
-    table.push(`${String(offsets[n - 1]).padStart(10, '0')} 00000 n \n`);
-  }
-  chunks.push(Buffer.from(table.join(''), LATIN1));
-  chunks.push(
-    Buffer.from(`trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`, LATIN1),
-  );
-  return Buffer.concat(chunks);
+  ]);
 }
 
 const cmapOf = (pairs: Array<[number, string]>) =>

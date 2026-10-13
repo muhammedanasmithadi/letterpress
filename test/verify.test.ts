@@ -9,6 +9,7 @@ import { fixFontDescriptors } from '../src/fontdesc.ts';
 import { fixToUnicode, unresolvedLigatures } from '../src/tounicode.ts';
 import { contentPayloads, repairOrKeep, verify } from '../src/verify.ts';
 import { join as joinParts, split } from '../src/pdfparts.ts';
+import { assemblePdf } from './fixtures.ts';
 import { pdfInfo } from './poppler.ts';
 
 const LATIN1 = 'latin1' as BufferEncoding;
@@ -18,49 +19,28 @@ function same(a: Uint8Array, b: Uint8Array) {
 }
 
 function fixture(): Buffer {
-  const parts = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 6 0 R >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 7 0 R >>',
-    '<< /Title (Fixture) /Producer (Skia/PDF m154) >>',
-  ];
   const streams = [
     'BT /F1 12 Tf 10 100 Td (page one) Tj ET',
     'BT /F1 12 Tf 10 100 Td (page two) Tj ET',
   ];
-  const chunks: Buffer[] = [Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n', LATIN1)];
-  let length = chunks[0]!.length;
-  const offsets: number[] = [];
-  for (let i = 0; i < parts.length; i++) {
-    offsets.push(length);
-    const b = Buffer.from(`${i + 1} 0 obj\n${parts[i]}\nendobj\n`, LATIN1);
-    chunks.push(b);
-    length += b.length;
-  }
-  for (let i = 0; i < streams.length; i++) {
-    offsets.push(length);
-    const b = Buffer.from(
-      `${6 + i} 0 obj\n<< /Length ${streams[i]!.length} >>\nstream\n${streams[i]}\nendstream\nendobj\n`,
-      LATIN1,
-    );
-    chunks.push(b);
-    length += b.length;
-  }
-  const xrefAt = length;
-  const n = parts.length + streams.length + 1;
-  const table = [`xref\n0 ${n}\n0000000000 65535 f \n`];
-  for (let k = 1; k < n; k++) {
-    table.push(`${String(offsets[k - 1] ?? 0).padStart(10, '0')} 00000 n \n`);
-  }
-  chunks.push(Buffer.from(table.join(''), LATIN1));
-  chunks.push(
-    Buffer.from(
-      `trailer\n<< /Size ${n} /Root 1 0 R /Info 5 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`,
-      LATIN1,
-    ),
+  return assemblePdf(
+    [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 6 0 R >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 7 0 R >>',
+      '<< /Title (Fixture) /Producer (Skia/PDF m154) >>',
+      ...streams.map((s) => ({
+        dict: `<< /Length ${s.length} >>`,
+        payload: Buffer.from(s, LATIN1),
+      })),
+    ],
+    {
+      endobj: '\nendobj\n',
+      trailer: (size: number, xrefAt: number) =>
+        `trailer\n<< /Size ${size} /Root 1 0 R /Info 5 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`,
+    },
   );
-  return Buffer.concat(chunks);
 }
 
 function movesGlyphs(pdf: Uint8Array): Uint8Array {

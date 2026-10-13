@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deflateSync } from 'node:zlib';
 import { Browser } from '../src/browser.ts';
 import {
   fixFontDescriptors,
@@ -10,6 +9,7 @@ import {
   parseSfnt,
   unresolvedFontMetrics,
 } from '../src/fontdesc.ts';
+import { assemblePdf, deflated, sameBytes } from './fixtures.ts';
 import { pdfInfo, pdfText } from './poppler.ts';
 import { render } from '../src/render.ts';
 
@@ -73,12 +73,6 @@ function sfnt(tables: TableSpec[], version = 0x00010000): Buffer {
 
 const LATIN1 = 'latin1' as BufferEncoding;
 
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
-
 function head(unitsPerEm: number, macStyle: number): TableSpec {
   const b = Buffer.alloc(54);
   b.writeUInt32BE(0x00010000, 0);
@@ -117,51 +111,25 @@ const notoSans = () => sfnt([head(1000, 0), os2(4, 0x00c0, 536), post(0, 0), cma
 const notoSansBold = () => sfnt([head(1000, 0x01), os2(4, 0x00a0, 546), post(0, 0), cmap(3, 1)]);
 
 function pdfWith(fileKey: string, font: Buffer, overrides: Record<string, string>): Buffer {
-  const body = deflateSync(font);
+  const body = deflated(font);
   const descriptorBody =
     '<< /Type /FontDescriptor /FontName /BAAAAA+NotoSans-Regular ' +
     `/Flags ${overrides.Flags ?? '4'} /FontBBox [-1000 -300 2000 900] /ItalicAngle 0 ` +
     `/Ascent 900 /Descent -300 /CapHeight ${overrides.CapHeight ?? '-714'} ` +
     `/StemV 80 /${fileKey} 6 0 R >>`;
 
-  const parts: Array<string | Buffer> = [
+  return assemblePdf([
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> >>',
     descriptorBody,
     '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /BAAAAA+NotoSans-Regular /FontDescriptor 4 0 R ' +
       '/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> >>',
-    `<< /Length1 ${font.length} /Filter /FlateDecode /Length ${body.length} >>\nstream\n`,
-  ];
-
-  const chunks: Buffer[] = [Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n', LATIN1)];
-  let length = chunks[0]!.length;
-  const offsets: number[] = [];
-  for (let i = 0; i < parts.length; i++) {
-    offsets.push(length);
-    const head = Buffer.from(`${i + 1} 0 obj\n${parts[i]}`, LATIN1);
-    chunks.push(head);
-    length += head.length;
-    if (parts[i]!.toString(LATIN1).includes('\nstream\n')) {
-      const tail = Buffer.from(`\nendstream\nendobj\n`, LATIN1);
-      chunks.push(body, tail);
-      length += body.length + tail.length;
-    } else {
-      chunks.push(Buffer.from('endobj\n', LATIN1));
-      length += 7;
-    }
-  }
-
-  const xrefAt = length;
-  const table = ['xref\n0 7\n0000000000 65535 f \n'];
-  for (let n = 1; n <= 6; n++) {
-    table.push(`${String(offsets[n - 1]).padStart(10, '0')} 00000 n \n`);
-  }
-  chunks.push(Buffer.from(table.join(''), LATIN1));
-  chunks.push(
-    Buffer.from(`trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`, LATIN1),
-  );
-  return Buffer.concat(chunks);
+    {
+      dict: `<< /Length1 ${font.length} /Filter /FlateDecode /Length ${body.length} >>`,
+      payload: body,
+    },
+  ]);
 }
 
 describe('parseSfnt', () => {

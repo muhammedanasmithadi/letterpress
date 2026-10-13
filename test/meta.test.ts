@@ -13,45 +13,25 @@ import {
   xmlText,
 } from '../src/meta.ts';
 import { render } from '../src/render.ts';
+import { assemblePdf, sameBytes } from './fixtures.ts';
 
 const LATIN1 = 'latin1' as BufferEncoding;
 
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
-
 function pdfFixture(infoExtra = ''): Buffer {
-  const objs: string[] = [
-    '<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Type /MarkInfo /Marked true >> /Lang (en) >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>',
-    `<< /Title (Fixture) /Producer (Skia/PDF m154) /CreationDate (D:20260101120000+00'00') ` +
-      `/ModDate (D:20260101120000+00'00')${infoExtra} >>`,
-  ];
-  const chunks: Buffer[] = [Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n', LATIN1)];
-  let length = chunks[0]!.length;
-  const offsets: number[] = [];
-  for (let i = 0; i < objs.length; i++) {
-    offsets.push(length);
-    const bytes = Buffer.from(`${i + 1} 0 obj\n${objs[i]}\nendobj\n`, LATIN1);
-    chunks.push(bytes);
-    length += bytes.length;
-  }
-  const xrefAt = length;
-  const table = [`xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`];
-  for (let n = 1; n <= objs.length; n++) {
-    table.push(`${String(offsets[n - 1]).padStart(10, '0')} 00000 n \n`);
-  }
-  chunks.push(Buffer.from(table.join(''), LATIN1));
-  chunks.push(
-    Buffer.from(
-      `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R /Info 4 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`,
-      LATIN1,
-    ),
+  return assemblePdf(
+    [
+      '<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Type /MarkInfo /Marked true >> /Lang (en) >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>',
+      `<< /Title (Fixture) /Producer (Skia/PDF m154) /CreationDate (D:20260101120000+00'00') ` +
+        `/ModDate (D:20260101120000+00'00')${infoExtra} >>`,
+    ],
+    {
+      endobj: '\nendobj\n',
+      trailer: (size: number, xrefAt: number) =>
+        `trailer\n<< /Size ${size} /Root 1 0 R /Info 4 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`,
+    },
   );
-  return Buffer.concat(chunks);
 }
 
 function rootOf(text: string): number {

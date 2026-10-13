@@ -181,6 +181,26 @@ if (import.meta.main) {
     corpus.push(new Uint8Array(0));
     corpus.push(Buffer.from('not a pdf at all, just words', 'latin1'));
     corpus.push(Buffer.from('%PDF-1.4\ntrailer\n', 'latin1'));
+    // Compressed object streams (PDF 1.5+): trySplit only reads plain xref tables,
+    // so these exercise the early-return paths, not the repairs.
+    corpus.push(
+      Buffer.from(
+        '%PDF-1.5\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n' +
+          '10 0 obj\n<< /Type /ObjStm /N 2 /First 12 /Length 40 >>\nstream\n' +
+          '1 0 2 10 << /A 1 >> << /B 2 >>\nendstream\nendobj\n' +
+          'trailer\n<< /Size 11 /Root 1 0 R >>\nstartxref\n0\n%%EOF\n',
+        'latin1',
+      ),
+    );
+    // An encryption dictionary: content is unreadable without the key.
+    corpus.push(
+      Buffer.from(
+        '%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n' +
+          'trailer\n<< /Size 2 /Root 1 0 R /Encrypt << /Filter /Standard /V 2 /Length 128 >> >>\n' +
+          'startxref\n0\n%%EOF\n',
+        'latin1',
+      ),
+    );
 
     const r = rng(seed);
     for (let i = 0; i < count; i++) {

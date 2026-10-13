@@ -24,6 +24,7 @@ words:
     'Keymap',
     'lezer',
     'MCID',
+    'multipage',
     'noto',
     'objs',
     'ontoolchange',
@@ -51,6 +52,7 @@ words:
     'oxfmt',
     'oxlint',
     'vars',
+    'verapdf',
     'Xwayland',
     'xref',
   ]

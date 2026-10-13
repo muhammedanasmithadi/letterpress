@@ -536,3 +536,37 @@ before being caught. Every one was caught by something other than the author's o
 reading: a toggled property, a second reader disagreeing with the first, poppler or
 ghostscript or veraPDF returning something unexpected, or a fixture asserted to be
 loadable. None was caught by writing the code carefully.
+
+### Re-measured 2026-10-13, veraPDF 1.30.3 installed locally
+
+veraPDF was not vendored and no install existed here, so the numbers above rested on an
+older run. 1.30.3 is now installed at `~/.local/share/verapdf` (XDG data dir; `VERA_PDF`
+points `tools/pdfua.ts` at it) and the current samples re-measured. Rules evaluated:
+106 in every file.
+
+| document       | rules failed | which                                              |
+| -------------- | ------------ | -------------------------------------------------- |
+| 1-typography   | 1            | 5 (deliberate, unchanged)                          |
+| 2-multipage    | 3            | 5, 7.1 ×12 untagged vector decoration, 7.4.2       |
+| 3-table        | 2            | 5, 7.2 uneven table row                            |
+| 4-multilingual | 3            | 5, 7.4.2, 7.21.7 ×37 zero-mapped glyphs            |
+| 5-web-page     | 4            | 5, 7.4.2, 7.1 ×5 untagged decoration, 7.2 LI shape |
+
+Three results of the re-measurement:
+
+- **XMP is now unconditional.** Every author-less render failed 7.1 on the missing
+  Catalog Metadata key, so `addMetadata` no longer returns early: a minimal packet
+  (title, creator, producer, dates; undeclared fields absent, not empty) goes on every
+  file. Fresh renders fail only clause 5. Reproducibility under `SOURCE_DATE_EPOCH`
+  still holds; the suite pins it.
+- **7.21.7 zero-destinations are Chromium's.** 37 used glyphs in NotoSansArabic map
+  to U+0000 in the ToUnicode CMap. Proven not to be the repair: `fixCMap` only replaces
+  destinations that are ligatures, `fixRanges` only emits verbatim rows plus ligature
+  expansions -- neither can write a zero. Character-level diff of the Arabic source
+  against extraction: all 52 characters present, none missing. No code change; a strict
+  checker flags what no reader loses.
+- **7.1 on decoration is real and accepted.** The resume fails it ×25: horizontal rules
+  (`794×2 re`) and page-background rects Chromium leaves outside any marked content.
+  Wrapping them in Artifact BMC would mean content-stream surgery, which `verify()`'s
+  byte-identity guarantee forbids -- the same trade the retraction above already made.
+  Documented here rather than repaired, like the nested Figure.

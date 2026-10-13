@@ -466,7 +466,25 @@ test('without a pinned clock two renders differ only in their timestamps', async
     const second = new TextDecoder('latin1').decode(b.pdf);
     expect(first).not.toBe(second);
 
-    expect(first.length).toBe(second.length);
+    // Length equality used to be the check, but every file now carries a compressed XMP
+    // packet and deflate output breathes by a byte with different timestamp input (7460
+    // vs 7459 measured). What matters is stronger anyway, checked at both levels the
+    // timestamps live at: the rest of the file must be identical after its date fields
+    // are normalised, and the inflated packet must be identical after its ISO dates are.
+    const normDoc = (s: string) => s.replace(/D:\d{14}(?:[+-]\d{2}'?\d{2}'?|Z)/g, 'D:STAMP');
+    const normXmp = (s: string) => s.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/g, 'ISO-STAMP');
+    const stripMeta = (s: string) =>
+      s.replace(/\/Type \/Metadata[\s\S]*?endstream/, '/Type /Metadata…endstream');
+    // startxref is normalised too: it is the byte offset of the xref table, which moves
+    // when the compressed packet breathes. With the packet stripped and every date
+    // normalised, the offset is a pure function of packet length, so nothing else can
+    // move it; xref correctness itself is pinned by the verify suite, not here.
+    const normXref = (s: string) => s.replace(/startxref\n\d+/, 'startxref\nN');
+    expect(normXref(stripMeta(normDoc(first)))).toBe(normXref(stripMeta(normDoc(second))));
+    const packetA = readXmpPacket(a.pdf);
+    const packetB = readXmpPacket(b.pdf);
+    expect(packetA).toBeDefined();
+    expect(normXmp(packetA!)).toBe(normXmp(packetB!));
   } finally {
     if (previous === undefined) delete process.env.SOURCE_DATE_EPOCH;
     else process.env.SOURCE_DATE_EPOCH = previous;

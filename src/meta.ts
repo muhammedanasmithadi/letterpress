@@ -198,10 +198,13 @@ export function addMetadata(
     Subject: declared.subject?.trim() || undefined,
     Keywords: declared.keywords?.trim() || undefined,
   };
-  const any = Object.values(wanted).some(Boolean);
   const parts = trySplit(pdf);
   if (!parts) return pdf;
-  if (!any) return pdf;
+  // No early return when nothing is declared. A tagged PDF without an XMP packet fails
+  // veraPDF's PDF/UA-1 clause 7.1 (Catalog shall contain Metadata) on every document,
+  // declared or not -- measured across the sweep, where every author-less render failed
+  // it. The packet below carries only what the file already says (title, creator,
+  // producer, dates); author fields stay absent rather than written empty.
 
   const packetInfo: DocInfo = {
     ...readDocInfo(pdf),

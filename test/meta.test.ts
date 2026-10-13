@@ -245,17 +245,24 @@ describe('addMetadata', () => {
     }
   });
 
-  test('nothing is written when nothing is declared', () => {
+  test('a minimal packet is written even when nothing is declared', () => {
+    // Was: byte-identical input. A tagged PDF without XMP fails veraPDF clause 7.1, so
+    // the packet is now always emitted; what stays unwritten are the undeclared fields.
     const input = pdfFixture();
-    expect(sameBytes(addMetadata(input, {}), input)).toBe(true);
-    expect(sameBytes(addMetadata(input, { author: '  ' }), input)).toBe(true);
-    expect(sameBytes(addMetadata(input, { subject: '' }), input)).toBe(true);
+    const out = addMetadata(input, {});
+    expect(sameBytes(out, input)).toBe(false);
+    expect(readXmp(out).present).toBe(true);
+    expect(readDocInfo(out).author).toBeUndefined();
+    expect(readXmpPacket(out)).not.toContain('dc:creator');
+    // And blank strings are still nothing declared, not empty values.
+    expect(readXmpPacket(addMetadata(input, { author: '  ' }))).not.toContain('dc:creator');
+    expect(readXmpPacket(addMetadata(input, { subject: '' }))).not.toContain('dc:description');
   });
 
   test('a document that states no author gets no invented one', () => {
     const out = addMetadata(pdfFixture(), {});
     expect(readDocInfo(out).author).toBeUndefined();
-    expect(readXmp(out).present).toBe(false);
+    expect(readXmp(out)).toEqual({ present: true, creator: undefined });
   });
 
   test('an existing author is replaced rather than duplicated', () => {
@@ -374,6 +381,25 @@ describe('rendered output', () => {
     expect(readXmp(r.pdf)).toEqual({ present: true, creator: 'Ahammed Sahad' });
   });
 
+  test('a document declaring nothing still carries an XMP packet', async () => {
+    // addMetadata used to return the file untouched when no author/subject/keywords were
+    // declared. A tagged PDF without an XMP packet fails veraPDF's PDF/UA-1 clause 7.1
+    // (Catalog shall contain Metadata) -- measured on every author-less sweep render.
+    // The packet carries only what the file already says; undeclared fields stay absent
+    // rather than written empty.
+    const r = await render(browser, {
+      html: `<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:15mm}</style><h1>T</h1><p>Body.</p>`,
+    });
+    const packet = readXmpPacket(r.pdf);
+    expect(packet, 'no XMP packet without declared metadata').toBeDefined();
+    expect(packet).toContain('<xmp:CreatorTool>');
+    expect(packet).toContain('<xmp:CreateDate>');
+    expect(packet).not.toContain('dc:creator');
+    expect(packet).not.toContain('dc:description');
+    const text = Buffer.from(r.pdf).toString(LATIN1);
+    expect(text).toMatch(/\/Metadata \d+ 0 R/);
+  });
+
   test('the packet is generated from the dictionary, so the two agree', async () => {
     const r = await render(browser, {
       html:
@@ -395,10 +421,10 @@ describe('rendered output', () => {
     expect(readDocInfo(r.pdf).author).toBe('From Flag');
   });
 
-  test('a document that declares nothing gets no author', async () => {
+  test('a document that declares nothing gets no author, but still gets a packet', async () => {
     const r = await render(browser, { html: `<!doctype html><title>T</title><p>x</p>` });
     expect(readDocInfo(r.pdf).author).toBeUndefined();
-    expect(readXmp(r.pdf).present).toBe(false);
+    expect(readXmp(r.pdf)).toEqual({ present: true, creator: undefined });
   });
 
   test('the finding says where the author came from', async () => {

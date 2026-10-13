@@ -156,6 +156,52 @@ The status stays `200` for a document with error findings, because the PDF is
 real and you asked for it. `x-letterpress-errors` is the only way to tell a
 clean render from a failed one, so check it.
 
+## HTTP API
+
+`bun src/server.ts` starts the server on port `8787`, or `$PORT`. Every
+response is JSON unless noted. Origins are loopback-only: a browser page from
+anywhere else gets a 403, so the server is a local service, not a public one.
+
+### `GET /health`
+
+`{"ok": true, "port": 8787, "chromium": true}` — 200 when Chromium answers,
+503 when it does not.
+
+### `POST /render`
+
+`content-type: application/json` (anything else is a 415). The body is one
+JSON object:
+
+| field             | type    | meaning                                                                                       |
+| ----------------- | ------- | --------------------------------------------------------------------------------------------- |
+| `html`            | string  | **required.** the document. A `path` key is refused: send the markup, not a filename          |
+| `format`          | string  | `a3` `a4` `a5` `legal` `letter` `tabloid`; default is the document's own `@page`, then A4     |
+| `landscape`       | boolean | ignored if the document declares `@page size`                                                 |
+| `margin`          | string  | absolute CSS length (`15mm`); needs `format`; ignored if the document declares `@page margin` |
+| `pageRanges`      | string  | e.g. `"1-3"`; the response is marked `partial`                                                |
+| `printBackground` | boolean | background graphics (default on)                                                              |
+| `allowNetwork`    | boolean | permit remote `http(s)` requests instead of blocking them                                     |
+| `maxImagePpi`     | number  | downsample images above this resolution (default 300; 0 disables)                             |
+| `settleMs`        | number  | extra wait after fonts resolve                                                                |
+| `timeoutMs`       | number  | per-render deadline in ms (default 30000)                                                     |
+| `author`          | string  | pdf author                                                                                    |
+| `subject`         | string  | pdf subject                                                                                   |
+| `keywords`        | string  | pdf keywords                                                                                  |
+| `responseFormat`  | string  | `"json"` (default) or `"pdf"`; anything else is a 400                                         |
+
+Limits, all tunable: at most 4 renders run at once (`HTML2PDF_MAX_RENDERS`)
+with 16 queued behind them (`HTML2PDF_MAX_QUEUE`); documents over 6000 pages
+(`HTML2PDF_MAX_PAGES`) are refused with a 413 unless `pageRanges` narrows them;
+request bodies over 8 MB are refused with a 413. A full queue answers 429 with
+`retry-after: 2`; a render still queued at shutdown answers 503 with
+`retry-after: 5`.
+
+The JSON answer carries `ok`, the base64 `pdf`, `pages`, `bytes`, `ms`,
+`mediaBoxes`, `tagged`, `findings`, `blocked`, and `partial`. A thrown render
+answers 500 with `ok: false` and an `error`; anything the body gets wrong
+answers 400 naming the field. With `"responseFormat": "pdf"` the answer is the
+bytes with the report as headers (see above).
+
 ## Right-to-left text
 
 Arabic shapes and joins correctly, reading order is right, and numeric columns

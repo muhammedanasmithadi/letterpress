@@ -63,15 +63,24 @@ test('omitting pageRanges renders every page', async () => {
 }, 60_000);
 
 test('the stream transfer produces bytes identical to base64', async () => {
-  const html = paged(6);
-  const viaBase64 = await render(browser, { html, transfer: 'base64' });
-  const viaStream = await render(browser, { html, transfer: 'stream' });
-  expect(viaStream.pdf.byteLength).toBe(viaBase64.pdf.byteLength);
+  // Pinned clock: the comparison is about the transfer, not wall-clock time, and every
+  // file carries a compressed XMP packet whose bytes breathe with the timestamp.
+  const previous = process.env.SOURCE_DATE_EPOCH;
+  process.env.SOURCE_DATE_EPOCH = '1700000000';
+  try {
+    const html = paged(6);
+    const viaBase64 = await render(browser, { html, transfer: 'base64' });
+    const viaStream = await render(browser, { html, transfer: 'stream' });
+    expect(viaStream.pdf.byteLength).toBe(viaBase64.pdf.byteLength);
 
-  expect(new TextDecoder('latin1').decode(viaStream.pdf).slice(0, 8)).toBe('%PDF-1.4');
-  expect(viaStream.info.pages).toBe(viaBase64.info.pages);
-  expect((await pdfInfo(viaStream.pdf)).pages).toBe(6);
-  expect(await pdfText(viaStream.pdf)).toContain('PAGE_6');
+    expect(new TextDecoder('latin1').decode(viaStream.pdf).slice(0, 8)).toBe('%PDF-1.4');
+    expect(viaStream.info.pages).toBe(viaBase64.info.pages);
+    expect((await pdfInfo(viaStream.pdf)).pages).toBe(6);
+    expect(await pdfText(viaStream.pdf)).toContain('PAGE_6');
+  } finally {
+    if (previous === undefined) delete process.env.SOURCE_DATE_EPOCH;
+    else process.env.SOURCE_DATE_EPOCH = previous;
+  }
 }, 120_000);
 
 test('the stream transfer handles a document smaller than one chunk', async () => {

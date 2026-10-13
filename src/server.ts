@@ -51,6 +51,23 @@ const MAX_SETTLE_MS = 30_000;
 
 const MAX_PAGES = limitFromEnv('HTML2PDF_MAX_PAGES', 6000);
 
+const STOPPING_MESSAGE =
+  'the server is shutting down. this render was still queued and was never started; ' +
+  'retry it against the new instance.';
+
+/**
+ * Thrown into a queued render when the server stops before it could be given a slot.
+ *
+ * Not exported: the request handler catches it and turns it into a 503, so it never
+ * escapes this module and nothing outside has a reason to name it.
+ */
+class ServerStopping extends Error {
+  constructor() {
+    super(STOPPING_MESSAGE);
+    this.name = 'ServerStopping';
+  }
+}
+
 export type ServerOptions = {
   port?: number;
 
@@ -172,20 +189,27 @@ export async function startServer(opts: ServerOptions = {}) {
 
   let active = 0;
   let queued = 0;
+  let stopping = false;
   const waiters: Array<() => void> = [];
 
   const acquire = (): Promise<void> | null => {
+    // A slot handed out after shutdown begins is a render racing a browser that is
+    // closing. Reject rather than grant, and let the caller turn it into a 503.
+    if (stopping) return Promise.reject(new ServerStopping());
     if (active < MAX_CONCURRENT_RENDERS) {
       active++;
       return Promise.resolve();
     }
     if (queued >= MAX_QUEUED_RENDERS) return null;
     queued++;
-    return new Promise<void>((resolve) => {
+    return new Promise<void>((resolve, reject) => {
       waiters.push(() => {
         queued--;
-        active++;
-        resolve();
+        if (stopping) reject(new ServerStopping());
+        else {
+          active++;
+          resolve();
+        }
       });
     });
   };
@@ -440,7 +464,17 @@ export async function startServer(opts: ServerOptions = {}) {
           );
         }
 
-        await slot;
+        try {
+          await slot;
+        } catch (e) {
+          // The only rejection acquire() produces is ServerStopping, and the only reason
+          // to reject is that shutdown began while this request sat in the queue.
+          if (!(e instanceof ServerStopping)) throw e;
+          return Response.json(
+            { ok: false, error: STOPPING_MESSAGE },
+            { status: 503, headers: { 'retry-after': '5' } },
+          );
+        }
 
         const work = (async () => {
           try {
@@ -579,11 +613,22 @@ export async function startServer(opts: ServerOptions = {}) {
   }
 
   const stop = async () => {
+    stopping = true;
+    // Release the queue first, before the drain. These waiters no longer grant a slot --
+    // stopping is set, so each one rejects its request -- which means every queued client
+    // is told the truth while the connections are still open, and none of them starts a
+    // render against a browser that is about to close.
+    //
+    // Previously this ran after the drain and the waiters granted their slots, so a queued
+    // render began, and then had its socket closed mid-flight. The client saw "The socket
+    // connection was closed unexpectedly" -- a transport error, not a status code, and with
+    // nothing in it to say the server had said goodbye on purpose.
+    for (const waiter of waiters.splice(0)) waiter();
+
     if (inFlight.size) {
       await Promise.race([Promise.allSettled(inFlight), Bun.sleep(4_000)]);
     }
 
-    for (const waiter of waiters.splice(0)) waiter();
     server.stop(true);
     await browser.close();
     await reapChromium();

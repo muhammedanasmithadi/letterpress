@@ -220,6 +220,18 @@ describe('the shell itself', () => {
     expect(css).toMatch(/\.preview\s*\{[^}]*overflow: auto/s);
   });
 
+  test('the editor and the preview are placed on the flex row, not auto-sized', async () => {
+    // Each pane holds three children against four grid tracks, so auto-placement put
+    // the textarea in an auto row: measured 57px tall inside a 544px pane, with the
+    // flex track going to the hint paragraph. Both content elements need explicit rows.
+    const css = (await (await fetch(`${origin}/assets/theme.css`)).text()).replace(
+      /\/\*[\s\S]*?\*\//g,
+      '',
+    );
+    expect(css).toMatch(/#source[\s,{][^}]*grid-row\s*:\s*3/s);
+    expect(css).toMatch(/#preview[\s,{][^}]*grid-row\s*:\s*3/s);
+  });
+
   test('the status line is announced, not just drawn', async () => {
     const page = await html();
     expect(page).toMatch(/role=["']status["']/);

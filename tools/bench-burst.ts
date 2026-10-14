@@ -1,7 +1,4 @@
 import { startServer } from '../src/server.ts';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 function doc(n: number) {
   const body = Array.from(
     { length: n },
@@ -14,17 +11,16 @@ function doc(n: number) {
   return `<!doctype html><meta charset="utf-8"><title>D</title>
 <style>@page{size:A4;margin:18mm}body{font-family:"DejaVu Serif",serif}</style>${body}`;
 }
-const profile = await mkdtemp(join(tmpdir(), 'lp-s2-'));
-await startServer({ profile, port: 8793 });
+const server = await startServer({ port: 0 });
 await Bun.sleep(300);
 const payload = JSON.stringify({ html: doc(3) });
 async function one() {
   const t0 = Bun.nanoseconds();
-  const target = 'http://127.0.0.1:8793/render';
+  const url = `http://127.0.0.1:${server.port}/render`;
   // prettier-ignore
-  const res = await fetch(target, { // nosemgrep: react-insecure-request
+  const res = await fetch(url, { // nosemgrep: react-insecure-request
     method: 'POST',
-    headers: { 'content-type': 'application/json', origin: 'http://127.0.0.1:8793' },
+    headers: { 'content-type': 'application/json', origin: `http://127.0.0.1:${server.port}` },
     body: payload,
   });
   const body = (await res.json()) as any;
@@ -43,4 +39,5 @@ for (const n of [1, 4, 8, 12, 24, 40]) {
       `throughput ${(n / (wall / 1000)).toFixed(2)}/s  p50 ${lat[Math.floor(lat.length / 2)]!.toFixed(0)}ms  max ${lat[lat.length - 1]!.toFixed(0)}ms`,
   );
 }
+await server.stop();
 process.exit(0);

@@ -1,7 +1,4 @@
 import { startServer } from '../src/server.ts';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 function doc(sections: number) {
   const body = Array.from(
@@ -16,23 +13,17 @@ function doc(sections: number) {
 <style>@page{size:A4;margin:18mm}body{font-family:"DejaVu Serif",serif}</style>${body}`;
 }
 
-const profile = await mkdtemp(join(tmpdir(), 'lp-scale-'));
-const server = await startServer({ profile, port: 0, onReady: () => {} }).catch(() => null);
-void server;
-await Bun.sleep(200);
-
-const s = await startServer({ profile: await mkdtemp(join(tmpdir(), 'lp-scale2-')), port: 8791 });
-void s;
+const server = await startServer({ port: 0 });
 await Bun.sleep(300);
 
 const payload = JSON.stringify({ html: doc(3) });
 async function one() {
   const t0 = Bun.nanoseconds();
-  const target = 'http://127.0.0.1:8791/render';
+  const url = `http://127.0.0.1:${server.port}/render`;
   // prettier-ignore
-  const res = await fetch(target, { // nosemgrep: react-insecure-request
+  const res = await fetch(url, { // nosemgrep: react-insecure-request
     method: 'POST',
-    headers: { 'content-type': 'application/json', origin: 'http://127.0.0.1:8791' },
+    headers: { 'content-type': 'application/json', origin: `http://127.0.0.1:${server.port}` },
     body: payload,
   });
   const body = (await res.json()) as any;
@@ -54,4 +45,5 @@ for (const n of [1, 2, 4, 8]) {
       `latency p50 ${lat[Math.floor(lat.length / 2)]!.toFixed(0)}ms max ${lat[lat.length - 1]!.toFixed(0)}ms`,
   );
 }
+await server.stop();
 process.exit(0);

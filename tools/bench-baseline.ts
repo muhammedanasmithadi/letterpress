@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Browser } from '../src/browser.ts';
-import { render } from '../src/render.ts';
+import { render, type RenderRequest } from '../src/render.ts';
 import { fixFontDescriptors } from '../src/fontdesc.ts';
 import { fixToUnicode } from '../src/tounicode.ts';
 import { addMetadata } from '../src/meta.ts';
@@ -36,10 +36,28 @@ async function hit(browser: Browser, target: number) {
 
 const profile = await mkdtemp(join(tmpdir(), 'lp-bl-'));
 const probe = await Browser.launch({ profile });
-const resumePath = '/home/anas/Documents/Resumes/html/Ahammed_Sahad_Resume.html';
-const workloads: Array<[string, any]> = [
+// A dense real-world-shaped page (headings, two-column-ish flow, a table), generated
+// like every other workload here. This used to be a path inside the author's home
+// directory -- and not even the right filename -- so the tool crashed with ENOENT on
+// every machine including its own. RESUME_DOC points at a real file when one matters.
+const resumePath = process.env.RESUME_DOC;
+const resumeHtml =
+  `<!doctype html><meta charset="utf-8"><title>Resume</title>` +
+  `<style>@page{size:A4;margin:14mm}body{font-family:sans-serif;font-size:9.5pt}` +
+  `h1{font-size:18pt;margin:0}h2{font-size:11pt;border-bottom:1pt solid #999;margin:8pt 0 4pt}` +
+  `table{width:100%;border-collapse:collapse}td{padding:1pt 4pt;vertical-align:top}</style>` +
+  `<h1>Jane Doe</h1><p>Engineer -- jobs@example.com -- 555-0100</p>` +
+  `<h2>Experience</h2><table>` +
+  Array.from(
+    { length: 8 },
+    (_, i) =>
+      `<tr><td><b>Role ${i + 1}</b>, Company ${i + 1}</td><td>202${i}-202${i + 1}</td></tr>` +
+      `<tr><td colspan="2">Shipped features, fixed defects, measured everything twice.</td></tr>`,
+  ).join('') +
+  `</table><h2>Skills</h2><p>Engines, pipelines, proofs, and the occasional benchmark.</p>`;
+const workloads: Array<[string, RenderRequest]> = [
   ['letter', { html: letter }],
-  ['resume', { path: resumePath }],
+  resumePath ? ['resume', { path: resumePath }] : ['resume', { html: resumeHtml }],
   ['20p', await hit(probe, 20)],
   ['100p', await hit(probe, 100)],
   ['400p', await hit(probe, 400)],
@@ -67,7 +85,7 @@ for (const [name, req] of workloads) {
     const p = await mkdtemp(join(tmpdir(), 'lp-cold-'));
     const b = await Browser.launch({ profile: p });
     const t0 = Bun.nanoseconds();
-    const r = await render(b, req as any);
+    const r = await render(b, req);
     cold.push((Bun.nanoseconds() - t0) / 1e6);
     pages = r.info.pages;
     bytes = r.pdf.byteLength;
@@ -82,7 +100,7 @@ for (const [name, req] of workloads) {
   const warm: number[] = [];
   for (let i = 0; i < 5; i++) {
     const t0 = Bun.nanoseconds();
-    await render(b2, req as any);
+    await render(b2, req);
     warm.push((Bun.nanoseconds() - t0) / 1e6);
   }
   await b2.close();

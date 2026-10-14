@@ -5,3 +5,5 @@ out/
 .orbit
 bench-out/
 coverage/
+# Committed fuzz fixtures: generated producer outputs the gate tests pin.
+!test/data/*.pdf

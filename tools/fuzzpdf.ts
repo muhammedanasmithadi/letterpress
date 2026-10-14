@@ -17,6 +17,7 @@
  * Run deep: `bun tools/fuzzpdf.ts --count 300 --seed 11 --out /tmp/opencode/fuzzpdf`
  */
 import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fixFontDescriptors } from '../src/fontdesc.ts';
 import { fixRedundantFigures } from '../src/figrole.ts';
 import { fixLinkDescs } from '../src/linkdesc.ts';
@@ -39,6 +40,123 @@ export const REPAIRS: Repair[] = [
   { name: 'addMetadata', run: (p) => addMetadata(p, {}) },
   { name: 'setDocTitle', run: (p) => setDocTitle(p, 'Fuzz') },
 ];
+
+export type ExoticKind = 'linearized' | 'encrypted';
+export type ExoticFile = { kind: ExoticKind; detail: string; bytes: Uint8Array };
+
+/** Ghostscript present and executable, the exotic producer's only requirement. */
+export async function ghostscriptOk(): Promise<boolean> {
+  try {
+    const proc = Bun.spawn(['gs', '--version'], { stdout: 'ignore', stderr: 'ignore' });
+    return (await proc.exited) === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Producer for files the renderer never emits but the repairs meet in the wild.
+ * Ghostscript rewrites each base PDF linearized (-dFastWebView) and encrypted
+ * (R2/40, R3/128 with a user password and with an empty one). R4/AES revisions
+ * are beyond this Ghostscript (it says so: revisions 2 and 3 only), so those
+ * stay an explicit gap rather than a silent one.
+ *
+ * Output bytes depend on the Ghostscript version, so everything downstream
+ * asserts structure, never bytes.
+ */
+export async function exoticCorpus(bases: Uint8Array[], dir: string): Promise<ExoticFile[]> {
+  const out: ExoticFile[] = [];
+  const run = async (
+    args: string[],
+    input: string,
+    output: string,
+  ): Promise<Uint8Array | undefined> => {
+    const proc = Bun.spawn(
+      ['gs', '-q', '-dBATCH', '-dNOPAUSE', ...args, `-sOutputFile=${output}`, input],
+      {
+        stdout: 'ignore',
+        stderr: 'ignore',
+      },
+    );
+    const code = await proc.exited;
+    try {
+      const bytes = new Uint8Array(await Bun.file(output).arrayBuffer());
+      return code === 0 && bytes.length > 100 ? bytes : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  let n = 0;
+  for (const base of bases) {
+    const input = join(dir, `base-${n}.pdf`);
+    await writeFile(input, base);
+    const lin = await run(
+      ['-dFastWebView', '-sDEVICE=pdfwrite'],
+      input,
+      join(dir, `base-${n}-linear.pdf`),
+    );
+    if (lin) out.push({ kind: 'linearized', detail: `fastwebview base-${n}`, bytes: lin });
+    const variants: Array<[string, string[]]> = [
+      ['r2-40', ['-sDEVICE=pdfwrite', '-sOwnerPassword=o123', '-dEncryptionR=2', '-dKeyLength=40']],
+      [
+        'r3-128-user',
+        [
+          '-sDEVICE=pdfwrite',
+          '-sOwnerPassword=o123',
+          '-sUserPassword=u123',
+          '-dEncryptionR=3',
+          '-dKeyLength=128',
+        ],
+      ],
+      [
+        'r3-128-empty',
+        ['-sDEVICE=pdfwrite', '-sOwnerPassword=o123', '-dEncryptionR=3', '-dKeyLength=128'],
+      ],
+    ];
+    for (const [detail, args] of variants) {
+      const enc = await run(args, input, join(dir, `base-${n}-${detail}.pdf`));
+      if (enc) out.push({ kind: 'encrypted', detail: `${detail} base-${n}`, bytes: enc });
+    }
+    n++;
+  }
+  return out;
+}
+
+export type ExoticResult = { file: ExoticFile; failures: string[]; notes: string[] };
+
+/**
+ * Multi-revision and encrypted inputs must pass through every repair
+ * byte-identical: no repair sees the whole document (linearized later revisions
+ * are invisible to the splitter) or anything at all (ciphertext), so any
+ * rewrite is unsound. Plaintext metadata into an encrypted file would also leak
+ * title and author around encryption the owner configured -- byte-identity
+ * forbids that too, with no special case.
+ */
+export function fuzzExoticFile(file: ExoticFile): ExoticResult {
+  const failures: string[] = [];
+  const notes: string[] = [];
+  const v = verify(file.bytes);
+  notes.push(`verify(input)=${v.ok}`);
+  for (const repair of REPAIRS) {
+    let out: Uint8Array;
+    try {
+      out = repair.run(file.bytes);
+    } catch (e) {
+      failures.push(`${repair.name} threw: ${e instanceof Error ? e.message : String(e)}`);
+      continue;
+    }
+    if (out.length === 0 && file.bytes.length !== 0) {
+      failures.push(`${repair.name} emptied the file`);
+      continue;
+    }
+    if (!same(out, file.bytes)) {
+      failures.push(
+        `${repair.name} rewrote a ${file.kind} file (${file.bytes.length} -> ${out.length} bytes)`,
+      );
+    }
+  }
+  return { file, failures, notes };
+}
 
 export type MutantFailure = {
   seed: number;
@@ -157,7 +275,6 @@ if (import.meta.main) {
   const { Browser } = await import('../src/browser.ts');
   const { mkdtemp, rm } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
-  const { join } = await import('node:path');
   const { render } = await import('../src/render.ts');
   const profile = await mkdtemp(join(tmpdir(), 'letterpress-fuzzpdf-'));
   const browser = await Browser.launch({ profile });
@@ -228,6 +345,33 @@ if (import.meta.main) {
       }
       console.log(`mutants in ${outDir}`);
       process.exitCode = 1;
+    }
+
+    if (argv.includes('--exotic')) {
+      if (!(await ghostscriptOk())) {
+        console.log('exotic corpus skipped: gs not found (Ghostscript 10+ with pdfwrite)');
+      } else {
+        const exoticDir = join(outDir, 'exotic');
+        await mkdir(exoticDir, { recursive: true });
+        const files = await exoticCorpus(corpus.slice(0, 3), exoticDir);
+        let exoticFails = 0;
+        for (const file of files) {
+          await writeFile(
+            join(exoticDir, `${file.kind}-${file.detail.replace(/[^a-z0-9-]+/gi, '_')}.pdf`),
+            file.bytes,
+          );
+          const res = fuzzExoticFile(file);
+          console.log(
+            `${file.kind} ${file.detail}: ${res.failures.length ? 'FAIL' : 'keep'} ${res.notes.join(' ')}`,
+          );
+          for (const f of res.failures) {
+            console.log(`  ${f}`);
+            exoticFails++;
+          }
+        }
+        console.log(`${files.length} exotic files, ${exoticFails} failures`);
+        if (exoticFails) process.exitCode = 1;
+      }
     }
   } finally {
     await browser.close();

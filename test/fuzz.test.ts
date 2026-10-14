@@ -4,8 +4,9 @@
  * never change; run the tool with `--count 200` to explore beyond them.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { join } from 'node:path';
 import { document, fuzzOne, rng } from '../tools/fuzz.ts';
-import { fuzzRepair, mutate, REPAIRS } from '../tools/fuzzpdf.ts';
+import { fuzzExoticFile, fuzzRepair, mutate, REPAIRS, type ExoticFile } from '../tools/fuzzpdf.ts';
 import { render } from '../src/render.ts';
 import { closeTestBrowser, launchTestBrowser, type TestBrowser } from './browser.ts';
 
@@ -60,3 +61,24 @@ test('every repair holds its contract on mutated files', async () => {
   }
   expect(checked).toBe(2 * 40 * REPAIRS.length);
 }, 120_000);
+
+test('exotic files pass through every repair byte-identical', async () => {
+  // Committed producer outputs (Ghostscript 10.06.0): a linearized file with a
+  // later revision the splitter cannot see, and an R3-encrypted file whose
+  // content is ciphertext. Both must survive every repair unchanged -- any
+  // rewrite from a fragment, or plaintext spliced into ciphertext, is unsound.
+  // Deep exploration lives in the tool (--exotic); these two pin the contract.
+  const dir = join(import.meta.dir, 'data');
+  const cases: Array<{ file: string; kind: ExoticFile['kind']; marker: RegExp }> = [
+    { file: 'linearized.pdf', kind: 'linearized', marker: /\/Linearized\b/ },
+    { file: 'encrypted-r3.pdf', kind: 'encrypted', marker: /\/Encrypt\b/ },
+  ];
+  for (const { file, kind, marker } of cases) {
+    const bytes = new Uint8Array(await Bun.file(join(dir, file)).arrayBuffer());
+    expect(bytes.length, `${file} is empty`).toBeGreaterThan(100);
+    const text = Buffer.from(bytes).toString('latin1');
+    expect(marker.test(text), `${file} lost its shape`).toBe(true);
+    const res = fuzzExoticFile({ kind, detail: file, bytes });
+    expect(res.failures, `${file}: ${res.failures.join('; ')}`).toEqual([]);
+  }
+});

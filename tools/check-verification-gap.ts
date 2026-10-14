@@ -1,8 +1,24 @@
+/**
+ * The gap between structural checks and content identity, demonstrated.
+ *
+ * xref/resolves, refs-resolve and lengths-match all pass on a file whose drawn
+ * content was destroyed -- because none of them look at what the bytes draw.
+ * Byte-identity against the original (repairOrKeep with it in hand) is what
+ * catches content damage, and the second half below proves that too.
+ *
+ * An earlier version corrupted by splicing text into the raw file, but content
+ * streams are Flate-compressed: its TJ-array pattern never matched anything, so
+ * it "corrupted" nothing and both rows trivially agreed. Damage now goes into
+ * the compressed payload at the same length, keeping every offset and Length
+ * valid while the content dies.
+ */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { inflateSync } from 'node:zlib';
 import { Browser } from '../src/browser.ts';
 import { render } from '../src/render.ts';
+import { repairOrKeep } from '../src/verify.ts';
 import { streamRange, trySplit } from '../src/pdfparts.ts';
 
 function xrefOk(pdf: Uint8Array): { ok: boolean; why: string } {
@@ -54,10 +70,35 @@ const html = `<!doctype html><meta charset="utf-8"><title>T</title>
 <style>@page{size:A4;margin:18mm}</style><h1>Gate</h1><p>office efficient flags finished</p>`;
 const good = (await render(b, { html, author: 'A Person' })).pdf;
 
-const t = Buffer.from(good).toString('latin1');
-const i = t.search(/\[<[0-9A-Fa-f]{4}>/);
-const corrupted =
-  i >= 0 ? Buffer.from(t.slice(0, i + 1) + '7 '.repeat(200) + t.slice(i + 1), 'latin1') : good;
+// Same-length damage inside a compressed text payload: every offset, Length and
+// xref entry stays valid while the drawn content dies. Flipping the raw file
+// text cannot do this -- streams are Flate-compressed, so a plaintext pattern
+// never matches and the "corruption" is a no-op.
+function corruptContent(pdf: Uint8Array): Uint8Array {
+  const raw = Buffer.from(pdf);
+  const text = raw.toString('latin1');
+  for (const m of text.matchAll(/stream\r?\n/g)) {
+    const start = m.index! + m[0].length;
+    const end = text.indexOf('\nendstream', start);
+    if (end - start < 16) continue;
+    const payload = raw.subarray(start, end);
+    let drawn: Buffer;
+    try {
+      drawn = inflateSync(payload);
+    } catch {
+      continue;
+    }
+    if (!drawn.includes('BT')) continue;
+    const at = 4 + (drawn.length % Math.max(1, payload.length - 8));
+    payload[at] ^= 0xff;
+    payload[at + 1] ^= 0xff;
+    payload[at + 2] ^= 0xff;
+    return raw;
+  }
+  throw new Error('no text-bearing content stream to corrupt');
+}
+
+const corrupted = corruptContent(good);
 
 for (const [label, pdf] of [
   ['shipped output', good],
@@ -67,5 +108,13 @@ for (const [label, pdf] of [
     `${label.padEnd(18)} xref=${xrefOk(pdf).why.padEnd(38)} refs=${refsResolve(pdf)} lengths=${lengthsMatch(pdf)}`,
   );
 }
+
+const kept = repairOrKeep(good, () => corrupted);
+console.log(
+  kept.applied
+    ? 'NO GAP: the corrupted file passed the gate'
+    : `gap stands: structural checks pass, byte-identity refuses (${kept.failures.join('; ').slice(0, 100)})`,
+);
+if (kept.applied) process.exit(1);
 await b.close();
 await rm(profile, { recursive: true, force: true }).catch(() => {});

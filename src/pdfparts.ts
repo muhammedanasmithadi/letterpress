@@ -31,6 +31,19 @@ function dictClose(window: string): number {
   return -1;
 }
 
+/**
+ * Whether object headers appear at or past the first trailer: trailing garbage,
+ * a concatenated file, or a linearized later revision. split() only sees what
+ * precedes the trailer, so a repair that rewrites from its objects would drop
+ * the rest. Repairs that rebuild the file check this first and decline whole.
+ */
+export function hasPostTrailerObjects(pdf: Uint8Array): boolean {
+  const text = asBuffer(pdf).toString(LATIN1);
+  const trailerAt = text.indexOf('\ntrailer\n');
+  if (trailerAt === -1) return false;
+  return /(?:^|\n)\d+ \d+ obj\b/.test(text.slice(trailerAt));
+}
+
 /** The bytes of one object, from its header to its end keyword or the next header. */
 function sliceObject(text: string, raw: Buffer, num: number, from: number, next: number): Obj {
   const window = text.slice(from, next);

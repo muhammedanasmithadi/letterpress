@@ -39,7 +39,16 @@
  */
 import { fontsByContent } from './textfont.ts';
 import { deflateSync, inflateSync } from 'node:zlib';
-import { LATIN1, dictOf, join, streamRange, trySplit, type Obj, type Parts } from './pdfparts.ts';
+import {
+  LATIN1,
+  dictOf,
+  hasPostTrailerObjects,
+  join,
+  streamRange,
+  trySplit,
+  type Obj,
+  type Parts,
+} from './pdfparts.ts';
 
 /** Where a glyph was drawn, in text space. */
 type Placed = { x: number; y: number; cid: number };
@@ -453,6 +462,9 @@ function decodeStream(o: Obj): { text: string; compressed: boolean } | null {
 
 export function mergeTextRuns(pdf: Uint8Array): { pdf: Uint8Array; stats: MergeStats } {
   const stats: MergeStats = { blocks: 0, merged: 0, refused: 0 };
+  // Same fragment hazard as stripRedundantSpans: rewriting streams split() only
+  // partly sees drops the rest. Decline whole.
+  if (hasPostTrailerObjects(pdf)) return { pdf, stats };
   const parts = trySplit(pdf);
   if (!parts) return { pdf, stats };
   const byStream = widthsByResource(parts);

@@ -23,7 +23,16 @@
  * the default rather than an option.
  */
 import { deflateSync, inflateSync } from 'node:zlib';
-import { LATIN1, dictOf, join, streamRange, trySplit, type Obj, type Parts } from './pdfparts.ts';
+import {
+  LATIN1,
+  dictOf,
+  hasPostTrailerObjects,
+  join,
+  streamRange,
+  trySplit,
+  type Obj,
+  type Parts,
+} from './pdfparts.ts';
 import { cmapStreams, fontsByContent, type FontTable } from './textfont.ts';
 
 export type SpanStats = {
@@ -90,6 +99,11 @@ function fontBefore(text: string, at: number, fonts: Map<string, FontTable>): Fo
  */
 export function stripRedundantSpans(pdf: Uint8Array): { pdf: Uint8Array; stats: SpanStats } {
   const stats: SpanStats = { ...EMPTY };
+  // A file with objects past its first trailer (trailing garbage, a concatenated
+  // file, a linearized later revision) is a fragment to split(): any rewrite from
+  // it drops what split() cannot see. Measured: a 13KB linearized file came back
+  // as 680 bytes. Decline whole rather than rebuild partial.
+  if (hasPostTrailerObjects(pdf)) return { pdf, stats };
   const parts: Parts | undefined = trySplit(pdf);
   if (!parts) return { pdf, stats };
   const cmaps = cmapStreams(pdf);

@@ -33,18 +33,20 @@ function parse(xml: string, file: string, profile: string): Conformance {
 
   const rules = [...xml.matchAll(/<rule\b([^>]*)>([\s\S]*?)<\/rule>/g)];
   const failures: RuleFailure[] = [];
-  for (const [, attrs, body] of rules) {
+  for (const m of rules) {
+    const attrs = m[1] ?? '';
+    const body = m[2] ?? '';
     if (!/status="failed"/.test(attrs)) continue;
-    const checks = [...body.matchAll(/<check\b([^>]*)>([\s\S]*?)<\/check>/g)].filter(([, a]) =>
-      /status="failed"/.test(a),
+    const checks = [...body.matchAll(/<check\b([^>]*)>([\s\S]*?)<\/check>/g)].filter((c) =>
+      /status="failed"/.test(c[1] ?? ''),
     );
     failures.push({
       clause: /clause="([^"]*)"/.exec(attrs)?.[1] ?? '?',
       testNumber: /testNumber="([^"]*)"/.exec(attrs)?.[1] ?? '?',
       description: (/<description>([\s\S]*?)<\/description>/.exec(body)?.[1] ?? '').trim(),
       failingObjects: checks.length,
-      contexts: checks.map(([, , b]) =>
-        (/<context>([\s\S]*?)<\/context>/.exec(b)?.[1] ?? '').trim(),
+      contexts: checks.map((c) =>
+        (/<context>([\s\S]*?)<\/context>/.exec(c[2] ?? '')?.[1] ?? '').trim(),
       ),
     });
   }

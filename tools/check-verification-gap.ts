@@ -90,9 +90,9 @@ function corruptContent(pdf: Uint8Array): Uint8Array {
     }
     if (!drawn.includes('BT')) continue;
     const at = 4 + (drawn.length % Math.max(1, payload.length - 8));
-    payload[at] ^= 0xff;
-    payload[at + 1] ^= 0xff;
-    payload[at + 2] ^= 0xff;
+    payload[at] = (payload[at] ?? 0) ^ 0xff;
+    payload[at + 1] = (payload[at + 1] ?? 0) ^ 0xff;
+    payload[at + 2] = (payload[at + 2] ?? 0) ^ 0xff;
     return raw;
   }
   throw new Error('no text-bearing content stream to corrupt');

@@ -55,7 +55,7 @@ const resumeHtml =
       `<tr><td colspan="2">Shipped features, fixed defects, measured everything twice.</td></tr>`,
   ).join('') +
   `</table><h2>Skills</h2><p>Engines, pipelines, proofs, and the occasional benchmark.</p>`;
-const workloads: Array<[string, RenderRequest]> = [
+const workloads: Array<[string, RenderRequest & { pages?: number }]> = [
   ['letter', { html: letter }],
   resumePath ? ['resume', { path: resumePath }] : ['resume', { html: resumeHtml }],
   ['20p', await hit(probe, 20)],
@@ -68,10 +68,15 @@ await rm(profile, { recursive: true, force: true }).catch(() => {});
 
 const pct = (xs: number[]) => {
   const s = [...xs].sort((a, b) => a - b);
+  const mid = s[Math.floor(s.length / 2)];
+  const first = s[0];
+  const last = s[s.length - 1];
+  if (mid === undefined || first === undefined || last === undefined)
+    throw new Error('pct needs at least one sample');
   return {
-    p50: Math.round(s[Math.floor(s.length / 2)]),
-    min: Math.round(s[0]),
-    max: Math.round(s[s.length - 1]),
+    p50: Math.round(mid),
+    min: Math.round(first),
+    max: Math.round(last),
   };
 };
 

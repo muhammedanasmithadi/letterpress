@@ -195,7 +195,6 @@ for (const doc of DOCS) {
   const r = await render(browser, {
     html: doc.html,
     author: 'letterpress samples',
-    title: doc.note,
     subject: 'rendered with src/render.ts',
   });
   const path = join(OUT, `${doc.name}.pdf`);

@@ -13,7 +13,7 @@ import {
   xmlText,
 } from '../src/meta.ts';
 import { render } from '../src/render.ts';
-import { assemblePdf, sameBytes } from './fixtures.ts';
+import { assemblePdf, expectSoundLengths, expectSoundXref, sameBytes } from './fixtures.ts';
 
 const LATIN1 = 'latin1' as BufferEncoding;
 
@@ -320,39 +320,12 @@ describe('addMetadata', () => {
     const text = Buffer.from(addMetadata(pdfFixture(), { author: 'Ahammed Sahad' })).toString(
       LATIN1,
     );
-    expect(text.match(/startxref/g)).toHaveLength(1);
-    const at = Number(text.match(/startxref\s+(\d+)/)![1]);
-    expect(text.slice(at, at + 4)).toBe('xref');
-    const header = text.slice(at).match(/^xref\s+0\s+(\d+)\s/)!;
-    const table = text.slice(at + header[0].length);
-    let checked = 0;
-    for (let n = 1; n < Number(header[1]); n++) {
-      const entry = table.slice(n * 20, n * 20 + 20);
-      if (entry[17] !== 'n') continue;
-      checked++;
-      expect(text.slice(Number(entry.slice(0, 10)), Number(entry.slice(0, 10)) + 20)).toStartWith(
-        `${n} 0 obj`,
-      );
-    }
-    expect(checked).toBeGreaterThan(0);
-    expect(text).not.toContain('endobjxref');
+    expectSoundXref(text);
   });
 
   test("the packet stream's /Length matches its payload", () => {
     const text = Buffer.from(addMetadata(pdfFixture(), { author: 'A' })).toString(LATIN1);
-    let streams = 0;
-    for (const m of text.matchAll(/(?:^|[^0-9])(\d+) 0 obj([\s\S]*?)endobj/g)) {
-      const body = m[2]!;
-      const len = body.split('stream')[0]!.match(/\/Length (\d+)/);
-      const at = body.match(/stream\r?\n/);
-      if (!len || !at || at.index === undefined) continue;
-      streams++;
-      const end = body.lastIndexOf('\nendstream');
-      expect(Buffer.from(body, LATIN1).subarray(at.index + at[0].length, end).length).toBe(
-        Number(len[1]),
-      );
-    }
-    expect(streams).toBe(1);
+    expect(expectSoundLengths(text)).toBe(1);
   });
 });
 

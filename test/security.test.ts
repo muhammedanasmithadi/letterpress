@@ -5,17 +5,17 @@ import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startServer } from '../src/server.ts';
+import { launchTestServer, serverOrigin, type TestServer } from './servers.ts';
 import { pdfText } from './poppler.ts';
 
-type Running = Awaited<ReturnType<typeof startServer>>;
-let s: Running;
+let s: TestServer;
 let origin: string;
 
 const port = () => s.server.port as number;
 
 beforeAll(async () => {
-  s = await startServer({ port: 0 });
-  origin = `http://127.0.0.1:${s.port}`;
+  s = await launchTestServer();
+  origin = serverOrigin(s);
 }, 60_000);
 
 afterAll(async () => {

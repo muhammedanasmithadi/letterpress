@@ -1,13 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { startServer } from '../src/server.ts';
+import { launchTestServer, serverOrigin, type TestServer } from './servers.ts';
 
-type Running = Awaited<ReturnType<typeof startServer>>;
-let s: Running;
+let s: TestServer;
 let origin: string;
 
 beforeAll(async () => {
-  s = await startServer({ port: 0 });
-  origin = `http://127.0.0.1:${s.port}`;
+  s = await launchTestServer();
+  origin = serverOrigin(s);
 }, 60_000);
 
 afterAll(async () => {

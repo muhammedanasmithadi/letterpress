@@ -3,6 +3,7 @@
  * real variations (a binary stream payload, a custom trailer) as parameters.
  * Byte-identical to the inline builders it replaced.
  */
+import { expect } from 'bun:test';
 import { deflateSync, inflateSync } from 'node:zlib';
 import { streamRange, trySplit } from '../src/pdfparts.ts';
 
@@ -88,4 +89,50 @@ export function streamText(pdf: Uint8Array, num: number): string {
   return (/FlateDecode/.test(o.bytes.toString(LATIN1, 0, 120)) ? inflateSync(raw) : raw).toString(
     LATIN1,
   );
+}
+
+/**
+ * The xref table points every live entry at its object header, in one table.
+ * Shared because the same eighteen lines sat in two suites word for word, and
+ * the failure messages below name the exact break -- which a boolean helper
+ * would swallow.
+ */
+export function expectSoundXref(text: string): void {
+  expect(text.match(/startxref/g)).toHaveLength(1);
+  const at = Number(text.match(/startxref\s+(\d+)/)![1]);
+  expect(text.slice(at, at + 4)).toBe('xref');
+  const header = text.slice(at).match(/^xref\s+0\s+(\d+)\s*/)!;
+  const size = Number(header[1]);
+  const table = text.slice(at + header[0].length);
+  let checked = 0;
+  for (let n = 1; n < size; n++) {
+    const entry = table.slice(n * 20, n * 20 + 20);
+    if (entry[17] !== 'n') continue;
+    checked++;
+    expect(text.slice(Number(entry.slice(0, 10)), Number(entry.slice(0, 10)) + 20)).toStartWith(
+      `${n} 0 obj`,
+    );
+  }
+  expect(checked).toBeGreaterThan(0);
+  expect(text).not.toContain('endobjxref');
+}
+
+/**
+ * Every stream's declared /Length matches its payload bytes. Returns the
+ * streams checked; the caller asserts the count its document promises.
+ */
+export function expectSoundLengths(text: string): number {
+  let streams = 0;
+  for (const m of text.matchAll(/(?:^|[^0-9])(\d+) 0 obj([\s\S]*?)endobj/g)) {
+    const body = m[2]!;
+    const len = body.split('stream')[0]!.match(/\/Length (\d+)/);
+    const at = body.match(/stream\r?\n/);
+    if (!len || !at || at.index === undefined) continue;
+    streams++;
+    const end = body.lastIndexOf('\nendstream');
+    expect(Buffer.from(body, LATIN1).subarray(at.index + at[0].length, end).length).toBe(
+      Number(len[1]),
+    );
+  }
+  return streams;
 }

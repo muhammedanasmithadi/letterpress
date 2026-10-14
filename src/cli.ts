@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { readdirSync, rmSync } from 'node:fs';
+import { readdirSync, readFileSync, rmSync } from 'node:fs';
 import { mkdtemp, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -327,8 +327,7 @@ function finish(opts: Options, rest: string[]): ParseResult {
   return { opts };
 }
 
-export function parseArgs(argv: string[]): ParseResult {
-  const opts: Options = {
+export function parseArgs(argv: string[]): ParseResult {  const opts: Options = {
     landscape: false,
     allowNetwork: false,
     background: true,
@@ -426,7 +425,6 @@ function report(finding: Finding): string {
 function killBrowserByProfile(profile: string): void {
   if (process.platform.toUpperCase() !== 'LINUX') return;
   try {
-    const { readdirSync, readFileSync } = require('node:fs') as typeof import('node:fs');
     for (const entry of readdirSync('/proc')) {
       if (!/^\d+$/.test(entry)) continue;
       const pid = Number(entry);

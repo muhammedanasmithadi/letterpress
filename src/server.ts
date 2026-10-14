@@ -1,5 +1,5 @@
 import type { Server } from 'bun';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Browser } from './browser.ts';
@@ -629,7 +629,6 @@ export async function startServer(opts: ServerOptions = {}) {
   async function reapChromium() {
     if (!process.platform.toUpperCase().startsWith('LINUX')) return;
     try {
-      const { readdir, readFile } = await import('node:fs/promises');
       for (const entry of await readdir('/proc')) {
         if (!/^\d+$/.test(entry)) continue;
         const pid = Number(entry);
@@ -675,7 +674,6 @@ export async function startServer(opts: ServerOptions = {}) {
     await reapChromium();
     await rm(profile, { recursive: true, force: true }).catch(() => {});
 
-    const { readdir } = await import('node:fs/promises');
     const ours = `letterpress-${process.pid}-`;
     for (const entry of await readdir(tmpdir()).catch(() => [] as string[])) {
       if (!entry.startsWith(ours)) continue;

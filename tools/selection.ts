@@ -18,7 +18,13 @@ import { textFlow } from '../src/selection.ts';
 
 function collect(target: string, out: string[] = [], depth = 0): string[] {
   if (depth > 4) return out;
-  const st = statSync(target);
+  let st;
+  try {
+    st = statSync(target);
+  } catch {
+    console.error(`no such file or directory: ${target}`);
+    return out;
+  }
   if (st.isFile()) {
     if (/\.html?$/i.test(target)) out.push(target);
     return out;

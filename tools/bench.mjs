@@ -15,15 +15,18 @@ const BIG = process.env.BIG_DOC ?? join(DIR, 'big.html');
 const PROFILE = join(DIR, 'profile');
 
 function fixtures() {
+  // Generated only for the defaults: an explicit SMALL_DOC/BIG_DOC is the caller's,
+  // URL or path, and touching it would surprise. existsSync on a file:// URL always
+  // fails, so overrides skip generation entirely, exactly as before.
   mkdirSync(DIR, { recursive: true });
-  if (!existsSync(SMALL)) {
+  if (!process.env.SMALL_DOC && !existsSync(SMALL)) {
     writeFileSync(
       SMALL,
       '<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:15mm}</style>' +
         '<h1>Probe</h1><p>Body text for the timing run.</p>\n',
     );
   }
-  if (!existsSync(BIG)) {
+  if (!process.env.BIG_DOC && !existsSync(BIG)) {
     const rows = Array.from(
       { length: 400 },
       (_, i) => `<tr>${Array.from({ length: 24 }, (_, j) => `<td>r${i}c${j}</td>`).join('')}</tr>`,

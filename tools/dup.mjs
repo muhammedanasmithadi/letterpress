@@ -6,7 +6,7 @@ import { join } from 'node:path';
 const BASELINE = new URL('../waivers/baseline.jscpd.json', import.meta.url);
 const base = JSON.parse(readFileSync(BASELINE, 'utf8'));
 const dir = mkdtempSync(join(tmpdir(), 'jscpd-'));
-await $`bunx --package jscpd@5.4.1 jscpd --min-tokens 50 --reporters json --silent --output ${dir} src test`.quiet();
+await $`bunx jscpd --min-tokens 50 --reporters json --silent --output ${dir} src test`.quiet();
 const total = JSON.parse(readFileSync(join(dir, 'jscpd-report.json'), 'utf8')).statistics.total;
 rmSync(dir, { recursive: true });
 console.log(

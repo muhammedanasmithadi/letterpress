@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Browser } from '../src/browser.ts';
-import { render } from '../src/render.ts';
+import { render, type RenderRequest } from '../src/render.ts';
 import { main } from '../src/cli.ts';
 import { render as fillTemplate } from '../src/template.ts';
 import { pdfInfo, pdfText } from './poppler.ts';
@@ -11,6 +11,16 @@ import { pdfInfo, pdfText } from './poppler.ts';
 let browser: Browser;
 let profile: string;
 let dir: string;
+
+/** Render expecting failure; the thrown message is the assertion subject. */
+async function renderError(req: RenderRequest): Promise<string> {
+  try {
+    await render(browser, req);
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+  return '';
+}
 
 async function cli(argv: string[]): Promise<{ code: number; out: string; err: string }> {
   const out: string[] = [];
@@ -66,12 +76,7 @@ describe('input that is not html', () => {
     for (const [name, bytes] of Object.entries(files)) {
       const p = join(dir, name);
       await writeFile(p, bytes);
-      let message = '';
-      try {
-        await render(browser, { path: p });
-      } catch (e) {
-        message = e instanceof Error ? e.message : String(e);
-      }
+      const message = await renderError({ path: p });
       expect(message, name).toMatch(/not HTML/);
       expect(message, name).toMatch(/wrong file extension/);
     }
@@ -80,12 +85,7 @@ describe('input that is not html', () => {
   test('a pdf fed as html is refused', async () => {
     const p = join(dir, 'already.pdf');
     await writeFile(p, '%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n');
-    let message = '';
-    try {
-      await render(browser, { path: p });
-    } catch (e) {
-      message = e instanceof Error ? e.message : String(e);
-    }
+    const message = await renderError({ path: p });
     expect(message).toMatch(/it is a PDF/);
   });
 
@@ -96,12 +96,7 @@ describe('input that is not html', () => {
       p,
       Buffer.from(Array.from({ length: 512 }, (_, i) => (i % 7 === 0 ? 0 : 65 + (i % 26)))),
     );
-    let message = '';
-    try {
-      await render(browser, { path: p });
-    } catch (e) {
-      message = e instanceof Error ? e.message : String(e);
-    }
+    const message = await renderError({ path: p });
     expect(message).toMatch(/null byte/);
   });
 
@@ -111,24 +106,14 @@ describe('input that is not html', () => {
     // could never match. Detection must run on the raw bytes.
     const p = join(dir, 'header-only.png');
     await writeFile(p, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-    let message = '';
-    try {
-      await render(browser, { path: p });
-    } catch (e) {
-      message = e instanceof Error ? e.message : String(e);
-    }
+    const message = await renderError({ path: p });
     expect(message).toMatch(/it is a PNG/);
   });
 
   test('the message tells the user what to do, not just what happened', async () => {
     const p = join(dir, 'doc.jpg');
     await writeFile(p, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]));
-    let message = '';
-    try {
-      await render(browser, { path: p });
-    } catch (e) {
-      message = e instanceof Error ? e.message : String(e);
-    }
+    const message = await renderError({ path: p });
     expect(message).toContain('check the path');
   });
 });
@@ -136,37 +121,22 @@ describe('input that is not html', () => {
 describe('empty input', () => {
   test('an empty document is an error, not a blank page', async () => {
     for (const html of ['', '   \n\t  ']) {
-      let message = '';
-      try {
-        await render(browser, { html });
-      } catch (e) {
-        message = e instanceof Error ? e.message : String(e);
-      }
+      const message = await renderError({ html });
       expect(message, JSON.stringify(html)).toMatch(/input is empty/);
     }
   });
 
   test('the message names both likely causes', async () => {
-    let message = '';
-    try {
-      await render(browser, { html: '' });
-    } catch (e) {
-      message = e instanceof Error ? e.message : String(e);
-    }
+    const message = await renderError({ html: '' });
     expect(message).toContain('stdout');
   });
 
   test('a url that fails to load keeps its own diagnosis', async () => {
-    let message = '';
-    try {
-      await render(browser, {
-        url: 'https://this-host-does-not-exist-uxq9.invalid/',
-        allowNetwork: true,
-        timeoutMs: 20_000,
-      });
-    } catch (e) {
-      message = e instanceof Error ? e.message : String(e);
-    }
+    const message = await renderError({
+      url: 'https://this-host-does-not-exist-uxq9.invalid/',
+      allowNetwork: true,
+      timeoutMs: 20_000,
+    });
     expect(message).toMatch(/could not load|ERR_|HTTP \d\d\d/);
     expect(message).not.toContain('input is empty');
   }, 40_000);
@@ -353,56 +323,62 @@ describe('invoice data is checked before it is printed', () => {
     return p;
   };
 
+  /** The data file written and the CLI run against it; the caller asserts the outcome. */
+  const invoiceResult = async (name: string, extra: Record<string, unknown> = {}) => {
+    const p = await write(name, extra);
+    return cli(['-t', 'invoice', '-d', p, '-o', join(dir, 'o.pdf')]);
+  };
+
   test('a subtotal that disagrees with the items is refused', async () => {
-    const p = await write('wrong_sub', { subtotal: '1' });
-    const r = await cli(['-t', 'invoice', '-d', p, '-o', join(dir, 'o.pdf')]);
+    const r = await invoiceResult('wrong_sub', { subtotal: '1' });
     expect(r.code).toBe(1);
     expect(r.err).toContain('1,409.60');
   }, 20_000);
 
   test('a matching total with separators is accepted', async () => {
-    const p = await write('match', { subtotal: '1,409.60', vat: '281.92', total: '1,691.52' });
-    expect((await cli(['-t', 'invoice', '-d', p, '-o', join(dir, 'o.pdf')])).code).toBe(0);
+    const r = await invoiceResult('match', {
+      subtotal: '1,409.60',
+      vat: '281.92',
+      total: '1,691.52',
+    });
+    expect(r.code).toBe(0);
   }, 60_000);
 
   test('a non-numeric total says so, rather than reporting a mismatch', async () => {
-    const p = await write('nan_sub', { subtotal: 'abc' });
-    const r = await cli(['-t', 'invoice', '-d', p, '-o', join(dir, 'o.pdf')]);
+    const r = await invoiceResult('nan_sub', { subtotal: 'abc' });
     expect(r.code).toBe(1);
     expect(r.err).toContain('not a number');
   }, 20_000);
 
   test('an empty items array is refused', async () => {
-    const p = await write('no_items', { items: [] });
-    const r = await cli(['-t', 'invoice', '-d', p, '-o', join(dir, 'o.pdf')]);
+    const r = await invoiceResult('no_items', { items: [] });
     expect(r.code).toBe(1);
     expect(r.err).toContain('items is empty');
   }, 20_000);
 
   test('a vat rate that is not a fraction is refused', async () => {
     for (const vat_rate of [150, 'twenty', -0.2, 2]) {
-      const p = await write(`vat_${String(vat_rate)}`, { vat_rate });
-      const r = await cli(['-t', 'invoice', '-d', p, '-o', join(dir, 'o.pdf')]);
+      const r = await invoiceResult(`vat_${String(vat_rate)}`, { vat_rate });
       expect(r.code, String(vat_rate)).toBe(1);
       expect(r.err).toContain('between 0 and 1');
     }
   }, 40_000);
 
   test('pre-built rows cannot bypass the totals check', async () => {
-    const p = await write('rows_only', {
+    const r = await invoiceResult('rows_only', {
       rows: '<tr><td>x</td></tr>',
       subtotal: '1',
       items: undefined,
     });
-    const r = await cli(['-t', 'invoice', '-d', p, '-o', join(dir, 'o.pdf')]);
     expect(r.code).toBe(1);
     expect(r.err).toContain('rows is pre-built table markup');
     expect(r.err).toContain('items');
   }, 20_000);
 
   test('a line item with a non-numeric price is refused', async () => {
-    const p = await write('bad_unit', { items: [{ description: 'x', qty: 1, unit: 'free' }] });
-    const r = await cli(['-t', 'invoice', '-d', p, '-o', join(dir, 'o.pdf')]);
+    const r = await invoiceResult('bad_unit', {
+      items: [{ description: 'x', qty: 1, unit: 'free' }],
+    });
     expect(r.code).toBe(1);
     expect(r.err).toContain('not a number');
   }, 20_000);

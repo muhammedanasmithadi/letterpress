@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Browser } from '../src/browser.ts';
-import { hasRelativeAssets, parseFormat, render, stageAssets } from '../src/render.ts';
+import { hasRelativeAssets, parseFormat, render, stageAssets, toInches } from '../src/render.ts';
 import { invoiceTotals } from '../src/template.ts';
 import { pdfImages, pdfText } from './poppler.ts';
 import { verify } from '../src/verify.ts';
@@ -91,6 +91,23 @@ describe('format validation', () => {
     expect(parseFormat('')).toBeUndefined();
     expect(() => parseFormat('A9')).toThrow(/unknown format/);
     expect(() => parseFormat(7 as never)).toThrow(/must be a string/);
+  });
+
+  test('toInches resolves absolute lengths and refuses the rest', () => {
+    expect(toInches('15mm')).toBe(15 / 25.4);
+    expect(toInches('1in')).toBe(1);
+    expect(toInches('72pt')).toBe(1);
+    expect(toInches('96px')).toBe(1);
+    expect(toInches('6pc')).toBe(1);
+    expect(toInches('0')).toBe(0);
+    // A negative length parses: the render rejects it later, where the paper
+    // it would bleed off is known, rather than in the unit conversion.
+    expect(toInches('-5mm')).toBe(-5 / 25.4);
+    expect(() => toInches('2em')).toThrow(/relative/);
+    expect(() => toInches('10vw')).toThrow(/relative/);
+    expect(() => toInches('5furlongs')).toThrow(/unsupported margin unit/);
+    expect(() => toInches('abc')).toThrow(/not a css length/);
+    expect(() => toInches('10')).toThrow(/needs a unit/);
   });
 });
 

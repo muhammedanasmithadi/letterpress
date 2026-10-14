@@ -99,14 +99,29 @@ const oursAt = argv.indexOf('--ours');
 let rows: Array<{ label: string; path: string }> = [];
 if (oursAt !== -1) {
   const htmlPath = argv[oursAt + 1]!;
+  if (!htmlPath) {
+    console.error('usage: bun tools/quality.ts --ours <file.html> <reference.pdf> ...');
+    process.exit(2);
+  }
   const dir = await mkdtemp(join(tmpdir(), 'letterpress-quality-'));
   const browser = await Browser.launch({ profile: dir });
-  const result = await render(browser, { path: htmlPath, author: 'quality' });
+  // Close and sweep on every path out: a render throw used to skip both, leaving
+  // a browser and a profile behind for a typo'd filename. No process.exit inside
+  // try/finally: it kills the loop before the awaits run, which leaks the same
+  // way -- so the failure is recorded, cleanup runs, and only then the exit.
+  let failed = false;
+  try {
+    const result = await render(browser, { path: htmlPath, author: 'quality' });
+    const out = join(tmpdir(), `letterpress-ours-${Date.now()}.pdf`);
+    await Bun.write(out, result.pdf);
+    rows.push({ label: 'ours', path: out });
+  } catch (e) {
+    console.error(`cannot render ${htmlPath}: ${e instanceof Error ? e.message : e}`);
+    failed = true;
+  }
   await browser.close();
   await rm(dir, { recursive: true, force: true }).catch(() => {});
-  const out = join(tmpdir(), `letterpress-ours-${Date.now()}.pdf`);
-  await Bun.write(out, result.pdf);
-  rows.push({ label: 'ours', path: out });
+  if (failed) process.exit(1);
   rows.push(...argv.slice(oursAt + 2).map((p) => ({ label: p.split('/').pop()!, path: p })));
 } else {
   rows = argv.map((p) => ({ label: p.split('/').pop()!, path: p }));
@@ -119,6 +134,8 @@ if (!rows.length) {
   process.exit(2);
 }
 
+let failed = false;
+
 console.log(
   '  ' +
     HEAD[0]!.padEnd(26) +
@@ -130,8 +147,10 @@ for (const row of rows) {
   const p = await profile(row.path);
   if (!p) {
     console.log('  ' + row.label.padEnd(26) + ' (unreadable)');
+    failed = true;
     continue;
   }
   const cells = COLUMNS.map((c) => String(p[c]).slice(0, 7));
   console.log('  ' + row.label.padEnd(26) + cells.map((c) => c.padStart(7)).join(''));
 }
+if (failed) process.exit(1);

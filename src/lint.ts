@@ -253,7 +253,10 @@ const AUDIT = String.raw`
       if (dirAttr === "ltr") { rtl = false; declared = true; break; }
       if (dirAttr === "auto") break;
       const cs = getComputedStyle(p);
-      if (cs.direction === "rtl") { rtl = true; break; }
+      // A resolved right-to-left direction is an affirmative answer, just like an
+      // explicit dir="rtl": it overrides the content-based fallback below, which
+      // otherwise lets a trailing Latin word flip an Arabic paragraph to left.
+      if (cs.direction === "rtl") { rtl = true; declared = true; break; }
       if (cs.direction === "ltr") break;
     }
     if (!declared) {

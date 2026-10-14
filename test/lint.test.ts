@@ -87,3 +87,16 @@ test('a digit run is not reported as reversing into itself', async () => {
   const withDash = dashed.findings.find((f) => f.code === 'rtl-digit-run');
   expect(withDash!.message).toMatch(/reversed \(03-10-2026\)/);
 }, 90_000);
+
+test('an RTL paragraph ending in a Latin token still reports its digit run', async () => {
+  // A computed right-to-left direction must not be overridden by a trailing
+  // left-to-right word: the paragraph is laid out right-to-left, so a date in
+  // it reorders even when "INV-2026-0147" happens to come after it.
+  const r = await render(browser, {
+    html: `<!doctype html><html lang="ar"><head><meta charset="utf-8"><style>
+      @page{size:A4;margin:15mm} body{direction:rtl;font-family:'Noto Naskh Arabic',serif}
+    </style></head><body><p>تاريخ 2026-10-03 . INV-2026-0147</p></body></html>`,
+    author: 'lint',
+  });
+  expect(r.findings.some((f) => f.code === 'rtl-digit-run')).toBe(true);
+}, 90_000);

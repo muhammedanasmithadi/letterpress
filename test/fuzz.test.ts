@@ -21,6 +21,11 @@ import { render } from '../src/render.ts';
 import { assemblePdf } from './fixtures.ts';
 import { closeTestBrowser, launchTestBrowser, type TestBrowser } from './browser.ts';
 
+// Ghostscript is present here and on CI it is not (the runner installs poppler
+// and fonts only), so this gate skips loudly rather than failing there. The
+// committed fixtures in test/data pin the same contract without Ghostscript.
+const hasGhostscript = await ghostscriptOk();
+
 let t: TestBrowser;
 
 beforeAll(async () => {
@@ -190,24 +195,27 @@ describe('harness units (no browser)', () => {
     expect(checkFindings([bogus])).toContain('unknown severity');
   });
 
-  test('ghostscript is present and the producer yields both shapes', async () => {
-    expect(await ghostscriptOk()).toBe(true);
-    const dir = await mkdtemp(join(tmpdir(), 'letterpress-fuzzexotic-'));
-    try {
-      const base = assemblePdf([
-        '<< /Type /Catalog /Pages 2 0 R >>',
-        '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>',
-      ]);
-      const files = await exoticCorpus([base], dir);
-      expect(files.length).toBeGreaterThan(0);
-      expect(files.some((f) => f.kind === 'linearized')).toBe(true);
-      expect(files.some((f) => f.kind === 'encrypted')).toBe(true);
-      for (const f of files) {
-        expect(fuzzExoticFile(f).failures).toEqual([]);
+  test.skipIf(!hasGhostscript)(
+    'ghostscript producer yields both shapes',
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'letterpress-fuzzexotic-'));
+      try {
+        const base = assemblePdf([
+          '<< /Type /Catalog /Pages 2 0 R >>',
+          '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+          '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>',
+        ]);
+        const files = await exoticCorpus([base], dir);
+        expect(files.length).toBeGreaterThan(0);
+        expect(files.some((f) => f.kind === 'linearized')).toBe(true);
+        expect(files.some((f) => f.kind === 'encrypted')).toBe(true);
+        for (const f of files) {
+          expect(fuzzExoticFile(f).failures).toEqual([]);
+        }
+      } finally {
+        await rm(dir, { recursive: true, force: true }).catch(() => {});
       }
-    } finally {
-      await rm(dir, { recursive: true, force: true }).catch(() => {});
-    }
-  }, 120_000);
+    },
+    120_000,
+  );
 });

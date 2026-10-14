@@ -1,12 +1,7 @@
 /**
- * Shared PDF builders for the suite.
- *
- * Four test files each assembled minimal PDFs by hand -- numbered objects, an xref
- * table, a trailer -- with the same loop written four ways. jscpd counts lines, so
- * every near-identical builder is duplication debt, and a fix to the assembly logic
- * would have to land in four places. One assembler, with the two real variations
- * (a binary stream payload, a custom trailer) as parameters and every byte otherwise
- * identical to what the inline builders produced.
+ * One PDF assembler for the four suites that built fixtures by hand, with the two
+ * real variations (a binary stream payload, a custom trailer) as parameters.
+ * Byte-identical to the inline builders it replaced.
  */
 import { deflateSync } from 'node:zlib';
 

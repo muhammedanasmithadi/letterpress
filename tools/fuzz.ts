@@ -143,8 +143,7 @@ function block(r: () => number, depth: number): string {
       items += `<li>${words(r, 6)}${depth < 2 && r() < 0.25 ? `<ul><li>${words(r, 5)}</li></ul>` : ''}</li>`;
     }
     const tag = r() < 0.5 ? 'ul' : 'ol';
-    // The closing tag rolls again, so mismatches occur; see above.
-    const close = r() < 0.5 ? 'ul' : 'ol';
+    const close = r() < 0.5 ? 'ul' : 'ol'; // rolls again: mismatches occur, see above
     return `<${tag}>${items}</${close}>`;
   }
   if (kind < 0.64) {
@@ -231,8 +230,7 @@ export async function fuzzOne(
   try {
     out = await render(browser, {
       html,
-      // Vary the request, not just the document: the metadata, paper and page-range
-      // paths all reshape the output the invariants check.
+      // The metadata, paper and page-range paths all reshape the checked output.
       ...(r() < 0.2 ? {} : { author: 'fuzz' }),
       ...(r() < 0.15 ? { format: 'a4' as const, landscape: r() < 0.5 } : {}),
       ...(r() < 0.1 ? { pageRanges: '1-1' } : {}),

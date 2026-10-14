@@ -59,25 +59,21 @@ export function mutate(
   const buf = Buffer.from(pdf);
   switch (kind % 6) {
     case 0: {
-      // Flip bytes throughout.
       const n = 1 + pick(8);
       for (let i = 0; i < n; i++) buf[pick(buf.length)] = pick(256);
       return { bytes: buf, name: `flip${n}` };
     }
     case 1: {
-      // Truncate.
       if (buf.length < 8) return { bytes: buf.subarray(0, 1), name: 'trunc1' };
       return { bytes: buf.subarray(0, 4 + pick(buf.length - 4)), name: 'truncate' };
     }
     case 2: {
-      // Delete a span.
       if (buf.length < 16) return { bytes: buf.subarray(0, 0), name: 'empty' };
       const at = pick(buf.length);
       const len = 1 + pick(Math.min(400, buf.length - at));
       return { bytes: Buffer.concat([buf.subarray(0, at), buf.subarray(at + len)]), name: 'cut' };
     }
     case 3: {
-      // Duplicate a span.
       if (buf.length < 8) return { bytes: Buffer.concat([buf, buf]), name: 'double' };
       const at = pick(buf.length);
       const len = 1 + pick(Math.min(200, buf.length - at));
@@ -97,7 +93,6 @@ export function mutate(
       return { bytes: Buffer.from(s, 'latin1'), name: 'lie' };
     }
     default: {
-      // Splice in PDF-shaped garbage.
       const junk = Buffer.from(`${pick(99)} 0 obj\n<< /Type /Junk >>\nendobj\n`, 'latin1');
       const at = pick(buf.length + 1);
       return {

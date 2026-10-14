@@ -34,14 +34,11 @@ const AUDIT = String.raw`
   // ---- 3. paged-media functions Chromium does not implement ------------
   // Chromium discards an entire 'content' declaration when it meets one of
   // these, so a table of contents built on target-counter renders as nothing,
-  // silently.
-  //
-  // The CSSOM scan below cannot see every case: for leader(), string() and running()
-  // the rule's cssText is already an empty block by the time it runs (verified in the
-  // page), so a scan of the computed rules finds nothing. The document's own <style>
-  // text still has the declaration, so it is scanned too. Linked stylesheets cannot be
-  // read synchronously -- a same-origin <link> whose declaration was discarded is the
-  // one case this still cannot see, and that limit is stated rather than hidden.
+  // silently. The CSSOM scan below cannot see every case: for leader(), string()
+  // and running() the rule's cssText is already an empty block by the time it runs
+  // (verified in the page), so the document's own <style> text is scanned too, plus
+  // same-origin linked sheets fetched before this script ran. A remote sheet fails
+  // the fetch and stays invisible.
   const unsupported = { "target-counter": 1, "target-text": 1, "leader(": 1, "string(": 1, "running(": 1 };
   const seenCss = {};
   const unsupportedMessage = (name, where) =>
@@ -86,12 +83,6 @@ const AUDIT = String.raw`
       "layout findings cover only the stylesheets on this origin.",
       { unreadable: unreadableSheets });
   }
-  // The declarations Chromium discarded before the CSSOM scan could see them. The
-  // document's own <style> elements read synchronously; linked sheets were fetched
-  // into globalThis.__letterpressLinkedCss before this script ran, because a
-  // synchronous audit cannot fetch. A same-origin <link> whose declaration was
-  // discarded is covered; a remote one fails the fetch and stays invisible.
-  //
   // Precision matters more than recall here, because these names also occur as ordinary
   // words. Comments, quoted strings and everything outside a content: declaration are
   // stripped first, so content:"a string( of text" and /* content:leader('.') */ stay

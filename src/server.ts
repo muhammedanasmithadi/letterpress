@@ -135,6 +135,104 @@ function hostAllowed(host: string | null): boolean {
   return /^\d{1,5}$/.test(port) && Number(port) <= 65535;
 }
 
+/**
+ * Every field check on a render body, in the order the handler answers them.
+ *
+ * Order is load-bearing: the first failure wins, and tests assert specific errors
+ * for bodies wrong in several ways at once. Returns the error message, or null
+ * when the body is well-formed.
+ */
+function invalidBody(body: RenderBody): string | null {
+  if (body.path !== undefined) return 'path is not accepted. send the html.';
+  if (typeof body.html !== 'string') return 'send html as a string';
+
+  if (body.format !== undefined && typeof body.format !== 'string') {
+    return `format must be a string, got ${Array.isArray(body.format) ? 'array' : typeof body.format}`;
+  }
+  const format = typed(body.format);
+  if (format !== undefined && !Object.hasOwn(FORMATS, String(format).toLowerCase())) {
+    return `unknown format "${format}". try: ${Object.keys(FORMATS).join(', ')}`;
+  }
+  if (body.pageRanges !== undefined && typeof body.pageRanges !== 'string') {
+    return 'pageRanges must be a string like "1-3"';
+  }
+
+  if (body.margin !== undefined) {
+    if (typeof body.margin !== 'string') return 'margin must be a string like "15mm"';
+    const m = body.margin.trim();
+
+    const isLength = /^0(?:\.0+)?$/.test(m) || /^-?\d*\.?\d+(mm|cm|in|pt|px|pc|q)$/.test(m);
+    if (m && !isLength) {
+      return (
+        `margin "${body.margin}" is not an absolute css length. use mm, cm, in, pt, pc, ` +
+        `px or a bare 0, such as 15mm or 1in. relative units like em and vw depend on layout ` +
+        `and cannot be resolved before the page is printed.`
+      );
+    }
+    if (!Object.hasOwn(FORMATS, String(format ?? '').toLowerCase())) {
+      return (
+        "margin only applies alongside format, because a document's own @page margin wins otherwise. " +
+        'send format too, or drop the margin.'
+      );
+    }
+  }
+  for (const key of ['printBackground', 'allowNetwork', 'landscape'] as const) {
+    if (body[key] !== undefined && typeof body[key] !== 'boolean') {
+      return `${key} must be true or false`;
+    }
+  }
+  for (const key of ['maxImagePpi', 'settleMs', 'timeoutMs'] as const) {
+    if (body[key] === undefined || body[key] === null) continue;
+    if (typeof body[key] !== 'number' || !Number.isFinite(body[key])) {
+      return `${key} must be a number`;
+    }
+  }
+
+  if (
+    body.responseFormat !== undefined &&
+    body.responseFormat !== null &&
+    body.responseFormat !== 'json' &&
+    body.responseFormat !== 'pdf'
+  ) {
+    return `responseFormat must be "json" or "pdf", got "${String(body.responseFormat)}"`;
+  }
+
+  for (const key of ['author', 'subject', 'keywords'] as const) {
+    if (body[key] !== undefined && body[key] !== null && typeof body[key] !== 'string') {
+      return `${key} must be a string`;
+    }
+  }
+  return null;
+}
+
+/**
+ * The PDF-byte response: headers carry the report because the body cannot.
+ * The status stays 200 for error findings -- the PDF is real and was asked for;
+ * x-letterpress-errors is how a client tells a clean render from a failed one.
+ */
+function pdfResponse(result: {
+  pdf: Uint8Array;
+  info: { pages: number; tagged: boolean };
+  ms: number;
+  findings: Array<{ severity: string; code: string }>;
+}): Response {
+  const errors = result.findings.filter((f) => f.severity === 'error').map((f) => f.code);
+  const headers = new Headers({
+    'content-type': 'application/pdf',
+    'content-length': String(result.pdf.byteLength),
+    'x-letterpress-pages': String(result.info.pages),
+    'x-letterpress-ms': String(result.ms),
+    'x-letterpress-tagged': String(result.info.tagged),
+    'x-letterpress-findings': String(result.findings.length),
+    'x-letterpress-errors': errors.join(','),
+  });
+
+  return new Response(result.pdf as unknown as BodyInit, {
+    status: 200,
+    headers,
+  });
+}
+
 function badRequest(message: string) {
   return Response.json({ ok: false, error: message }, { status: 400 });
 }
@@ -361,69 +459,9 @@ export async function startServer(opts: ServerOptions = {}) {
           return badRequest('body must be a JSON object');
         }
 
-        if (body.path !== undefined) {
-          return badRequest('path is not accepted. send the html.');
-        }
-        if (typeof body.html !== 'string') {
-          return badRequest('send html as a string');
-        }
-
-        if (body.format !== undefined && typeof body.format !== 'string') {
-          return badRequest(
-            `format must be a string, got ${Array.isArray(body.format) ? 'array' : typeof body.format}`,
-          );
-        }
+        const invalid = invalidBody(body);
+        if (invalid) return badRequest(invalid);
         const format = typed(body.format);
-        if (format !== undefined && !Object.hasOwn(FORMATS, String(format).toLowerCase())) {
-          return badRequest(`unknown format "${format}". try: ${Object.keys(FORMATS).join(', ')}`);
-        }
-        if (body.pageRanges !== undefined && typeof body.pageRanges !== 'string') {
-          return badRequest('pageRanges must be a string like "1-3"');
-        }
-
-        if (body.margin !== undefined) {
-          if (typeof body.margin !== 'string') {
-            return badRequest('margin must be a string like "15mm"');
-          }
-          const m = body.margin.trim();
-
-          const isLength = /^0(?:\.0+)?$/.test(m) || /^-?\d*\.?\d+(mm|cm|in|pt|px|pc|q)$/.test(m);
-          if (m && !isLength) {
-            return badRequest(
-              `margin "${body.margin}" is not an absolute css length. use mm, cm, in, pt, pc, ` +
-                `px or a bare 0, such as 15mm or 1in. relative units like em and vw depend on layout ` +
-                `and cannot be resolved before the page is printed.`,
-            );
-          }
-          if (!Object.hasOwn(FORMATS, String(format ?? '').toLowerCase())) {
-            return badRequest(
-              "margin only applies alongside format, because a document's own @page margin wins otherwise. " +
-                'send format too, or drop the margin.',
-            );
-          }
-        }
-        for (const key of ['printBackground', 'allowNetwork', 'landscape'] as const) {
-          if (body[key] !== undefined && typeof body[key] !== 'boolean') {
-            return badRequest(`${key} must be true or false`);
-          }
-        }
-        for (const key of ['maxImagePpi', 'settleMs', 'timeoutMs'] as const) {
-          if (body[key] === undefined || body[key] === null) continue;
-          if (typeof body[key] !== 'number' || !Number.isFinite(body[key])) {
-            return badRequest(`${key} must be a number`);
-          }
-        }
-
-        if (
-          body.responseFormat !== undefined &&
-          body.responseFormat !== null &&
-          body.responseFormat !== 'json' &&
-          body.responseFormat !== 'pdf'
-        ) {
-          return badRequest(
-            `responseFormat must be "json" or "pdf", got "${String(body.responseFormat)}"`,
-          );
-        }
 
         // Clamped to at least 1ms. `timeoutMs: 0` is a number, so it passed the numeric
         // check, and `render` reads it with `?? DEFAULT`, which keeps the 0. The deadline then
@@ -446,12 +484,6 @@ export async function startServer(opts: ServerOptions = {}) {
           if (typeof n !== 'number' || !Number.isFinite(n) || n < 1) return undefined;
           return Math.min(n, MAX_TIMEOUT_MS);
         };
-
-        for (const key of ['author', 'subject', 'keywords'] as const) {
-          if (body[key] !== undefined && body[key] !== null && typeof body[key] !== 'string') {
-            return badRequest(`${key} must be a string`);
-          }
-        }
 
         const slot = acquire();
         if (!slot) {
@@ -518,34 +550,7 @@ export async function startServer(opts: ServerOptions = {}) {
             }
 
             if (body.responseFormat === 'pdf') {
-              // A caller that asked for the PDF gets no body to read findings out of, so
-              // x-letterpress-findings -- a bare count -- was the whole of what it learned
-              // about a render that had failed. A document with an unfilled placeholder is
-              // an error-severity finding and still a perfectly valid PDF on a 200, so the
-              // count said 2 and neither number said one of them was a failure.
-              //
-              // The status stays 200: the PDF is real and the client asked for it. Lying
-              // about the status to carry a warning would break every existing caller, and
-              // refusing to serve would throw away work the client wants. The error codes
-              // go in a header instead, and codes are kebab-case so the value is ASCII and
-              // carries no quoting hazards.
-              const errors = result.findings
-                .filter((f) => f.severity === 'error')
-                .map((f) => f.code);
-              const headers = new Headers({
-                'content-type': 'application/pdf',
-                'content-length': String(result.pdf.byteLength),
-                'x-letterpress-pages': String(result.info.pages),
-                'x-letterpress-ms': String(result.ms),
-                'x-letterpress-tagged': String(result.info.tagged),
-                'x-letterpress-findings': String(result.findings.length),
-                'x-letterpress-errors': errors.join(','),
-              });
-
-              return new Response(result.pdf as unknown as BodyInit, {
-                status: 200,
-                headers,
-              });
+              return pdfResponse(result);
             }
 
             return Response.json({

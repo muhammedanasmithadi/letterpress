@@ -1,9 +1,9 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Browser } from '/home/anas/Projects/html2pdf/src/browser.ts';
-import { render } from '/home/anas/Projects/html2pdf/src/render.ts';
-import { streamRange, trySplit } from '/home/anas/Projects/html2pdf/src/pdfparts.ts';
+import { Browser } from '../src/browser.ts';
+import { render } from '../src/render.ts';
+import { streamRange, trySplit } from '../src/pdfparts.ts';
 
 function xrefOk(pdf: Uint8Array): { ok: boolean; why: string } {
   const parts = trySplit(pdf);

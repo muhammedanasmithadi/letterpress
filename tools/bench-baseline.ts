@@ -1,11 +1,11 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Browser } from '/home/anas/Projects/html2pdf/src/browser.ts';
-import { render } from '/home/anas/Projects/html2pdf/src/render.ts';
-import { fixFontDescriptors } from '/home/anas/Projects/html2pdf/src/fontdesc.ts';
-import { fixToUnicode } from '/home/anas/Projects/html2pdf/src/tounicode.ts';
-import { addMetadata } from '/home/anas/Projects/html2pdf/src/meta.ts';
+import { Browser } from '../src/browser.ts';
+import { render } from '../src/render.ts';
+import { fixFontDescriptors } from '../src/fontdesc.ts';
+import { fixToUnicode } from '../src/tounicode.ts';
+import { addMetadata } from '../src/meta.ts';
 
 function doc(sections: number) {
   const body = Array.from(

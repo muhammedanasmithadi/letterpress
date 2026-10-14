@@ -1,9 +1,9 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Browser } from '/home/anas/Projects/html2pdf/src/browser.ts';
-import { render } from '/home/anas/Projects/html2pdf/src/render.ts';
-import { verify } from '/home/anas/Projects/html2pdf/src/verify.ts';
+import { Browser } from '../src/browser.ts';
+import { render } from '../src/render.ts';
+import { verify } from '../src/verify.ts';
 function doc(n: number) {
   const body = Array.from(
     { length: n },

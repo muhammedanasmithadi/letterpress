@@ -1,11 +1,27 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Browser } from '/home/anas/Projects/html2pdf/src/browser.ts';
-import { render } from '/home/anas/Projects/html2pdf/src/render.ts';
+import { Browser } from '../src/browser.ts';
+import { render } from '../src/render.ts';
 import { readFileSync } from 'node:fs';
 
-const html = readFileSync('/tmp/opencode/big/doc2000.html', 'utf8');
+// The transfer bench needs a big document; it used to read one from a scratch
+// path that exists on no machine but the author's. Generated deterministically
+// instead, with BIG_DOC as an explicit override (a missing override fails loudly
+// on the caller's own path, as before).
+function bigDoc(): string {
+  if (process.env.BIG_DOC) return readFileSync(process.env.BIG_DOC, 'utf8');
+  return (
+    `<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:15mm}.s{break-before:page}</style>` +
+    Array.from(
+      { length: 2000 },
+      (_, i) =>
+        `<div class="s"><h1>Section ${i + 1}</h1><p>Body text for the transfer run.</p></div>`,
+    ).join('')
+  );
+}
+
+const html = bigDoc();
 
 function rssTree(pid: number): number {
   let total = 0;

@@ -1,8 +1,8 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Browser } from '/home/anas/Projects/html2pdf/src/browser.ts';
-import { render } from '/home/anas/Projects/html2pdf/src/render.ts';
+import { Browser } from '../src/browser.ts';
+import { render } from '../src/render.ts';
 const html = `<!doctype html><meta charset="utf-8"><title>Format</title>
 <style>@page{size:A4;margin:12mm}</style><h1>Report</h1><p>office efficient flags finished</p>`;
 const profile = await mkdtemp(join(tmpdir(), 'lp-d2-'));

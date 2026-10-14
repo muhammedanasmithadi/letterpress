@@ -229,6 +229,25 @@ function checkMeta(body: RenderBody): string | null {
   return null;
 }
 
+/** Clamp an optional numeric field into [0, max], leaving it unset when absent. */
+function clamp(value: unknown, max: number, fallback: number | undefined): number | undefined {
+  const n = typed(value);
+  if (typeof n !== 'number' || !Number.isFinite(n)) return fallback;
+  return Math.min(Math.max(n, 0), max);
+}
+
+// A deadline below a millisecond is not a deadline. `timeoutMs: 0` is a number, so
+// it passed the numeric check, and `render` reads it with `?? DEFAULT`, which keeps
+// the 0. The deadline expired on the next tick and the caller got a 500 about a cdp
+// socket, while the CLI refused the same input with a usage error. Clamping to 1ms
+// would be no better -- still a deadline that cannot be met -- so a value that small
+// falls back to the default rather than pretending otherwise.
+function deadline(value: unknown): number | undefined {
+  const n = typed(value);
+  if (typeof n !== 'number' || !Number.isFinite(n) || n < 1) return undefined;
+  return Math.min(n, MAX_TIMEOUT_MS);
+}
+
 function invalidBody(body: RenderBody): string | null {
   return (
     checkPathHtml(body) ??
@@ -504,24 +523,6 @@ export async function startServer(opts: ServerOptions = {}) {
         // check, and `render` reads it with `?? DEFAULT`, which keeps the 0. The deadline then
         // expired on the next tick and the caller got a 500 about a cdp socket. The CLI
         // refuses the same input with a usage error, so the two disagreed as well.
-        const clamp = (value: unknown, max: number, fallback: number): number => {
-          const n = typed(value);
-          if (typeof n !== 'number' || !Number.isFinite(n)) return fallback;
-          return Math.min(Math.max(n, 0), max);
-        };
-
-        // A deadline below a millisecond is not a deadline. `timeoutMs: 0` is a number, so
-        // it passed the numeric check, and `render` reads it with `?? DEFAULT`, which keeps
-        // the 0. The deadline expired on the next tick and the caller got a 500 about a cdp
-        // socket, while the CLI refused the same input with a usage error. Clamping to 1ms
-        // would be no better -- still a deadline that cannot be met -- so a value that small
-        // falls back to the default rather than pretending otherwise.
-        const deadline = (value: unknown): number | undefined => {
-          const n = typed(value);
-          if (typeof n !== 'number' || !Number.isFinite(n) || n < 1) return undefined;
-          return Math.min(n, MAX_TIMEOUT_MS);
-        };
-
         const slot = acquire();
         if (!slot) {
           return Response.json(
@@ -563,10 +564,8 @@ export async function startServer(opts: ServerOptions = {}) {
               keywords:
                 typeof body.keywords === 'string' ? body.keywords.trim() || undefined : undefined,
               pageRanges: body.pageRanges,
-              maxImagePpi: clamp(body.maxImagePpi, 1200, undefined as unknown as number),
-              settleMs: clamp(body.settleMs, MAX_SETTLE_MS, undefined as unknown as number),
-              // A deadline of 0 expires on the next tick and turns into a 500 about a cdp
-              // socket, so the floor here is 1ms rather than 0.
+              maxImagePpi: clamp(body.maxImagePpi, 1200, undefined),
+              settleMs: clamp(body.settleMs, MAX_SETTLE_MS, undefined),
               timeoutMs: deadline(body.timeoutMs),
 
               transfer: 'stream',

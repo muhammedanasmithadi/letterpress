@@ -139,13 +139,16 @@ function hostAllowed(host: string | null): boolean {
  * Every field check on a render body, in the order the handler answers them.
  *
  * Order is load-bearing: the first failure wins, and tests assert specific errors
- * for bodies wrong in several ways at once. Returns the error message, or null
- * when the body is well-formed.
+ * for bodies wrong in several ways at once. One function per field group keeps each
+ * under the complexity ratchet; invalidBody below runs them in order.
  */
-function invalidBody(body: RenderBody): string | null {
+function checkPathHtml(body: RenderBody): string | null {
   if (body.path !== undefined) return 'path is not accepted. send the html.';
   if (typeof body.html !== 'string') return 'send html as a string';
+  return null;
+}
 
+function checkFormat(body: RenderBody): string | null {
   if (body.format !== undefined && typeof body.format !== 'string') {
     return `format must be a string, got ${Array.isArray(body.format) ? 'array' : typeof body.format}`;
   }
@@ -153,41 +156,59 @@ function invalidBody(body: RenderBody): string | null {
   if (format !== undefined && !Object.hasOwn(FORMATS, String(format).toLowerCase())) {
     return `unknown format "${format}". try: ${Object.keys(FORMATS).join(', ')}`;
   }
+  return null;
+}
+
+function checkPageRanges(body: RenderBody): string | null {
   if (body.pageRanges !== undefined && typeof body.pageRanges !== 'string') {
     return 'pageRanges must be a string like "1-3"';
   }
+  return null;
+}
 
-  if (body.margin !== undefined) {
-    if (typeof body.margin !== 'string') return 'margin must be a string like "15mm"';
-    const m = body.margin.trim();
+function checkMargin(body: RenderBody): string | null {
+  if (body.margin === undefined) return null;
+  if (typeof body.margin !== 'string') return 'margin must be a string like "15mm"';
+  const m = body.margin.trim();
 
-    const isLength = /^0(?:\.0+)?$/.test(m) || /^-?\d*\.?\d+(mm|cm|in|pt|px|pc|q)$/.test(m);
-    if (m && !isLength) {
-      return (
-        `margin "${body.margin}" is not an absolute css length. use mm, cm, in, pt, pc, ` +
-        `px or a bare 0, such as 15mm or 1in. relative units like em and vw depend on layout ` +
-        `and cannot be resolved before the page is printed.`
-      );
-    }
-    if (!Object.hasOwn(FORMATS, String(format ?? '').toLowerCase())) {
-      return (
-        "margin only applies alongside format, because a document's own @page margin wins otherwise. " +
-        'send format too, or drop the margin.'
-      );
-    }
+  const isLength = /^0(?:\.0+)?$/.test(m) || /^-?\d*\.?\d+(mm|cm|in|pt|px|pc|q)$/.test(m);
+  if (m && !isLength) {
+    return (
+      `margin "${body.margin}" is not an absolute css length. use mm, cm, in, pt, pc, ` +
+      `px or a bare 0, such as 15mm or 1in. relative units like em and vw depend on layout ` +
+      `and cannot be resolved before the page is printed.`
+    );
   }
+  const format = typed(body.format);
+  if (!Object.hasOwn(FORMATS, String(format ?? '').toLowerCase())) {
+    return (
+      "margin only applies alongside format, because a document's own @page margin wins otherwise. " +
+      'send format too, or drop the margin.'
+    );
+  }
+  return null;
+}
+
+function checkFlags(body: RenderBody): string | null {
   for (const key of ['printBackground', 'allowNetwork', 'landscape'] as const) {
     if (body[key] !== undefined && typeof body[key] !== 'boolean') {
       return `${key} must be true or false`;
     }
   }
+  return null;
+}
+
+function checkNumbers(body: RenderBody): string | null {
   for (const key of ['maxImagePpi', 'settleMs', 'timeoutMs'] as const) {
     if (body[key] === undefined || body[key] === null) continue;
     if (typeof body[key] !== 'number' || !Number.isFinite(body[key])) {
       return `${key} must be a number`;
     }
   }
+  return null;
+}
 
+function checkResponseFormat(body: RenderBody): string | null {
   if (
     body.responseFormat !== undefined &&
     body.responseFormat !== null &&
@@ -196,13 +217,29 @@ function invalidBody(body: RenderBody): string | null {
   ) {
     return `responseFormat must be "json" or "pdf", got "${String(body.responseFormat)}"`;
   }
+  return null;
+}
 
+function checkMeta(body: RenderBody): string | null {
   for (const key of ['author', 'subject', 'keywords'] as const) {
     if (body[key] !== undefined && body[key] !== null && typeof body[key] !== 'string') {
       return `${key} must be a string`;
     }
   }
   return null;
+}
+
+function invalidBody(body: RenderBody): string | null {
+  return (
+    checkPathHtml(body) ??
+    checkFormat(body) ??
+    checkPageRanges(body) ??
+    checkMargin(body) ??
+    checkFlags(body) ??
+    checkNumbers(body) ??
+    checkResponseFormat(body) ??
+    checkMeta(body)
+  );
 }
 
 /**

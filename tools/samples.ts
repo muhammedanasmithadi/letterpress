@@ -11,7 +11,7 @@ import { Browser } from '../src/browser.ts';
 import { render } from '../src/render.ts';
 import { pdfInfo, pdfText, pdfWords } from '../test/poppler.ts';
 
-const OUT = join(tmpdir(), 'letterpress-samples');
+const OUT = process.env.SAMPLES_OUT ?? join(tmpdir(), 'letterpress-samples');
 
 type Doc = { name: string; note: string; html: string };
 

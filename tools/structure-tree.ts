@@ -146,8 +146,16 @@ if (import.meta.main) {
     console.error('usage: bun tools/structure-tree.ts <file.pdf> ...');
     process.exit(2);
   }
+  let failed = false;
   for (const file of files) {
-    const pdf = new Uint8Array(readFileSync(file));
+    let pdf: Uint8Array;
+    try {
+      pdf = new Uint8Array(readFileSync(file));
+    } catch {
+      console.error(`cannot read ${file}`);
+      failed = true;
+      continue;
+    }
     console.log(`\n${file}`);
     for (const line of structureTree(pdf)) console.log(`  ${line}`);
     const blocks = markedContent(pdf);
@@ -165,4 +173,5 @@ if (import.meta.main) {
     if (ghosts.length)
       console.log(`  named by the tree, absent from the stream: ${ghosts.join(',')}`);
   }
+  if (failed) process.exit(1);
 }

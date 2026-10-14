@@ -400,7 +400,7 @@ escaped and printed.
 ## Development
 
 ```bash
-bun test          # 622 tests across 34 files
+bun test          # 642 tests across 35 files
 bun tools/selection.ts ~/Documents/a.html   # what a browser will do when a selection is dragged across it
 bun run bench     # cold start, concurrency and footprint, cross-runtime
 bun run typecheck

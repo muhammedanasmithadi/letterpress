@@ -327,7 +327,8 @@ function finish(opts: Options, rest: string[]): ParseResult {
   return { opts };
 }
 
-export function parseArgs(argv: string[]): ParseResult {  const opts: Options = {
+export function parseArgs(argv: string[]): ParseResult {
+  const opts: Options = {
     landscape: false,
     allowNetwork: false,
     background: true,

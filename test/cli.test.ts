@@ -293,6 +293,62 @@ describe('what exit code 1 means', () => {
     expect(help.stdout).toMatch(/not the document you asked for/);
   }, 90_000);
 });
+
+describe('argument parsing names the problem without launching a browser', () => {
+  test('unknown options and bad values are usage errors', () => {
+    expect(parseArgs(['--frobnicate', 'f.html']).error).toMatch(/unknown option "--frobnicate"/);
+    expect(parseArgs(['--format', 'a9', 'f.html']).error).toMatch(/unknown format "a9"/);
+    expect(parseArgs(['--margin']).error).toMatch(/option --margin needs a value/);
+    expect(parseArgs(['--margin', '--json', 'f.html']).error).toMatch(/needs a value/);
+    expect(parseArgs(['--max-image-ppi', 'lots', 'f.html']).error).toMatch(/needs a whole number/);
+    expect(parseArgs(['--timeout', 'abc', 'f.html']).error).toMatch(/needs at least 1000ms/);
+    expect(parseArgs(['--timeout', '999', 'f.html']).error).toMatch(/needs at least 1000ms/);
+    expect(parseArgs(['--settle', 'soon', 'f.html']).error).toMatch(/needs a whole number/);
+    expect(parseArgs(['--author', '  ', 'f.html']).error).toMatch(/--author needs a name/);
+    expect(parseArgs(['--subject', ' ', 'f.html']).error).toMatch(/--subject needs text/);
+    expect(parseArgs(['--keywords', '', 'f.html']).error).toMatch(/--keywords needs text/);
+  });
+
+  test('a missing option value throws a usage error', () => {
+    // valueAfter throws rather than returning an error: main catches it for
+    // exit 2, so the contract holds end to end, but parseArgs itself throws.
+    expect(() => parseArgs(['-o'])).toThrow(/option -o needs a value/);
+    expect(() => parseArgs(['--template', '--json'])).toThrow(/needs a value/);
+  });
+
+  test('structural mistakes name the combination, not the flag', () => {
+    expect(parseArgs(['--data', 'd.json']).error).toMatch(/--data needs --template/);
+    expect(parseArgs(['--template', 'invoice']).error).toMatch(/--template needs --data/);
+    expect(parseArgs(['a.html', 'b.html']).error).toMatch(/expected one input, got 2/);
+    expect(parseArgs([]).error).toMatch(/no input/);
+    expect(parseArgs(['--template', 'invoice', '--data', 'd.json', 'a.html']).error).toMatch(
+      /either an input file or --template/,
+    );
+    expect(parseArgs(['--margin', '15mm', 'a.html']).error).toMatch(/only applies with --format/);
+  });
+
+  test('good input parses to the documented defaults', () => {
+    const r = parseArgs(['page.html']);
+    expect(r.error).toBeUndefined();
+    expect(r.opts.input).toBe('page.html');
+    expect(r.opts).toMatchObject({
+      landscape: false,
+      allowNetwork: false,
+      background: true,
+      settleMs: 0,
+      timeoutMs: 30_000,
+      maxImagePpi: 300,
+      json: false,
+      quiet: false,
+    });
+    expect(
+      parseArgs(['-q', '--json', '--no-background', '--landscape', 'p.html']).opts,
+    ).toMatchObject({ quiet: true, json: true, background: false, landscape: true });
+    // A URL implies remote traffic is wanted.
+    expect(parseArgs(['https://example.com']).opts.allowNetwork).toBe(true);
+  });
+});
+
 test('help documents every parsed flag, and every documented flag parses', async () => {
   // Help text and the HANDLERS table drift apart silently: a flag added to one
   // and not the other is either undiscoverable or rejected. Both directions.

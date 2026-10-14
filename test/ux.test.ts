@@ -105,6 +105,21 @@ describe('input that is not html', () => {
     expect(message).toMatch(/null byte/);
   });
 
+  test('a binary magic header without a NUL byte is refused', async () => {
+    // A minimal PNG signature has no NUL byte in its first eight bytes, so the
+    // old UTF-8 text decode turned every byte into U+FFFD and the magic regex
+    // could never match. Detection must run on the raw bytes.
+    const p = join(dir, 'header-only.png');
+    await writeFile(p, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    let message = '';
+    try {
+      await render(browser, { path: p });
+    } catch (e) {
+      message = e instanceof Error ? e.message : String(e);
+    }
+    expect(message).toMatch(/it is a PNG/);
+  });
+
   test('the message tells the user what to do, not just what happened', async () => {
     const p = join(dir, 'doc.jpg');
     await writeFile(p, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]));

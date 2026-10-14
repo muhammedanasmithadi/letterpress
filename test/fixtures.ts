@@ -3,7 +3,8 @@
  * real variations (a binary stream payload, a custom trailer) as parameters.
  * Byte-identical to the inline builders it replaced.
  */
-import { deflateSync } from 'node:zlib';
+import { deflateSync, inflateSync } from 'node:zlib';
+import { streamRange, trySplit } from '../src/pdfparts.ts';
 
 export const LATIN1 = 'latin1' as BufferEncoding;
 
@@ -70,4 +71,21 @@ export function assemblePdf(
 /** The deflated-then-assembled round trip every font/CMap fixture needs. */
 export function deflated(data: string | Buffer): Buffer {
   return deflateSync(typeof data === 'string' ? Buffer.from(data, LATIN1) : data);
+}
+
+/**
+ * The decoded body of one stream object, so a fixture can be checked rather than assumed.
+ *
+ * A fixture that quietly differs from the one the test was written against passes for a
+ * reason that has nothing to do with the thing under test, and a test that asserts against
+ * the wrong fixture is worse than no test. `FlateDecode` is detected from the first bytes of
+ * the object rather than from a flag, because the flag is what is being faked here.
+ */
+export function streamText(pdf: Uint8Array, num: number): string {
+  const o = trySplit(pdf)!.objs.find((x) => x.num === num)!;
+  const range = streamRange(o.bytes)!;
+  const raw = o.bytes.subarray(range.start, range.end);
+  return (/FlateDecode/.test(o.bytes.toString(LATIN1, 0, 120)) ? inflateSync(raw) : raw).toString(
+    LATIN1,
+  );
 }

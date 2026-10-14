@@ -38,6 +38,25 @@ test('a live rule after a closed comment is still found', () => {
   expect(pageRules('<!-- @page{size:A4} --><style>@page{size:A3}</style>')).toHaveLength(1);
 });
 
+test('an apostrophe in a CSS comment is not a string delimiter', () => {
+  // The same defect from the other side. Stripping quoted strings before CSS comments let
+  // the apostrophe in `trade's` open a string, which then closed at the next quote in the
+  // document -- the one in `content: 'The Estuary Chronicle'` -- and swallowed the whole
+  // @page rule in between. `declaredPageSize` answered null, `preferCSSPageSize` was never
+  // turned on, no paper was sent, and a ledger-landscape newspaper printed on A4 with no
+  // finding at all.
+  //
+  // The comment has to be closed by a second quote for the phantom string to close on
+  // something, so the fixture carries one. A comment holding the document's only quote
+  // does not reproduce it, which is why a shorter fixture would have looked fine.
+  const html =
+    "<style>\n/* the trade's word for it */\n" +
+    "@page { size: ledger landscape; margin: 10mm; @bottom-left { content: 'X' } }\n" +
+    '</style>';
+  expect(declaredPageSize(html)).toBe('ledger landscape');
+  expect(pageRules(html)).toHaveLength(1);
+});
+
 test('text that is not a stylesheet is not a page rule', () => {
   // The same defect, four more sources of text that is not CSS. Each one reads back as a
   // live declaration, and a live declaration turns off the paper sent to Chromium.

@@ -153,12 +153,21 @@ export function pageRules(html: string): string[] {
     styles
       .flatMap((m) => m[1] ?? [])
       .join('\n')
+      // Comments before strings, for the same reason the HTML comments go first above:
+      // the comment is the outer container, and an apostrophe inside one is not a
+      // delimiter. Stripping the other way round, `/* it's fine */` opened a string at
+      // the apostrophe and closed it at the next quote anywhere in the document, which
+      // swallowed the `@page` rule whole. Nothing below could then match it, so
+      // `declaredPageSize` answered null, `preferCSSPageSize` was turned off, and a
+      // ledger-landscape newspaper printed on a letter sheet with no finding -- the
+      // exact failure this function exists to prevent, caused by a comment that
+      // mentioned nothing at all.
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
       // Quoted strings next, for the same reason. A `@page` rule takes keywords, lengths
       // and colours; it cannot hold a string literal, so a string that looks like one is
       // text and not a declaration. This also keeps a brace inside `content: "}"` from
       // ending the match early.
       .replace(/"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'/g, '""')
-      .replace(/\/\*[\s\S]*?\*\//g, ' ')
       .match(/@page[^{]*\{[^}]*\}/gi) ?? []
   );
 }

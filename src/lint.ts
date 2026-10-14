@@ -113,7 +113,71 @@ const AUDIT = String.raw`
       "declaration, so the rule reads as an empty block. ");
   }
 
-  // ---- 4. digits at risk of bidi reordering in right-to-left text -------
+  // ---- 4. a page counter in a right-to-left margin box -------------------
+  // A margin box inherits the page's direction, so on a document with dir="rtl"
+  // the string "counter(page) ' / ' counter(pages)" is laid out right to left and
+  // page one prints "2 / 1". Nothing reorders it wrongly; the text is correct and
+  // the reading order is not.
+  //
+  // This is the same rule section 5 applies to a number in a paragraph, and it
+  // needs a separate check for a reason that is not duplication: a margin box
+  // holds no document text, so the paragraph walk never looks at it. Two runs
+  // separated by a slash are also not a "digit run" in the sense that section
+  // tests for, because neither run is reversed on its own -- the pair is.
+  //
+  // The fix is a declaration rather than markup, because a margin box cannot hold
+  // a <bdi>: direction:ltr on the box.
+  if (document.documentElement.dir === "rtl" ||
+      getComputedStyle(document.documentElement).direction === "rtl") {
+    const boxes = {};
+    const noteCounter = (ruleText) => {
+      // The counter can sit on the @page rule or on one of its margin boxes, and
+      // the fix has to go on the box that carries it, so each is reported by name.
+      const name = /@(top|bottom)-(left|center|right)/.exec(ruleText);
+      if (!name) return;
+      const key = name[0];
+      if (boxes[key]) return;
+      if (/direction\s*:\s*ltr/i.test(ruleText)) return;
+      if (!/counter\s*\(\s*(page|pages)/.test(unquoted(ruleText))) return;
+      boxes[key] = 1;
+    };
+    const scanBoxes = (rules) => {
+      for (const rule of rules || []) {
+        const text = rule.cssText || "";
+        if (/@page|@top-|@bottom-/.test(text)) noteCounter(text);
+        if (rule.cssRules && rule.cssRules.length) scanBoxes(rule.cssRules);
+      }
+    };
+    for (const sheet of document.styleSheets) {
+      // A cross-origin sheet throws here exactly as it does in section 3, and that
+      // sheet has already been counted by stylesheet-unreadable above. Counting it
+      // twice would report one cause under two codes.
+      try { scanBoxes(sheet.cssRules); } catch (e) { /* counted above */ }
+    }
+    // A margin box whose declaration Chromium already dropped is not in the CSSOM
+    // as a usable rule, so the source text is scanned as well -- the same reason
+    // and the same second pass section 3 makes.
+    const scanBoxText = (src) => {
+      for (const m of src.matchAll(/@(top|bottom)-(left|center|right)[^{]*\{([^}]*)\}/g)) {
+        noteCounter("@" + m[1] + "-" + m[2] + "{" + m[3] + "}");
+      }
+    };
+    for (const el of document.querySelectorAll("style")) scanBoxText(el.textContent || "");
+    for (const src of linked) if (typeof src === "string") scanBoxText(src);
+
+    const names = Object.keys(boxes);
+    if (names.length) {
+      add("rtl-page-counter", "warn",
+        "the " + names.length + " @page margin box" + (names.length === 1 ? "" : "es") +
+        " carrying a page counter (" + names.join(", ") + ") inherits the document's " +
+        "right-to-left direction, so the counters are laid out in reverse and page one " +
+        "of two prints \"2 / 1\". there is no markup to wrap here, because a margin box " +
+        "cannot hold a <bdi>. set direction:ltr on the box itself.",
+        { boxes: names });
+    }
+  }
+
+  // ---- 5. digits at risk of bidi reordering in right-to-left text -------
   // "2026-10-03" after Arabic renders as "03-10-2026": the hyphen is a neutral
   // separator, so the number groups are ordered right to left. Each group stays
   // internally correct, which is why it looks plausible and is still wrong.
@@ -231,7 +295,7 @@ const AUDIT = String.raw`
       { sample: samples.get(key), occurrences: count });
   }
 
-  // ---- 5. characters the chosen font cannot draw -----------------------
+  // ---- 6. characters the chosen font cannot draw -----------------------
   // Compare a rendered glyph against U+FFFE, which every font maps to .notdef.
   // Identical pixels means the real character is missing too.
   const missing = new Map();

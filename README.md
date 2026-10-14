@@ -36,6 +36,24 @@ bun src/cli.ts --template invoice --data order.json -o invoice.pdf
 Declare the paper in CSS. The document's own `@page` wins over the flags, which
 is what makes the page box exact.
 
+The CSS keyword is not always the name `--format` uses. `tabloid` is a `--format`
+value and the trade's word for 17 × 11 in; the CSS keyword for the same sheet is
+`ledger`. A `size` keyword CSS does not know is discarded, and the page comes out
+at Chromium's default letter with no finding and no error, so a newspaper written
+`size: tabloid landscape` prints as letter portrait.
+
+| `--format` | `@page { size: }` | sheet       |
+| ---------: | ----------------- | ----------- |
+|       `a3` | `A3`              | 297 × 420mm |
+|       `a4` | `A4`              | 210 × 297mm |
+|       `a5` | `A5`              | 148 × 210mm |
+|   `letter` | `letter`          | 8.5 × 11in  |
+|    `legal` | `legal`           | 8.5 × 14in  |
+|  `tabloid` | **`ledger`**      | 11 × 17in   |
+
+`ledger` is the only name here that differs. Orientation is a second word in both:
+`size: ledger landscape`.
+
 ```css
 @page {
   size: A4;
@@ -120,38 +138,39 @@ asked.
 `--quiet` does not silence them, because they are diagnostics rather than part
 of the summary.
 
-| code                        | meaning                                                                                                                      |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `orientation-ignored`       | `--landscape` was dropped: the document declares `@page size`                                                                |
-| `margin-ignored`            | `--margin` was dropped: the document declares `@page margin`                                                                 |
-| `page-size-override`        | `--format` disagrees with the document's `@page`; the declaration is stripped and the request applied                        |
-| `orientation-ignored`       | `--landscape` cannot apply: the document declares `@page size` and no `--format` was given                                   |
-| `rtl-digit-run`             | `2026-10-03` after Arabic prints as `03-10-2026`; wrap it in `<bdi dir="ltr">`                                               |
-| `missing-glyph`             | a character no installed font covers, so it prints as a blank box                                                            |
-| `unsupported-paged-media`   | a CSS paged-media function Chromium silently discards                                                                        |
-| `unfilled-placeholder`      | the document still contains `{{token}}`                                                                                      |
-| `json-rendered`             | a data file was printed as a document                                                                                        |
-| `network-blocked`           | a remote request was blocked, with its URL                                                                                   |
-| `subresource-failed`        | a referenced asset did not load, so the pdf will not look like the source                                                    |
-| `asset-outside-root`        | the document references a path outside its own directory, which was not read; pass `--root`                                  |
-| `selection-fragmented`      | a word gap is wider than 0.6 em, so a browser will break the selection into separate boxes at it                             |
-| `text-runs-merged`          | per-glyph text positioning folded into TJ arrays, glyph positions verified unchanged; also reports any block left alone      |
-| `asset-overwrites-document` | the document references a file named `input.html` or `override.html`, which was not staged because it would replace the page |
-| `audit-failed`              | the document checks could not run at all; a bug in letterpress, not in the document                                          |
-| `audit-partial`             | the document checks stopped part way; findings above the failure were measured, the rest were not                            |
-| `figure-role-corrected`     | a grouping `Figure` around a described inner figure was re-tagged `Div`                                                      |
-| `font-metrics`              | a font descriptor still carries a negative cap height, which a viewer may refuse to render text over                         |
-| `glyphs-skipped`            | further characters with no glyph are invisible formatting, so they are counted, not listed                                   |
-| `image-downsampled`         | an image was downsampled to the PPI cap; pass `--max-image-ppi 0` to disable                                                 |
-| `ligature-spans`            | redundant `/ActualText` spans around ligatures were removed; extraction verified unchanged                                   |
-| `metadata-authored`         | the document's own `<meta name="author">` was written as the pdf author                                                      |
-| `metadata-subject`          | the document's own `<meta name="subject">` was written as the pdf subject                                                    |
-| `orientation-overridden`    | `--format` with `--landscape` transposed the paper despite the document's `@page size`                                       |
-| `output-unverified`         | the finished file failed the structural check; an error, never a warning                                                     |
-| `page-probe-failed`         | a page-side probe threw, so its measurement is absent                                                                        |
-| `repair-rejected`           | a repair was discarded because it did not leave a valid pdf; the file is unchanged                                           |
-| `stylesheet-unreadable`     | a cross-origin stylesheet could not be read, so layout findings cover only this origin                                       |
-| `url-render-blocked`        | a remote URL needs `allowNetwork`; without it its subresource loads and usually the document itself is blocked               |
+| code                        | meaning                                                                                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `orientation-ignored`       | `--landscape` was dropped: the document declares `@page size`                                                                         |
+| `margin-ignored`            | `--margin` was dropped: the document declares `@page margin`                                                                          |
+| `page-size-override`        | `--format` disagrees with the document's `@page`; the declaration is stripped and the request applied                                 |
+| `orientation-ignored`       | `--landscape` cannot apply: the document declares `@page size` and no `--format` was given                                            |
+| `rtl-digit-run`             | `2026-10-03` after Arabic prints as `03-10-2026`; wrap it in `<bdi dir="ltr">`                                                        |
+| `rtl-page-counter`          | a page counter in an `@page` margin box is laid out right-to-left, so page one of two prints `2 / 1`; set `direction: ltr` on the box |
+| `missing-glyph`             | a character no installed font covers, so it prints as a blank box                                                                     |
+| `unsupported-paged-media`   | a CSS paged-media function Chromium silently discards                                                                                 |
+| `unfilled-placeholder`      | the document still contains `{{token}}`                                                                                               |
+| `json-rendered`             | a data file was printed as a document                                                                                                 |
+| `network-blocked`           | a remote request was blocked, with its URL                                                                                            |
+| `subresource-failed`        | a referenced asset did not load, so the pdf will not look like the source                                                             |
+| `asset-outside-root`        | the document references a path outside its own directory, which was not read; pass `--root`                                           |
+| `selection-fragmented`      | a word gap is wider than 0.6 em, so a browser will break the selection into separate boxes at it                                      |
+| `text-runs-merged`          | per-glyph text positioning folded into TJ arrays, glyph positions verified unchanged; also reports any block left alone               |
+| `asset-overwrites-document` | the document references a file named `input.html` or `override.html`, which was not staged because it would replace the page          |
+| `audit-failed`              | the document checks could not run at all; a bug in letterpress, not in the document                                                   |
+| `audit-partial`             | the document checks stopped part way; findings above the failure were measured, the rest were not                                     |
+| `figure-role-corrected`     | a grouping `Figure` around a described inner figure was re-tagged `Div`                                                               |
+| `font-metrics`              | a font descriptor still carries a negative cap height, which a viewer may refuse to render text over                                  |
+| `glyphs-skipped`            | further characters with no glyph are invisible formatting, so they are counted, not listed                                            |
+| `image-downsampled`         | an image was downsampled to the PPI cap; pass `--max-image-ppi 0` to disable                                                          |
+| `ligature-spans`            | redundant `/ActualText` spans around ligatures were removed; extraction verified unchanged                                            |
+| `metadata-authored`         | the document's own `<meta name="author">` was written as the pdf author                                                               |
+| `metadata-subject`          | the document's own `<meta name="subject">` was written as the pdf subject                                                             |
+| `orientation-overridden`    | `--format` with `--landscape` transposed the paper despite the document's `@page size`                                                |
+| `output-unverified`         | the finished file failed the structural check; an error, never a warning                                                              |
+| `page-probe-failed`         | a page-side probe threw, so its measurement is absent                                                                                 |
+| `repair-rejected`           | a repair was discarded because it did not leave a valid pdf; the file is unchanged                                                    |
+| `stylesheet-unreadable`     | a cross-origin stylesheet could not be read, so layout findings cover only this origin                                                |
+| `url-render-blocked`        | a remote URL needs `allowNetwork`; without it its subresource loads and usually the document itself is blocked                        |
 
 ### Findings over HTTP
 
@@ -238,6 +257,32 @@ A strong left-to-right character before the number protects it, so `ISO 8601:
 wrapped in `<bdi dir="ltr">`.
 
 It cannot fix the text for you.
+
+A second trap lives in the `@page` margin boxes, where there is no markup to wrap.
+A page counter is a generated string, and the margin box inherits the page
+direction, so on a document with `dir="rtl"` on `<html>`:
+
+```css
+@page {
+  @top-right {
+    content: counter(page) ' / ' counter(pages); /* page one prints 2 / 1 */
+  }
+}
+```
+
+The two number runs are reordered by the same bidi rule, and nothing reports it.
+Give the box its own direction:
+
+```css
+@top-right {
+  direction: ltr;
+  content: counter(page) ' / ' counter(pages);
+}
+```
+
+The `rtl-digit-run` finding does not cover this. It looks for a digit run in the
+document text, and a margin box holds no document text at all. The rendering is
+correct; the reading is not, which is why it has to be found by looking at the page.
 
 ## Selecting text in a browser
 

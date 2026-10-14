@@ -13,9 +13,9 @@
  * is the name collision, not the document.
  */
 import { describe, expect, test } from 'bun:test';
-import { join, trySplit, streamRange } from '../src/pdfparts.ts';
-import { inflateSync } from 'node:zlib';
+import { join } from '../src/pdfparts.ts';
 import { textFlow } from '../src/selection.ts';
+import { streamText as sharedStreamText } from './fixtures.ts';
 
 const BODY = (font: string): string =>
   `BT\n/${font} 10 Tf\n1 0 0 1 10 700 Tm\n<0001> Tj\n90 0 Td <0001> Tj\nET`;
@@ -61,12 +61,7 @@ function file(sharedName: boolean): Uint8Array {
 
 /** The text of a content stream, so the fixture can be checked rather than assumed. */
 function streamText(pdf: Uint8Array, num: number): string {
-  const o = trySplit(pdf)!.objs.find((x) => x.num === num)!;
-  const range = streamRange(o.bytes)!;
-  const raw = o.bytes.subarray(range.start, range.end);
-  return (/FlateDecode/.test(o.bytes.toString('latin1', 0, 120)) ? inflateSync(raw) : raw).toString(
-    'latin1',
-  );
+  return sharedStreamText(pdf, num);
 }
 
 describe('font resources are page-local', () => {

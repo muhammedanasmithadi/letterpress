@@ -32,9 +32,16 @@ export type FontTable = {
   unicodeOf: (code: number) => string;
 };
 
-/** The body of the `/Font` dictionary, to its matching `>>`. */
-function fontDictOf(dict: string): string {
-  const at = /\/Font\s*<</.exec(dict);
+/**
+ * The body of the dictionary at `/Key <<`, to its matching `>>`.
+ *
+ * A resource dictionary carries several sub-dictionaries that look alike --
+ * `/ExtGState <</G3 3 0 R>> /XObject <</X22 22 0 R>> /Font <</F4 4 0 R>>` -- so finding
+ * one by hand needs the same balanced scan, and a greedy or lazy search for the next
+ * `>>` lands inside whichever dictionary came first.
+ */
+function subDictOf(dict: string, key: string): string {
+  const at = new RegExp(`/${key}\\s*<<`).exec(dict);
   if (!at) return '';
   let depth = 0;
   for (let i = at.index + at[0].length - 2; i < dict.length - 1; i++) {
@@ -51,6 +58,11 @@ function fontDictOf(dict: string): string {
     }
   }
   return '';
+}
+
+/** The body of the `/Font` dictionary, to its matching `>>`. */
+function fontDictOf(dict: string): string {
+  return subDictOf(dict, 'Font');
 }
 
 /**
@@ -188,25 +200,105 @@ export function fontsByContent(
     const resObj = ref ? byNum.get(Number(ref)) : undefined;
     if (resObj) resDict = fontDictOf(dictOf(resObj)) || resDict;
 
-    const fonts = new Map<string, FontTable>();
-    for (const m of resDict.matchAll(/\/(\w+)\s+(\d+)\s+0\s+R/g)) {
-      const target = byNum.get(Number(m[2]));
-      if (!target) continue;
-      const parent = dictOf(target);
-      // `/DescendantFonts` names an array, and the array may itself be an indirect
-      // reference. Reading only the inline form leaves the parent, which carries no /W,
-      // and every glyph then falls back to the default width.
-      // The array may hold an indirect reference, an indirect array, or the dictionary
-      // itself, and a font that resolves to none of those has no readable widths. Saying so
-      // is the point: falling back to `/DW` and then to 1000 makes every glyph one em wide,
-      // which invents a gap where there is a letter fit.
-      const table = simpleTable(parent, target, byNum, cmapOf) ?? cidTable(parent, byNum, cmapOf);
-      if (table) fonts.set(m[1]!, table);
-    }
+    const fonts = tableOf(resDict, byNum, cmapOf);
 
     for (const n of contentsOf(dict, byNum)) out.set(n, fonts);
+
+    for (const [n, f] of formsOf(dict, byNum, cmapOf)) {
+      if (!out.has(n)) out.set(n, f);
+    }
   }
   return out;
+}
+
+/**
+ * Font tables for the Form XObjects a page draws through, keyed by the form's own
+ * object number -- which is also the object number of the stream that draws it.
+ *
+ * Chromium does not put a page's text in the page's `/Contents`. It puts it in a Form
+ * XObject that the page's contents draws with a single `Do`, and the fonts that text
+ * uses are in *that form's* `/Resources`, not the page's:
+ *
+ *     2 0 obj <</Type /Page /Resources <</XObject <</X23 23 0 R>> /Font <</F4 4 0 R>>>> /Contents 24 0 R>>
+ *    23 0 obj <</Type /XObject /Subtype /Form /Resources <</Font <</F4 4 0 R /F7 7 0 R ...>>> /Length 19645>>
+ *
+ * The page's own `/Font` here names two fonts and the form's names six, so binding
+ * tables from the page alone gives the stream that draws no glyphs a table and the
+ * stream that draws every glyph none at all.
+ *
+ * Everything downstream reads the table by content stream, so on real output the
+ * ligature-span repair found no font in force at any span and kept every one of them,
+ * and the selection report could not read a stream with text in it. The page-level
+ * loop above never saw the form objects because they are not `/Type /Page`.
+ *
+ * Forms nest, so this walks the `/XObject` tree rather than one level. Resource names
+ * are scoped to the form that declares them for the same reason they are scoped to a
+ * page, so each form gets its own table rather than inheriting the page's.
+ */
+function formsOf(
+  pageDict: string,
+  byNum: Map<number, Obj>,
+  cmapOf: (num: number) => string | null,
+): Map<number, Map<string, FontTable>> {
+  const out = new Map<number, Map<string, FontTable>>();
+  const root = resourcesDictOf(pageDict, byNum);
+  const queue = [subDictOf(root, 'XObject'), pageDict];
+  const seen = new Set<string>();
+  while (queue.length) {
+    const res = queue.shift()!;
+    // Two forms can share a resource dictionary, and a form that draws itself would
+    // otherwise loop: the queue is keyed by the dictionary, not by the object.
+    if (seen.has(res)) continue;
+    seen.add(res);
+    for (const n of refsIn(res)) {
+      const target = byNum.get(n);
+      if (!target) continue;
+      const dict = dictOf(target);
+      // An image XObject is drawn by the same operator and carries no content stream
+      // of its own, so there is nothing to key a table to.
+      if (!/\/Subtype\s*\/Form\b/.test(dict)) continue;
+      const own = resourcesDictOf(dict, byNum);
+      out.set(n, tableOf(fontDictOf(own) || fontDictOf(dict), byNum, cmapOf));
+      queue.push(own);
+    }
+  }
+  return out;
+}
+
+/** The page's or form's `/Resources` dictionary, following it if it is an indirect reference. */
+function resourcesDictOf(dict: string, byNum: Map<number, Obj>): string {
+  const ref = /\/Resources\s+(\d+)\s+0\s+R/.exec(dict)?.[1];
+  const target = ref ? byNum.get(Number(ref)) : undefined;
+  return target ? dictOf(target) : dict;
+}
+
+/** Every indirect object a `/Font` or `/XObject` sub-dictionary names. */
+function refsIn(dict: string): number[] {
+  return [...dict.matchAll(/(\d+)\s+0\s+R/g)].map((m) => Number(m[1]));
+}
+
+/** Font tables for the `/Name N 0 R` entries of one `/Font` sub-dictionary. */
+function tableOf(
+  resDict: string,
+  byNum: Map<number, Obj>,
+  cmapOf: (num: number) => string | null,
+): Map<string, FontTable> {
+  const fonts = new Map<string, FontTable>();
+  for (const m of resDict.matchAll(/\/(\w+)\s+(\d+)\s+0\s+R/g)) {
+    const target = byNum.get(Number(m[2]));
+    if (!target) continue;
+    const parent = dictOf(target);
+    // `/DescendantFonts` names an array, and the array may itself be an indirect
+    // reference. Reading only the inline form leaves the parent, which carries no /W,
+    // and every glyph then falls back to the default width.
+    // The array may hold an indirect reference, an indirect array, or the dictionary
+    // itself, and a font that resolves to none of those has no readable widths. Saying so
+    // is the point: falling back to `/DW` and then to 1000 makes every glyph one em wide,
+    // which invents a gap where there is a letter fit.
+    const table = simpleTable(parent, target, byNum, cmapOf) ?? cidTable(parent, byNum, cmapOf);
+    if (table) fonts.set(m[1]!, table);
+  }
+  return fonts;
 }
 
 /**

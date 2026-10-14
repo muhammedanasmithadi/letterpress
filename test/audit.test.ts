@@ -279,6 +279,44 @@ test('digits at risk of bidi reversal in arabic text are reported', async () => 
   expect(f.message).toContain('bdi');
 }, 30_000);
 
+test('a page counter in a right-to-left margin box is reported', async () => {
+  // Two pages, so the reversal is observable rather than a matter of taste: page one
+  // of two prints "2 / 1" with the counter alone, because the margin box inherits the
+  // document's direction. The counter text is correct; the order it is read in is not.
+  const html = `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><style>
+@page{size:A4;margin:15mm;@top-right{content:counter(page) ' / ' counter(pages);font:9pt sans-serif}}
+body{margin:0;font-family:'Noto Naskh Arabic',serif} div{height:250mm}
+</style></head><body><div>صفحة أولى.</div><div>صفحة ثانية.</div></body></html>`;
+  const r = await render(browser, { html });
+  const f = r.findings.find((x) => x.code === 'rtl-page-counter')!;
+  expect(f).toBeTruthy();
+  expect(f.message).toContain('@top-right');
+  // The message has to name the fix, because unlike rtl-digit-run there is no markup
+  // to wrap: a margin box cannot hold a <bdi>.
+  expect(f.message).toContain('direction:ltr');
+  expect(r.info.pages).toBe(2);
+}, 30_000);
+
+test('direction:ltr on the margin box is accepted, not reported', async () => {
+  const html = `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><style>
+@page{size:A4;margin:15mm;@top-right{direction:ltr;content:counter(page) ' / ' counter(pages);font:9pt sans-serif}}
+body{margin:0;font-family:'Noto Naskh Arabic',serif} div{height:250mm}
+</style></head><body><div>صفحة أولى.</div><div>صفحة ثانية.</div></body></html>`;
+  const r = await render(browser, { html });
+  expect(r.findings.map((x) => x.code)).not.toContain('rtl-page-counter');
+}, 30_000);
+
+test('a page counter in a left-to-right margin box is not reported', async () => {
+  // The same stylesheet, without the RTL document. A check that fired on the margin box
+  // rather than on the direction would flag every paginated document in the corpus.
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><style>
+@page{size:A4;margin:15mm;@top-right{content:counter(page) ' / ' counter(pages);font:9pt sans-serif}}
+body{margin:0;font:12pt sans-serif} div{height:250mm}
+</style></head><body><div>Page one.</div><div>Page two.</div></body></html>`;
+  const r = await render(browser, { html });
+  expect(r.findings.map((x) => x.code)).not.toContain('rtl-page-counter');
+}, 30_000);
+
 test('a character no installed font covers is reported', async () => {
   const html = `<!doctype html><html><head><meta charset="utf-8"><style>
 @page{size:A4;margin:15mm} body{font-family:'Noto Naskh Arabic',serif}

@@ -528,7 +528,16 @@ async function resolveSource(
   if (req.path) {
     const abs = req.path.startsWith('/') ? req.path : `${process.cwd()}/${req.path}`;
 
-    const html = await Bun.file(abs).text();
+    const raw = await Bun.file(abs).arrayBuffer();
+    const asLatin1 = Buffer.from(raw).toString('latin1');
+    const binary = looksBinary(asLatin1);
+    if (binary) {
+      throw new Error(
+        `this input is not HTML: ${binary}. letterpress prints html, so a document with the wrong ` +
+          `file extension produces a page of binary noise rather than an error. check the path.`,
+      );
+    }
+    const html = new TextDecoder('utf-8').decode(raw);
     await Bun.write(join(dir, SERVED_DOCUMENT), html);
     return { html, url: abs, source: abs };
   }

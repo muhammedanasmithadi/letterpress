@@ -207,7 +207,7 @@ export function document(
   return { html: html + blocks.join('\n') + tail, head: html, tail, blocks };
 }
 
-function checkFindings(findings: Finding[]): string | undefined {
+export function checkFindings(findings: Finding[]): string | undefined {
   for (const f of findings) {
     if (!f.code || !f.message) return `malformed finding: ${JSON.stringify(f).slice(0, 120)}`;
     if (f.severity !== 'error' && f.severity !== 'warn' && f.severity !== 'info') {

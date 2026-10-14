@@ -3,11 +3,22 @@
  * contract `tools/fuzz.ts` checks at depth. The seed is fixed so the documents
  * never change; run the tool with `--count 200` to explore beyond them.
  */
-import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { document, fuzzOne, rng } from '../tools/fuzz.ts';
-import { fuzzExoticFile, fuzzRepair, mutate, REPAIRS, type ExoticFile } from '../tools/fuzzpdf.ts';
+import { checkFindings, document, fuzzOne, rng } from '../tools/fuzz.ts';
+import {
+  exoticCorpus,
+  fuzzExoticFile,
+  fuzzRepair,
+  ghostscriptOk,
+  mutate,
+  REPAIRS,
+  type ExoticFile,
+} from '../tools/fuzzpdf.ts';
 import { render } from '../src/render.ts';
+import { assemblePdf } from './fixtures.ts';
 import { closeTestBrowser, launchTestBrowser, type TestBrowser } from './browser.ts';
 
 let t: TestBrowser;
@@ -81,4 +92,122 @@ test('exotic files pass through every repair byte-identical', async () => {
     const res = fuzzExoticFile({ kind, detail: file, bytes });
     expect(res.failures, `${file}: ${res.failures.join('; ')}`).toEqual([]);
   }
+});
+
+describe('harness units (no browser)', () => {
+  test('rng is deterministic per seed and varies across seeds', () => {
+    const a = rng(7);
+    const seq = [a(), a(), a()];
+    const b = rng(7);
+    expect([b(), b(), b()]).toEqual(seq);
+    const c = rng(8);
+    expect(c()).not.toBe(seq[0]);
+  });
+
+  test('documents are complete HTML with a head, blocks and tail', () => {
+    const { html, head, tail, blocks } = document(99, 3);
+    expect(html.startsWith('<!doctype html>')).toBe(true);
+    expect(html.endsWith('</body></html>')).toBe(true);
+    expect(html).toBe(head + blocks.join('\n') + tail);
+    // Empty bodies occur by design (a tenth of documents); the joins hold either way.
+  });
+
+  test('every mutation kind returns named bytes without throwing', () => {
+    const src = Buffer.from('%PDF-1.4\n1 0 obj\n<< /A 1 >>\nendobj\ntrailer\n<< /Size 2 >>\n');
+    const r = rng(11);
+    const names = new Set<string>();
+    for (let kind = 0; kind < 6; kind++) {
+      const { bytes, name } = mutate(r, src, kind);
+      expect(name.length).toBeGreaterThan(0);
+      expect(bytes.length).toBeGreaterThan(0);
+      names.add(name);
+    }
+    expect(names.size).toBe(6);
+    // Tiny and empty inputs take the early exits, not the floor.
+    expect(mutate(r, new Uint8Array(0), 0).bytes.length).toBe(0);
+    expect(mutate(r, new Uint8Array(0), 3).bytes.length).toBe(0);
+    expect(mutate(r, Buffer.from('x'), 1).bytes.length).toBe(1);
+  });
+
+  test('fuzzRepair names a throw, an emptying and a corruption', () => {
+    const pdf = assemblePdf([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>',
+    ]);
+    const throwing = {
+      name: 'boom',
+      run: (_p: Uint8Array): Uint8Array => {
+        throw new Error('nope');
+      },
+    };
+    expect(fuzzRepair(throwing, pdf).ok).toBe(false);
+    expect(fuzzRepair(throwing, pdf).reason).toContain('threw');
+    const emptying = { name: 'void', run: (_p: Uint8Array): Uint8Array => new Uint8Array(0) };
+    expect(fuzzRepair(emptying, pdf).ok).toBe(false);
+    const corrupting = {
+      name: 'rot',
+      run: (p: Uint8Array): Uint8Array => {
+        const b = Buffer.from(p);
+        b[20] = 0x58;
+        return b;
+      },
+    };
+    // A single flipped byte breaks the xref, so a valid file in means a refusal out.
+    expect(fuzzRepair(corrupting, pdf).ok).toBe(false);
+    expect(fuzzRepair(corrupting, pdf).reason).toContain('corrupted a valid file');
+    const keeping = { name: 'same', run: (p: Uint8Array): Uint8Array => p };
+    expect(fuzzRepair(keeping, pdf).ok).toBe(true);
+  });
+
+  test('fuzzExoticFile names a throw, an emptying and a rewrite', () => {
+    const pdf = assemblePdf(['<< /Type /Catalog /Pages 2 0 R >>']);
+    const file: ExoticFile = { kind: 'encrypted', detail: 'unit', bytes: pdf };
+    const throwing = {
+      name: 'boom',
+      run: (_p: Uint8Array): Uint8Array => {
+        throw new Error('nope');
+      },
+    };
+    expect(fuzzExoticFile(file, [throwing]).failures.join(';')).toContain('threw');
+    const emptying = { name: 'void', run: (_p: Uint8Array): Uint8Array => new Uint8Array(0) };
+    expect(fuzzExoticFile(file, [emptying]).failures.join(';')).toContain('emptied');
+    const keeping = { name: 'same', run: (p: Uint8Array): Uint8Array => p };
+    expect(fuzzExoticFile(file, [keeping]).failures).toEqual([]);
+  });
+
+  test('checkFindings rejects malformed findings and unknown severities', () => {
+    expect(checkFindings([{ code: 'x', severity: 'warn', message: 'm' }])).toBeUndefined();
+    expect(checkFindings([{ code: '', severity: 'warn', message: 'm' }])).toContain('malformed');
+    expect(checkFindings([{ code: 'x', severity: 'warn', message: '' }])).toContain('malformed');
+    // Findings arrive from the page as JSON, so the severity is unknown at runtime
+    // no matter what the type says: cast through unknown to test the check itself.
+    const bogus = { code: 'x', severity: 'bogus', message: 'm' } as unknown as {
+      code: string;
+      severity: 'error';
+      message: string;
+    };
+    expect(checkFindings([bogus])).toContain('unknown severity');
+  });
+
+  test('ghostscript is present and the producer yields both shapes', async () => {
+    expect(await ghostscriptOk()).toBe(true);
+    const dir = await mkdtemp(join(tmpdir(), 'letterpress-fuzzexotic-'));
+    try {
+      const base = assemblePdf([
+        '<< /Type /Catalog /Pages 2 0 R >>',
+        '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>',
+      ]);
+      const files = await exoticCorpus([base], dir);
+      expect(files.length).toBeGreaterThan(0);
+      expect(files.some((f) => f.kind === 'linearized')).toBe(true);
+      expect(files.some((f) => f.kind === 'encrypted')).toBe(true);
+      for (const f of files) {
+        expect(fuzzExoticFile(f).failures).toEqual([]);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 120_000);
 });

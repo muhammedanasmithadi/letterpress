@@ -132,12 +132,12 @@ export type ExoticResult = { file: ExoticFile; failures: string[]; notes: string
  * title and author around encryption the owner configured -- byte-identity
  * forbids that too, with no special case.
  */
-export function fuzzExoticFile(file: ExoticFile): ExoticResult {
+export function fuzzExoticFile(file: ExoticFile, repairs: Repair[] = REPAIRS): ExoticResult {
   const failures: string[] = [];
   const notes: string[] = [];
   const v = verify(file.bytes);
   notes.push(`verify(input)=${v.ok}`);
-  for (const repair of REPAIRS) {
+  for (const repair of repairs) {
     let out: Uint8Array;
     try {
       out = repair.run(file.bytes);

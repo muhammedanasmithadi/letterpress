@@ -288,6 +288,11 @@ const HANDLERS: Map<string, Handler> = new Map([
   ['--quiet', setQuiet],
 ]);
 
+/** Every long flag the parser accepts, for the help-text parity test. */
+export function flagNames(): string[] {
+  return [...HANDLERS.keys()].filter((k) => k.startsWith('--'));
+}
+
 /** Apply the token at `argv[i]`, or classify it as a positional argument. */
 function applyFlag(opts: Options, argv: string[], i: number, a: string): Step {
   const handler = HANDLERS.get(a);

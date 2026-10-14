@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { flagNames, parseArgs } from '../src/cli.ts';
 import { pdfInfo, pdfText } from './poppler.ts';
 
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
@@ -291,4 +292,21 @@ describe('what exit code 1 means', () => {
     expect(help.stdout).toMatch(/no pdf was written/);
     expect(help.stdout).toMatch(/not the document you asked for/);
   }, 90_000);
+});
+test('help documents every parsed flag, and every documented flag parses', async () => {
+  // Help text and the HANDLERS table drift apart silently: a flag added to one
+  // and not the other is either undiscoverable or rejected. Both directions.
+  const help = await run(['--help']);
+  const documented = new Set([...help.stdout.matchAll(/--[a-z][a-z-]*/g)].map((m) => m[0]));
+  for (const flag of flagNames()) {
+    expect(documented.has(flag), `${flag} parses but --help never mentions it`).toBe(true);
+  }
+  for (const flag of documented) {
+    // A documented flag may still need a value or conflict, but it must never
+    // be an unknown option.
+    const { error } = parseArgs([flag, 'x']);
+    expect(error ?? '', `${flag} is documented but the parser rejects it`).not.toMatch(
+      /unknown option/,
+    );
+  }
 });

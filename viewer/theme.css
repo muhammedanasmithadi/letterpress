@@ -464,7 +464,6 @@ button:disabled {
 .pane h2 {
   margin: 0;
   padding: 0 22px;
-  min-height: 44px;
   font-size: 10px;
   font-weight: 650;
   letter-spacing: 0.1em;

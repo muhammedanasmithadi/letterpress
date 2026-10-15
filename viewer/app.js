@@ -38,7 +38,6 @@ const el = {
   filename: $('filename'),
   contextMeta: $('context-meta'),
   sourceMeta: $('source-meta'),
-  previewMeta: $('preview-meta'),
   settings: $('settings'),
   status: $('status'),
   metrics: $('metrics'),
@@ -309,10 +308,9 @@ async function render() {
         : `${(body.bytes / 1048576).toFixed(1)} MB`;
     const pages = `${body.pages} page${body.pages === 1 ? '' : 's'}`;
     el.metrics.textContent = `${pages} · ${kb} · ${body.ms} ms`;
-    // Pane and context metadata follow the render: format and orientation name
-    // the shape, pages name the result. The metrics keep the full triple.
+    // Context metadata follows the render: format and orientation name the
+    // shape. Page counts live in the status message and metrics, not here.
     const shape = `${formatLabel()} · ${landscapeOn ? 'Landscape' : 'Portrait'}`;
-    el.previewMeta.textContent = `${formatLabel()} · ${pages}`;
     el.contextMeta.textContent = shape;
     pageCount = body.pages;
     currentPage = 1;

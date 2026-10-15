@@ -249,7 +249,7 @@ describe('the shell itself', () => {
     expect(page).toContain('untitled.html');
     expect(page).toContain('id="context-meta"');
     expect(page).toContain('id="source-meta"');
-    expect(page).toContain('id="preview-meta"');
+    expect(page).not.toContain('id="preview-meta"');
     expect(page).toContain('aria-hidden="true">HTML<');
     expect(page).toContain('class="paneltitle"');
     // Icons are texture: every svg hides itself, the adjacent text names the
@@ -270,7 +270,6 @@ describe('the shell itself', () => {
     expect(js).toContain('formatLabel()');
     expect(js).toContain('closeOutside');
     expect(js).toContain('el.sourceMeta.textContent = `HTML ·');
-    expect(js).toContain('el.previewMeta.textContent');
   });
 
   test('every control has a label', async () => {

@@ -83,24 +83,14 @@
             <input type="number" id="ppi" value="300" min="0" step="10" size="5" />
           </label>
 
-          <!-- Orientation as an editorial choice, not a checkbox: two native
-             radios, sage underline on the active one (plus the radio itself,
-             so state never rides on color alone). #landscape stays the
-             Landscape radio, so its .checked semantics -- payload and
-             listeners -- are untouched. -->
-          <fieldset class="orient">
-            <legend>Orientation</legend>
-            <span class="opts">
-              <label
-                ><input type="radio" name="orientation" value="portrait" checked />
-                <span>Portrait</span></label
-              >
-              <label
-                ><input type="radio" name="orientation" value="landscape" id="landscape" />
-                <span>Landscape</span></label
-              >
-            </span>
-          </fieldset>
+          <!-- Orientation as a segmented toggle: two buttons, sage underline on
+             the pressed one (plus aria-pressed itself, so state never rides
+             on color alone). #landscape is the Landscape button; app.js keeps
+             a boolean for the payload instead of reading .checked. -->
+          <div class="segmented underline" role="group" aria-label="Orientation">
+            <button type="button" id="portrait" aria-pressed="true">Portrait</button>
+            <button type="button" id="landscape" aria-pressed="false">Landscape</button>
+          </div>
 
           <label class="field checkbox">
             <input type="checkbox" id="background" checked />

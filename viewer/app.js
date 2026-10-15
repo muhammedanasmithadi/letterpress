@@ -16,6 +16,7 @@ const $ = (id) => document.getElementById(id);
 const el = {
   file: $('file'),
   format: $('format'),
+  portrait: $('portrait'),
   landscape: $('landscape'),
   margin: $('margin'),
   background: $('background'),
@@ -93,7 +94,7 @@ function settings() {
     // The server rejects a margin without a format, because a document's own
     // @page margin wins anyway and the combination is always a mistake.
     ...(format && margin ? { margin } : {}),
-    landscape: el.landscape.checked,
+    landscape: isLandscape(),
     // The server's field is printBackground, matching the CLI's --no-background.
     // This sent "background", which the server never read, so the checkbox did
     // nothing at all: measured, the red page still printed with the box off.
@@ -397,9 +398,31 @@ el.format.addEventListener('change', () => {
 });
 el.margin.addEventListener('change', () => void render());
 
-for (const control of [el.landscape, el.background, el.network]) {
+for (const control of [el.background, el.network]) {
   control.addEventListener('change', () => void render());
 }
+
+/**
+ * Orientation lives in aria-pressed on two buttons, not in a checkbox: the
+ * segmented control reads as text, and a boolean carries the state to the
+ * payload. Both buttons announce through aria-pressed, so the underline is
+ * never the only signal.
+ */
+let landscapeOn = false;
+
+function isLandscape() {
+  return landscapeOn;
+}
+
+function setOrientation(toLandscape) {
+  landscapeOn = toLandscape;
+  el.landscape.setAttribute('aria-pressed', String(toLandscape));
+  el.portrait.setAttribute('aria-pressed', String(!toLandscape));
+  void render();
+}
+
+el.landscape.addEventListener('click', () => setOrientation(true));
+el.portrait.addEventListener('click', () => setOrientation(false));
 el.ppi.addEventListener('input', () => {
   readPpi();
   clearTimeout(ppiTimer);

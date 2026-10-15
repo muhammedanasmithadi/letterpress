@@ -176,6 +176,7 @@ describe('the shell itself', () => {
     for (const id of [
       'file',
       'format',
+      'portrait',
       'landscape',
       'margin',
       'background',
@@ -191,28 +192,38 @@ describe('the shell itself', () => {
   test('print settings live in a disclosure, one row at real widths', async () => {
     // Eleven controls plus a wordmark never fit a real window: at 900px the
     // row wrapped and stranded the actions on a second line. The settings now
-    // live in a native <details>; every control keeps its id and its label.
+    // live in a native <details>; every control keeps its id.
     const page = (await html()).replace(/<!--[\s\S]*?-->/g, '');
     expect(page).toContain('<details class="settings">');
     expect(page).toContain('<summary>Page setup</summary>');
     const panel = page.slice(page.indexOf('class="panel"'));
-    for (const id of ['format', 'landscape', 'margin', 'background', 'ppi', 'network']) {
+    for (const id of [
+      'format',
+      'portrait',
+      'landscape',
+      'margin',
+      'background',
+      'ppi',
+      'network',
+    ]) {
       expect(panel, `#${id} inside the panel`).toContain(`id="${id}"`);
     }
     const css = await (await fetch(`${origin}/assets/theme.css`)).text();
     expect(css).toMatch(/\.settings \.panel\s*\{[^}]*position:\s*absolute/s);
   });
 
-  test('nocturne controls: radios, text actions, underline fields', async () => {
-    // Orientation is an editorial radio choice; #landscape stays the Landscape
-    // radio so payload and listeners keep their .checked semantics untouched.
+  test('nocturne controls: segmented toggle, text actions, underline fields', async () => {
+    // Orientation is a two-button toggle; aria-pressed carries the state and
+    // a boolean carries it to the payload (no .checked anywhere).
     const page = await html();
-    expect(page).toContain('name="orientation"');
-    expect(page).toContain('<legend>Orientation</legend>');
-    expect(page).toContain('value="portrait" checked');
-    expect(page).toContain('value="landscape" id="landscape"');
+    expect(page).toContain('aria-label="Orientation"');
+    expect(page).toContain('id="portrait" aria-pressed="true">Portrait');
+    expect(page).toContain('id="landscape" aria-pressed="false">Landscape');
+    expect(page).not.toContain('name="orientation"');
     const js = await (await fetch(`${origin}/assets/app.js`)).text();
-    expect(js).toContain('el.landscape.checked');
+    expect(js).toContain('landscape: isLandscape()');
+    expect(js).not.toContain('el.landscape.checked');
+    expect(js).toContain("setAttribute('aria-pressed'");
     // PDF is the compact download action; Render leads through underlined
     // sage text, never a filled box. The status opens plain.
     expect(page).toContain('id="download"');
@@ -225,14 +236,14 @@ describe('the shell itself', () => {
     expect(css).toContain('border-bottom-style: dotted');
     expect(css).toMatch(/\.metrics\s*\{[^}]*monospace/s);
     expect(css).toMatch(
-      /\.orient label:has\(input:checked\) > span\s*\{[^}]*text-decoration:\s*underline/s,
+      /\.segmented\.underline button\[aria-pressed='true'\]\s*\{[^}]*box-shadow:\s*inset 0 -2px/s,
     );
   });
 
   test('every control has a label', async () => {
     const page = await html();
 
-    for (const id of ['format', 'landscape', 'margin', 'background', 'ppi', 'network']) {
+    for (const id of ['format', 'margin', 'background', 'ppi', 'network']) {
       const before = page.slice(0, page.indexOf(`id="${id}"`));
       const openTag = before.lastIndexOf('<label');
       const closeTag = before.lastIndexOf('</label>');

@@ -5,8 +5,8 @@
   currentColor, and only the accent is declared. Dark scheme wears amber on
   ink: near-black #0B0909 surfaces, warm lift #14110D bands, cream #ECE8AF
   text (15.8:1 on ink), amber #D98327 actions (6.8:1 on ink), leaf #4A943E
-  selection with ink text (5.3:1), forest #186049 preview surround (cream
-  placeholder 6.0:1 on it). --bg/--fg/--band carry it, everything else still
+  selection with ink text (5.3:1). The preview surround stays page ink: the
+  white sheet carries its own edge. --bg/--fg/--band carry it, everything else still
   derives, so the two schemes cannot drift. The only literal hex values are
   the dark halves inside light-dark(), plus accent-color which has no keyword.
 */
@@ -562,9 +562,9 @@ button:disabled {
 .preview {
   overflow: auto;
   padding: 16px;
-  /* Forest surround in dark: the cream placeholder reads 6.0:1 on it, and it
-     sets the pane apart from every band. */
-  background: light-dark(Canvas, #186049);
+  /* Seamless with the page: the white sheet carries its own edge, so any
+     surround color here reads as a leftover theme. */
+  background: var(--bg);
 }
 
 /* The preview is the returned bytes drawn by the browser's own PDF renderer.

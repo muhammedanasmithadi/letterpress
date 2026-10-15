@@ -240,14 +240,13 @@ describe('the shell itself', () => {
     );
   });
 
-  test('nocturne review: context strip, pane metadata, quiet icons', async () => {
-    // Single sources: the filename syncs from the file control, the right
-    // side from format/orientation state. Counts also live in the live status
-    // line, so pane metadata hides from assistive tech.
+  test('nocturne review: pane metadata, quiet icons', async () => {
+    // The source head names its line count; it exists nowhere else. Counts
+    // also live in the live status line, so pane metadata hides from
+    // assistive tech.
     const page = await html();
-    expect(page).toContain('id="filename"');
-    expect(page).toContain('untitled.html');
-    expect(page).toContain('id="context-meta"');
+    expect(page).not.toContain('id="filename"');
+    expect(page).not.toContain('class="contextbar"');
     expect(page).toContain('id="source-meta"');
     expect(page).not.toContain('id="preview-meta"');
     expect(page).toContain('aria-hidden="true">HTML<');
@@ -266,8 +265,8 @@ describe('the shell itself', () => {
     expect(page).toContain('class="chev left"');
     expect(page).toContain('class="chev right"');
     const js = await (await fetch(`${origin}/assets/app.js`)).text();
-    expect(js).toContain('el.filename.textContent = file.name');
-    expect(js).toContain('formatLabel()');
+    expect(js).not.toContain('el.filename');
+    expect(js).not.toContain('formatLabel()');
     expect(js).toContain('closeOutside');
     expect(js).toContain('el.sourceMeta.textContent = `HTML ·');
   });
@@ -350,7 +349,7 @@ describe('the shell itself', () => {
   test('the panes scroll and the window does not', async () => {
     const css = await (await fetch(`${origin}/assets/theme.css`)).text();
 
-    expect(css).toMatch(/grid-template-rows: auto auto minmax\(0, 1fr\) auto/);
+    expect(css).toMatch(/grid-template-rows: auto minmax\(0, 1fr\) auto/);
     expect(css).toMatch(/\.preview\s*\{[^}]*overflow: auto/s);
   });
 

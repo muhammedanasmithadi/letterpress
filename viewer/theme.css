@@ -57,9 +57,9 @@ body {
 
 body {
   display: grid;
-  /* Rows: toolbar, context, panes, status. The middle row takes the slack so
-     the panes scroll rather than the window. */
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  /* Rows: toolbar, panes, status. The middle row takes the slack so the panes
+     scroll rather than the window. */
+  grid-template-rows: auto minmax(0, 1fr) auto;
   /* A grid item defaults to min-width:auto, so the column is forced to the
      toolbar's min-content. That is 522px, which laid the whole app out 522px
      wide inside a 380px window and put Download off screen. */
@@ -117,41 +117,6 @@ body {
   flex: 1 1 auto;
 }
 
-/* Context strip: which document, in what shape. One source each -- the
-   filename syncs from the file control, the right side from format and
-   orientation state -- so nothing is announced twice. */
-.contextbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 26px;
-  font-size: 11px;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg);
-  color: color-mix(in oklab, var(--fg) 60%, transparent);
-}
-
-.doctag {
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  color: color-mix(in oklab, var(--fg) 70%, transparent);
-}
-
-.filename {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: color-mix(in oklab, var(--fg) 85%, transparent);
-}
-
-.context-meta {
-  margin-left: auto;
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
-  font-size: 10px;
-  white-space: nowrap;
-}
-
 /* Settings disclosure. A native <details>: keyboard-focusable summary, no JS,
    and the panel is plain markup so nothing about rendering changes. */
 .settings > summary {
@@ -183,22 +148,6 @@ body {
 
 .settings > summary::-webkit-details-marker {
   display: none;
-}
-
-.settings > summary::after {
-  /* A drawn chevron, not a unicode glyph: border square, rotated. Closed
-     points right, open points down. */
-  content: '';
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-right: 1px solid color-mix(in oklab, var(--fg) 55%, transparent);
-  border-bottom: 1px solid color-mix(in oklab, var(--fg) 55%, transparent);
-  transform: rotate(-45deg);
-}
-
-.settings[open] > summary::after {
-  transform: rotate(45deg);
 }
 
 .settings .panel {

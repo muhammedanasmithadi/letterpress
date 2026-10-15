@@ -35,8 +35,6 @@ const el = {
   pageNext: $('page-next'),
   preview: $('preview'),
   previewNote: $('preview-note'),
-  filename: $('filename'),
-  contextMeta: $('context-meta'),
   sourceMeta: $('source-meta'),
   settings: $('settings'),
   status: $('status'),
@@ -308,10 +306,6 @@ async function render() {
         : `${(body.bytes / 1048576).toFixed(1)} MB`;
     const pages = `${body.pages} page${body.pages === 1 ? '' : 's'}`;
     el.metrics.textContent = `${pages} · ${kb} · ${body.ms} ms`;
-    // Context metadata follows the render: format and orientation name the
-    // shape. Page counts live in the status message and metrics, not here.
-    const shape = `${formatLabel()} · ${landscapeOn ? 'Landscape' : 'Portrait'}`;
-    el.contextMeta.textContent = shape;
     pageCount = body.pages;
     currentPage = 1;
     syncPager();
@@ -432,13 +426,6 @@ function setOrientation(toLandscape) {
 el.landscape.addEventListener('click', () => setOrientation(true));
 el.portrait.addEventListener('click', () => setOrientation(false));
 
-/** The shape name for context and preview metadata: chosen format, or the
- * document's own box when nothing is chosen. */
-function formatLabel() {
-  const v = el.format.value.trim();
-  return v ? v.toUpperCase() : 'Document';
-}
-
 // The disclosure is a dropdown, not a drawer: clicking elsewhere dismisses
 // it. Re-armed after an inside click, so choosing a setting never collapses
 // the panel mid-thought.
@@ -481,9 +468,6 @@ el.file.addEventListener('change', async () => {
   const file = el.file.files?.[0];
   if (!file) return;
   el.source.value = await file.text();
-  // The context strip names the open document; the status line announces the
-  // load once for assistive tech.
-  el.filename.textContent = file.name;
   say(`Loaded ${file.name}, ${el.source.value.length} characters.`);
   void render();
 });

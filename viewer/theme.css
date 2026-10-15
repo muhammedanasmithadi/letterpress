@@ -1,21 +1,22 @@
 /*
-  Native light, moss dark.
+  Native light, amber dark.
 
   Light scheme stays stock: the OS picks surface and text, borders derive from
-  currentColor, and only the accent is declared. Dark scheme wears the green
-  set warmed toward paper: ink #0B0909, slate #2E4540, warm near-white #E6E8DD
-  text (16.0:1 on ink), sage #408175 actions. --bg/--fg/--band carry it,
-  everything else still derives, so the two schemes cannot drift. The only
-  literal hex values are the dark halves inside light-dark(), plus
-  accent-color which has no keyword.
+  currentColor, and only the accent is declared. Dark scheme wears amber on
+  ink: near-black #0B0909 surfaces, warm lift #14110D bands, cream #ECE8AF
+  text (15.8:1 on ink), amber #D98327 actions (6.8:1 on ink), leaf #4A943E
+  selection with ink text (5.3:1), forest #186049 preview surround (cream
+  placeholder 6.0:1 on it). --bg/--fg/--band carry it, everything else still
+  derives, so the two schemes cannot drift. The only literal hex values are
+  the dark halves inside light-dark(), plus accent-color which has no keyword.
 */
 
 :root {
   color-scheme: light dark;
 
-  /* Follows the theme: deep sage in light for contrast against white, the
-     palette mid green in dark. */
-  accent-color: light-dark(#2f6b5c, #408175);
+  /* Follows the theme: deep bronze in light for contrast against white, vivid
+     amber in dark. */
+  accent-color: light-dark(#7a5416, #d98327);
 
   /* Derived, not declared. One knob controls every divider and every surface
      tint, so light and dark cannot drift apart the way a token table lets
@@ -27,8 +28,8 @@
   /* Dark-scheme palette. Light halves are the platform values, so light mode
      is untouched; the green halves only ever resolve in dark. */
   --bg: light-dark(Canvas, #0b0909);
-  --fg: light-dark(CanvasText, #e6e8dd);
-  --band: light-dark(var(--tint), #2e4540);
+  --fg: light-dark(CanvasText, #ece8af);
+  --band: light-dark(var(--tint), #14110d);
 }
 
 * {
@@ -207,7 +208,7 @@ body {
   padding-bottom: 3px;
 }
 
-/* Orientation as a segmented toggle: quiet text pair on a hairline, sage
+/* Orientation as a segmented toggle: quiet text pair on a hairline, amber
    underline under the pressed choice. Buttons keep our 12px control size and
    comfortable padding -- the 29px/10px study mockup was cramped. State lives
    in aria-pressed (announced), never in color alone. */
@@ -233,9 +234,9 @@ body {
 
 .segmented.underline button[aria-pressed='true'] {
   background: transparent;
-  color: light-dark(#2f6b5c, #8fd0c0);
+  color: light-dark(#7a5416, #d98327);
   font-weight: 600;
-  box-shadow: inset 0 -2px light-dark(#2f6b5c, #408175);
+  box-shadow: inset 0 -2px light-dark(#7a5416, #d98327);
 }
 
 .field.checkbox > input {
@@ -256,23 +257,22 @@ input[type='number'] {
   min-width: 0;
   color: inherit;
   /* Underline fields: transparent face, one discreet line, labels above (the
-     .field grid). The resting line is the UA gray in light, dos-moos slate in
-     dark; the file input is not in this list -- it keeps the platform face
-     with a quiet text button (see below). */
+     .field grid). The resting line derives warm from the text in dark, UA gray
+     in light. */
   background: transparent;
   border: 0;
-  border-bottom: 1px solid light-dark(ButtonBorder, #3a4849);
+  border-bottom: 1px solid light-dark(ButtonBorder, color-mix(in oklab, var(--fg) 22%, transparent));
   border-radius: 0;
 }
 
-/* Focus sages the line; the global ring still draws, only its color is
+/* Focus ambers the line; the global ring still draws, only its color is
    tuned here. Disabled goes dotted as well as dim, so the state is not
-   color alone; invalid sages to red only after interaction. */
+   color alone; invalid turns red only after interaction. */
 select:focus-visible,
 input[type='text']:focus-visible,
 input[type='number']:focus-visible {
-  outline-color: light-dark(AccentColor, #8fd0c0);
-  border-bottom-color: light-dark(ButtonBorder, #408175);
+  outline-color: light-dark(AccentColor, #d98327);
+  border-bottom-color: light-dark(ButtonBorder, #d98327);
 }
 
 select:disabled,
@@ -348,11 +348,11 @@ button {
   border-radius: 8px;
 }
 
-/* Render stays the primary action through sage text and a quiet underline,
+/* Render stays the primary action through amber text and a quiet underline,
    never a filled box. PDF is the compact sibling: borderless, tighter. */
 button.primary {
   font-weight: 700;
-  color: light-dark(#2f6b5c, #8fd0c0);
+  color: light-dark(#7a5416, #d98327);
   background: transparent;
   border-color: transparent;
   text-decoration: underline;
@@ -382,11 +382,10 @@ button:disabled {
   border-radius: 2px;
 }
 
-/* Selection wears the palette's mid green, with ink text: lavender on it only
-   manages 2.4:1, ink on it 4.4:1. Dragging across the editor feels like the
-   same app rather than the platform default. */
+/* Selection wears leaf with ink text (5.3:1): the one palette job where the
+   mid green wins over amber. */
 ::selection {
-  background: light-dark(SelectedItem, #408175);
+  background: light-dark(SelectedItem, #4a943e);
   color: light-dark(SelectedItemText, #0b0909);
 }
 
@@ -565,9 +564,9 @@ button:disabled {
 .preview {
   overflow: auto;
   padding: 16px;
-  /* The page shadow needs a slightly darker backdrop than the page itself, or a
-     white sheet on a white pane has no edge. */
-  background: var(--band);
+  /* Forest surround in dark: the cream placeholder reads 6.0:1 on it, and it
+     sets the pane apart from every band. */
+  background: light-dark(Canvas, #186049);
 }
 
 /* The preview is the returned bytes drawn by the browser's own PDF renderer.
@@ -585,7 +584,7 @@ button:disabled {
 
 .placeholder {
   margin: 0;
-  color: color-mix(in oklab, var(--fg) 55%, transparent);
+  color: color-mix(in oklab, var(--fg) 60%, transparent);
   text-align: center;
   padding-top: 40px;
 }

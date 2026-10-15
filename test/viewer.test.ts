@@ -231,7 +231,7 @@ describe('the shell itself', () => {
     expect(page).toContain('Ready to render.');
     const css = await (await fetch(`${origin}/assets/theme.css`)).text();
     expect(css).toMatch(/button\.primary\s*\{[^}]*text-decoration:\s*underline/s);
-    expect(css).toContain('border-bottom: 1px solid light-dark(ButtonBorder, #3a4849)');
+    expect(css).toContain('border-bottom: 1px solid light-dark(ButtonBorder, color-mix');
     expect(css).toContain(':user-invalid');
     expect(css).toContain('border-bottom-style: dotted');
     // Margin re-renders as you type, but only for committable values:
@@ -291,7 +291,7 @@ describe('the shell itself', () => {
     }
   });
 
-  test('light stays native while dark wears the green set', async () => {
+  test('light stays native while dark wears the amber set', async () => {
     const css = (await (await fetch(`${origin}/assets/theme.css`)).text()).replace(
       /\/\*[\s\S]*?\*\//g,
       '',
@@ -331,14 +331,14 @@ describe('the shell itself', () => {
       'hex colour outside light-dark()',
     ).toEqual([]);
     expect(css).toContain('--bg: light-dark(Canvas, #0b0909)');
-    expect(css).toContain('--fg: light-dark(CanvasText, #e6e8dd)');
-    expect(css).toContain('--band: light-dark(var(--tint), #2e4540)');
+    expect(css).toContain('--fg: light-dark(CanvasText, #ece8af)');
+    expect(css).toContain('--band: light-dark(var(--tint), #14110d)');
     expect(css).toContain('::selection');
-    expect(css).toContain('#408175');
+    expect(css).toContain('#4a943e');
     // Underline fields: transparent face, one discreet line; the resting line
     // is the UA gray in light, dos-moos slate in dark.
-    expect(css).toContain('border-bottom: 1px solid light-dark(ButtonBorder, #3a4849)');
-    expect(css).toContain('accent-color: light-dark(#2f6b5c, #408175)');
+    expect(css).toContain('border-bottom: 1px solid light-dark(ButtonBorder, color-mix');
+    expect(css).toContain('accent-color: light-dark(#7a5416, #d98327)');
     // The wordmark face is vendored same-origin (offline-safe), used on the
     // toolbar heading only; everything else stays in platform stacks.
     expect(css).toContain('@font-face');

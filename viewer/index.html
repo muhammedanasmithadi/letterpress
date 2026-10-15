@@ -164,6 +164,21 @@
     is the one number a user wants.
   -->
       <output id="status" role="status" aria-live="polite" aria-atomic="true">Ready.</output>
+      <!--
+    The pager lives in the footer, not the preview pane: the preview container
+    is rebuilt on every render, and the pane grid has no free track for a fifth
+    child. It hides itself on single-page documents, where page controls are
+    clutter. Fragment navigation only -- it never re-renders.
+  -->
+      <div class="pager" id="pager" hidden>
+        <button type="button" id="page-prev" aria-label="Previous page">‹</button>
+        <label class="pagelabel">
+          <span class="visually-hidden">Page number</span>
+          <input type="text" id="page-num" inputmode="numeric" size="3" value="1" />
+          <span id="page-count" aria-hidden="true">of 1</span>
+        </label>
+        <button type="button" id="page-next" aria-label="Next page">›</button>
+      </div>
       <span id="metrics" class="metrics"></span>
     </footer>
 

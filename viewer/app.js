@@ -27,6 +27,11 @@ const el = {
   gutter: $('gutter'),
   codewrap: $('codewrap'),
   highlight: $('highlight'),
+  pager: $('pager'),
+  pagePrev: $('page-prev'),
+  pageNum: $('page-num'),
+  pageCount: $('page-count'),
+  pageNext: $('page-next'),
   preview: $('preview'),
   previewNote: $('preview-note'),
   status: $('status'),
@@ -171,12 +176,42 @@ function showPreview(main, sub) {
  */
 function showPdf() {
   if (navigator.pdfViewerEnabled === false) return false;
-  const frame = document.createElement('iframe');
-  frame.title = 'PDF preview';
-  frame.src = objectUrl;
-  el.preview.replaceChildren(frame);
+  const iframe = document.createElement('iframe');
+  iframe.title = 'PDF preview';
+  iframe.src = objectUrl;
+  el.preview.replaceChildren(iframe);
+  frame = iframe;
   return true;
 }
+
+/**
+ * Page navigation over the bytes on screen. Fragment-only: setting src to the
+ * same blob URL with a different #page= does not reload the document (and if a
+ * browser ever did, the bytes are a blob: instant and offline). It never
+ * re-renders, so a jump cannot disturb the editor, the findings or Download.
+ * Out-of-range input clamps silently and the field reverts; there is no error
+ * worth announcing for a number.
+ */
+function syncPager() {
+  el.pager.hidden = pageCount <= 1;
+  el.pagePrev.disabled = currentPage <= 1;
+  el.pageNext.disabled = currentPage >= pageCount;
+  el.pageNum.value = String(currentPage);
+  el.pageCount.textContent = `of ${pageCount}`;
+}
+
+function goToPage(n) {
+  if (!frame || pageCount <= 1) return;
+  const at = Math.min(pageCount, Math.max(1, Math.floor(Number(n)) || 1));
+  currentPage = at;
+  frame.src = `${objectUrl}#page=${at}`;
+  syncPager();
+  say(`Page ${at} of ${pageCount}.`);
+}
+
+el.pagePrev.addEventListener('click', () => goToPage(currentPage - 1));
+el.pageNext.addEventListener('click', () => goToPage(currentPage + 1));
+el.pageNum.addEventListener('change', () => goToPage(Number(el.pageNum.value)));
 
 function markStale(on, why = '') {
   el.previewNote.hidden = !on;
@@ -190,6 +225,9 @@ function markStale(on, why = '') {
 
 let lastBytes = null;
 let objectUrl = null;
+let frame = null;
+let pageCount = 1;
+let currentPage = 1;
 
 /** Hold new bytes, releasing the previous object URL so renders do not pile up. */
 function setBytes(bytes) {
@@ -259,6 +297,9 @@ async function render() {
         : `${(body.bytes / 1048576).toFixed(1)} MB`;
     const pages = `${body.pages} page${body.pages === 1 ? '' : 's'}`;
     el.metrics.textContent = `${pages} · ${kb} · ${body.ms} ms`;
+    pageCount = body.pages;
+    currentPage = 1;
+    syncPager();
     if (!showPdf()) {
       showPreview(
         `${pages}, ${kb}.`,

@@ -276,6 +276,21 @@ describe('the shell itself', () => {
     // sharing its cell, so only the gutter needs syncing.
     expect(js).toContain('syncGutter');
   });
+
+  test('the pager navigates rendered bytes without re-rendering', async () => {
+    // Fragment-only navigation: the iframe src gains #page=N on the same blob
+    // URL, so a jump can neither disturb the editor nor trigger a render.
+    const js = await (await fetch(`${origin}/assets/app.js`)).text();
+    // The object URL plus fragment, not a bare '#page=' that also matches prose:
+    // a comment broke this assertion once already.
+    expect(js).toMatch(/\$\{objectUrl\}#page=/);
+    expect(js).toMatch(/pager\.hidden = pageCount <= 1/);
+    const page = await html();
+    expect(page).toContain('id="pager"');
+    expect(page).toContain('aria-label="Previous page"');
+    expect(page).toContain('aria-label="Next page"');
+    expect(page).toContain('id="page-num"');
+  });
 });
 
 describe('the shell renders end to end', () => {

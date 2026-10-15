@@ -419,6 +419,40 @@ button:disabled {
   color: light-dark(#8a5300, #f9d67c);
 }
 
+/* Pager: page controls for multi-page previews. Hidden on single-page
+   documents. Fragment navigation only -- it never re-renders. */
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pager[hidden] {
+  display: none;
+}
+
+.pager button {
+  padding: 0 8px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.pagelabel {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   button,
   select,

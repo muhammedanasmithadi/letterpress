@@ -277,6 +277,20 @@ describe('the shell itself', () => {
     expect(js).toContain('syncGutter');
   });
 
+  test('stale claims need a render behind them, in app voice', async () => {
+    // Clearing the source before anything rendered must not claim a "last good
+    // render" that never happened. And app strings are sentence-case; renderer
+    // findings keep their lowercase voice, but the shell's own words do not.
+    const js = await (await fetch(`${origin}/assets/app.js`)).text();
+    expect(js).toContain('!on || !lastBytes');
+    expect(js).toContain('Showing the last good render; the preview is out of date');
+    expect(js).not.toContain('showing the last good render, not the current source');
+    expect(js).toContain('Could not reach the renderer');
+    expect(js).toContain('Gave up after');
+    expect(js).not.toContain('could not reach the renderer (');
+    expect(js).not.toContain('gave up after');
+  });
+
   test('the pager navigates rendered bytes without re-rendering', async () => {
     // Fragment-only navigation: the iframe src gains #page=N on the same blob
     // URL, so a jump can neither disturb the editor nor trigger a render.

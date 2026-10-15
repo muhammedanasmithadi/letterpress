@@ -214,9 +214,12 @@ el.pageNext.addEventListener('click', () => goToPage(currentPage + 1));
 el.pageNum.addEventListener('change', () => goToPage(Number(el.pageNum.value)));
 
 function markStale(on, why = '') {
-  el.previewNote.hidden = !on;
-  if (on) {
-    el.previewNote.textContent = `showing the last good render, not the current source${why ? ` — ${why}` : ''}`;
+  // The note names a render the user can still see. With no successful render
+  // behind it there is nothing stale -- the placeholder already says nothing
+  // rendered yet -- so claiming a "last good render" would be false.
+  el.previewNote.hidden = !on || !lastBytes;
+  if (on && lastBytes) {
+    el.previewNote.textContent = `Showing the last good render; the preview is out of date${why ? `: ${why}` : ''}`;
   }
   // Download is disabled on a failure, because the bytes on offer belong to a
   // document the user has already changed.
@@ -325,12 +328,11 @@ async function render() {
   } catch (e) {
     if (mine !== seq) return;
     const aborted = e instanceof Error && e.name === 'AbortError';
-    const elapsed = Math.round(performance.now() - startedAt);
     if (aborted && controller.signal.reason === 'timeout') {
       fail(
-        `gave up after ${Math.round(CLIENT_TIMEOUT_MS / 1000)}s without an answer. that is this page's ` +
-          `own backstop for a connection that never completes, well past the server's 30s deadline, ` +
-          `so the renderer is not the slow part here. restart it, or check that it is still running.`,
+        `Gave up after ${Math.round(CLIENT_TIMEOUT_MS / 1000)}s without an answer. That is this page's ` +
+          `own backstop for a connection that never completes, so the renderer is not the slow part here. ` +
+          `Restart it, or check that it is still running.`,
         'error',
       );
     } else if (aborted) {
@@ -338,12 +340,11 @@ async function render() {
       return;
     } else {
       fail(
-        `could not reach the renderer (${e instanceof Error ? e.message : e}). ` +
-          `is the server still running?`,
+        `Could not reach the renderer (${e instanceof Error ? e.message : e}). ` +
+          `Is the server still running?`,
         'error',
       );
     }
-    void elapsed;
   } finally {
     clearTimeout(timer);
     clearInterval(ticker);

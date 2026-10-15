@@ -10,10 +10,17 @@ import {
   readDocInfo,
   readXmp,
   readXmpPacket,
+  setDocTitle,
   xmlText,
 } from '../src/meta.ts';
 import { render } from '../src/render.ts';
-import { assemblePdf, expectSoundLengths, expectSoundXref, sameBytes } from './fixtures.ts';
+import {
+  assemblePdf,
+  encryptedFixture,
+  expectSoundLengths,
+  expectSoundXref,
+  sameBytes,
+} from './fixtures.ts';
 
 const LATIN1 = 'latin1' as BufferEncoding;
 
@@ -464,5 +471,17 @@ describe('rendered output', () => {
     expect(text.match(/\/Metadata \d+ 0 R/g)).toHaveLength(1);
     expect(readXmpPacket(r.pdf).match(/<x:xmpmeta/g)).toHaveLength(1);
     expect(r.info.pages).toBe(1);
+  });
+});
+
+describe('no keys are planted in an encrypted file', () => {
+  test('no metadata packet is added to it', () => {
+    const pdf = encryptedFixture();
+    expect(Buffer.from(addMetadata(pdf, { author: 'A' })).equals(Buffer.from(pdf))).toBe(true);
+  });
+
+  test('no title is written into its ciphertext Info', () => {
+    const pdf = encryptedFixture();
+    expect(Buffer.from(setDocTitle(pdf, 'Fuzz')).equals(Buffer.from(pdf))).toBe(true);
   });
 });

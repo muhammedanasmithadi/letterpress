@@ -136,3 +136,41 @@ export function expectSoundLengths(text: string): number {
   }
   return streams;
 }
+
+/**
+ * A file whose trailer declares encryption, with a content stream that parses.
+ *
+ * Repairs assume plaintext PDF structures from Chromium and must decline such
+ * files whole: strings and streams are ciphertext, so a span pattern matched
+ * inside one is random bytes agreeing with a regex, and trailer keys written
+ * beside them plant plaintext inside an encrypted file. The stream carries a
+ * span-shaped sequence on purpose, with no resolvable font behind it, so a
+ * repair that looked past the declaration would still act observably (its
+ * span census counts before the font check); the Info dictionary carries no
+ * title, so a title repair would insert one. Byte-identical output is the
+ * assertion, on every repair.
+ */
+export function encryptedFixture(): Buffer {
+  return assemblePdf(
+    [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 5 0 R >>',
+      '<< /Producer (Fixture) >>',
+      {
+        dict: '<< /Length 58 >>',
+        payload: Buffer.from(
+          'BT\n/F1 10 Tf\n/Span<</ActualText (fi)>>BDC\n[<00>]TJ\nEMC\nET\n',
+          LATIN1,
+        ),
+      },
+      '<< /Filter /Standard /V 2 /Length 128 >>',
+    ],
+    {
+      endobj: '\nendobj\n',
+      trailer: (size: number, xrefAt: number) =>
+        `trailer\n<< /Size ${size} /Root 1 0 R /Info 4 0 R /Encrypt 6 0 R >>\n` +
+        `startxref\n${xrefAt}\n%%EOF\n`,
+    },
+  );
+}

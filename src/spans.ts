@@ -27,6 +27,7 @@ import {
   LATIN1,
   dictOf,
   hasPostTrailerObjects,
+  isEncrypted,
   join,
   streamRange,
   trySplit,
@@ -104,6 +105,10 @@ export function stripRedundantSpans(pdf: Uint8Array): { pdf: Uint8Array; stats: 
   // it drops what split() cannot see. Measured: a 13KB linearized file came back
   // as 680 bytes. Decline whole rather than rebuild partial.
   if (hasPostTrailerObjects(pdf)) return { pdf, stats };
+  // Ciphertext is not content: a span pattern matched inside an encrypted
+  // stream is random bytes agreeing with a regex, and cutting there corrupts
+  // the file while every structural check still passes.
+  if (isEncrypted(pdf)) return { pdf, stats };
   const parts: Parts | undefined = trySplit(pdf);
   if (!parts) return { pdf, stats };
   const cmaps = cmapStreams(pdf);

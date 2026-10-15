@@ -32,6 +32,21 @@ function dictClose(window: string): number {
 }
 
 /**
+ * Whether the trailer declares encryption: every string and stream in the file
+ * is ciphertext except the trailer itself, so a repair that reads content --
+ * glyphs, spans, font programs -- would reason about random bytes, and one
+ * that writes trailer keys would plant plaintext inside an encrypted file.
+ * Repairs decline such files whole, the way they decline what split() only
+ * partly sees. Trailer-only on purpose: `/Encrypt` inside a content stream is
+ * document text or ciphertext, not a declaration.
+ */
+export function isEncrypted(pdf: Uint8Array): boolean {
+  const parts = trySplit(pdf);
+  if (!parts) return false;
+  return /\/Encrypt\b/.test(maskStrings(parts.trailer.toString(LATIN1)));
+}
+
+/**
  * Whether object headers appear at or past the first trailer: trailing garbage,
  * a concatenated file, or a linearized later revision. split() only sees what
  * precedes the trailer, so a repair that rewrites from its objects would drop

@@ -1,6 +1,7 @@
 import { deflateSync, inflateSync } from 'node:zlib';
 import {
   insertIntoDict,
+  isEncrypted,
   join,
   LATIN1,
   objsByNum,
@@ -125,6 +126,10 @@ export function readDocInfo(pdf: Uint8Array): DocInfo {
 }
 
 export function setDocTitle(pdf: Uint8Array, title: string): Uint8Array {
+  // The Info strings of an encrypted file are ciphertext: writing a literal
+  // title beside them plants plaintext inside an encrypted file and breaks
+  // the invariant every string but the Encrypt dict is encrypted.
+  if (isEncrypted(pdf)) return pdf;
   const parts = trySplit(pdf);
   if (!parts) return pdf;
   const ref = parts.trailer.toString(LATIN1).match(/\/Info\s+(\d+)\s+0\s+R/);
@@ -200,6 +205,9 @@ export function addMetadata(
   };
   const parts = trySplit(pdf);
   if (!parts) return pdf;
+  // An unencrypted metadata stream inside an encrypted file violates the
+  // encryption dictionary, so the packet is not added: same decline as above.
+  if (isEncrypted(pdf)) return pdf;
   // No early return when nothing is declared. A tagged PDF without an XMP packet fails
   // veraPDF's PDF/UA-1 clause 7.1 (Catalog shall contain Metadata) on every document,
   // declared or not -- measured across the sweep, where every author-less render failed

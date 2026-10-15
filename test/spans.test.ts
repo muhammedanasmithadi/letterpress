@@ -1,11 +1,12 @@
 import { inflateSync } from 'node:zlib';
-import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { Browser } from '../src/browser.ts';
 import { streamRange, trySplit } from '../src/pdfparts.ts';
 import { render } from '../src/render.ts';
 import { stripRedundantSpans } from '../src/spans.ts';
 import { verify } from '../src/verify.ts';
 import { closeTestBrowser, launchTestBrowser, type TestBrowser } from './browser.ts';
+import { encryptedFixture } from './fixtures.ts';
 import { pdfText } from './poppler.ts';
 
 let t: TestBrowser;
@@ -128,3 +129,14 @@ test('the pipeline strips them, and keepLigatureSpans opts out', async () => {
   // The finding is the only difference in what the caller is told, and both files still read.
   expect(squashText(await pdfText(stripped.pdf))).toBe(squashText(await pdfText(kept.pdf)));
 }, 240_000);
+
+describe('ciphertext is not content', () => {
+  test('no span is cut from it, and none is even counted', () => {
+    const pdf = encryptedFixture();
+    const out = stripRedundantSpans(pdf);
+    expect(Buffer.from(out.pdf).equals(Buffer.from(pdf))).toBe(true);
+    // The census runs before the font check, so a repair that looked past
+    // the declaration would still report the span it refused to cut.
+    expect(out.stats).toEqual({ seen: 0, stripped: 0, kept: 0 });
+  });
+});

@@ -4,6 +4,7 @@ import {
   dictCode,
   dictOf,
   insertIntoDict,
+  isEncrypted,
   kidsOf,
   maskStrings,
   streamDict,
@@ -15,6 +16,7 @@ import {
   type Obj,
 } from '../src/pdfparts.ts';
 import { contentPayloads, verify } from '../src/verify.ts';
+import { assemblePdf, encryptedFixture } from './fixtures.ts';
 
 describe('objects past the trailer', () => {
   test('trailing garbage matching the object pattern is not parsed as an object', () => {
@@ -512,5 +514,20 @@ describe("split when a dictionary ends a line with the keyword's spelling", () =
       '4 0 obj\n<< /A 1 >>\nendobj',
     );
     expect(verify(pdf).ok).toBe(true);
+  });
+});
+
+describe('encryption declared in the trailer', () => {
+  test('is detected, and only from the trailer', () => {
+    expect(isEncrypted(encryptedFixture())).toBe(true);
+    expect(isEncrypted(assemblePdf(['<< /Type /Catalog /Pages 2 0 R >>']))).toBe(false);
+    // The word inside a content stream is document bytes, not a declaration.
+    const decoy = assemblePdf([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      { dict: '<< /Length 8 >>', payload: Buffer.from('/Encrypt', LATIN1) },
+    ]);
+    expect(isEncrypted(decoy)).toBe(false);
+    // Not a linear file at all: undeterminable, not encrypted.
+    expect(isEncrypted(new Uint8Array([1, 2, 3]))).toBe(false);
   });
 });

@@ -619,6 +619,15 @@ function stampPdf(pdf: Uint8Array): Uint8Array {
   return out;
 }
 
+/**
+ * Empty input is a request defect, not a render failure: the HTTP layer
+ * answers it 400 with this message, while render() itself still throws it
+ * for callers without validation (the CLI). One string, two doors.
+ */
+export const EMPTY_INPUT_MESSAGE =
+  'the input is empty. a 0-byte file renders as one blank page and reports success; ' +
+  'check that the file has content, or that the command producing it wrote to stdout.';
+
 export async function render(browser: Browser, req: RenderRequest): Promise<RenderResult> {
   const started = Bun.nanoseconds();
   const timeoutMs = req.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -646,10 +655,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       }
 
       if (!req.url && !src.html.trim()) {
-        throw new Error(
-          'the input is empty. a 0-byte file renders as one blank page and reports success; ' +
-            'check that the file has content, or that the command producing it wrote to stdout.',
-        );
+        throw new Error(EMPTY_INPUT_MESSAGE);
       }
       findings.push(...precedenceFindings(src.html, req));
     }

@@ -3,7 +3,7 @@ import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Browser } from './browser.ts';
-import { FORMATS, render, type Format } from './render.ts';
+import { EMPTY_INPUT_MESSAGE, FORMATS, render, type Format } from './render.ts';
 
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 const LOOPBACK_HOST = /^(?:127\.0\.0\.1|\[::1\]|localhost)(?::\d+)?$/i;
@@ -148,6 +148,14 @@ function checkPathHtml(body: RenderBody): string | null {
   return null;
 }
 
+function checkEmpty(body: RenderBody): string | null {
+  // Blank input is a request defect, answered 400 here. render() itself still
+  // throws the shared message for callers without validation, so the CLI and
+  // library behavior do not change.
+  if (typeof body.html === 'string' && !body.html.trim()) return EMPTY_INPUT_MESSAGE;
+  return null;
+}
+
 function checkFormat(body: RenderBody): string | null {
   if (body.format !== undefined && typeof body.format !== 'string') {
     return `format must be a string, got ${Array.isArray(body.format) ? 'array' : typeof body.format}`;
@@ -249,16 +257,24 @@ function deadline(value: unknown): number | undefined {
 }
 
 function invalidBody(body: RenderBody): string | null {
-  return (
-    checkPathHtml(body) ??
-    checkFormat(body) ??
-    checkPageRanges(body) ??
-    checkMargin(body) ??
-    checkFlags(body) ??
-    checkNumbers(body) ??
-    checkResponseFormat(body) ??
-    checkMeta(body)
-  );
+  // First failure wins, in listed order. A loop, not a ?? chain: the chain's
+  // branch count tripped the complexity ratchet at ten helpers.
+  const checks = [
+    checkPathHtml,
+    checkEmpty,
+    checkFormat,
+    checkPageRanges,
+    checkMargin,
+    checkFlags,
+    checkNumbers,
+    checkResponseFormat,
+    checkMeta,
+  ];
+  for (const check of checks) {
+    const message = check(body);
+    if (message) return message;
+  }
+  return null;
 }
 
 /**

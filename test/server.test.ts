@@ -110,6 +110,16 @@ ${Array.from({ length: 6 }, (_, i) => `<div class="s">PAGE_${i + 1}</div>`).join
     expect(((await r.json()) as { error: string }).error).toContain('html');
   });
 
+  test('rejects blank html as a client error, not a 500', async () => {
+    // Battle-tested: blank input fell through validation into render(), which
+    // throws, and every throw answered 500. Same message, right code.
+    for (const html of ['', '   ']) {
+      const r = await post({ html });
+      expect(r.status, JSON.stringify(html)).toBe(400);
+      expect(((await r.json()) as { error: string }).error).toContain('the input is empty');
+    }
+  });
+
   test('rejects an unknown format rather than guessing', async () => {
     const r = await post({ html: DOC, format: 'a9' });
     expect(r.status).toBe(400);

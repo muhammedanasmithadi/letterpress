@@ -224,19 +224,44 @@ describe('the shell itself', () => {
     // arrives too late for first-paint form controls and scrollbars.
     expect(await html()).toContain('name="color-scheme" content="light dark"');
 
-    // The dark scheme wears the green set; every hex must live inside a
-    // light-dark() so light mode stays exactly stock. Comments are stripped
-    // above because the header names the palette.
-    const colourTokens = [...css.matchAll(/--[\w-]+\s*:\s*([^;]*#[0-9a-f]{3,8}[^;]*)/gi)];
+    // Every hex in the sheet must live inside a light-dark(), so light mode
+    // stays exactly stock. light-dark() spans are cut out with balanced parens
+    // because some hold var() calls.
+    const stripLightDark = (src: string) => {
+      let out = '';
+      let i = 0;
+      while (i < src.length) {
+        const at = src.indexOf('light-dark(', i);
+        if (at < 0) {
+          out += src.slice(i);
+          break;
+        }
+        out += src.slice(i, at);
+        let depth = 1;
+        let j = at + 'light-dark('.length;
+        while (j < src.length && depth > 0) {
+          if (src[j] === '(') depth++;
+          else if (src[j] === ')') depth--;
+          j++;
+        }
+        i = j;
+      }
+      return out;
+    };
+    const bare = [...stripLightDark(css).matchAll(/#[0-9a-f]{3,8}\b/gi)];
     expect(
-      colourTokens.map((m) => m[0]).filter((d) => !d.includes('light-dark')),
-      'custom properties holding a hex colour outside light-dark()',
+      bare.map((m) => m[0]),
+      'hex colour outside light-dark()',
     ).toEqual([]);
     expect(css).toContain('--bg: light-dark(Canvas, #0b0909)');
     expect(css).toContain('--fg: light-dark(CanvasText, #b5b9f0)');
     expect(css).toContain('--band: light-dark(var(--tint), #2e4540)');
     expect(css).toContain('::selection');
     expect(css).toContain('#408175');
+    // Carved inputs: platform Field in light, ink wells in dark; the wells
+    // sit on the band panel, never on the page background.
+    expect(css).toContain('background: light-dark(Field, #0b0909)');
+    expect(css).toContain('accent-color: light-dark(#2f6b5c, #408175)');
     // The wordmark face is vendored same-origin (offline-safe), used on the
     // toolbar heading only; everything else stays in platform stacks.
     expect(css).toContain('@font-face');

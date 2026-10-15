@@ -41,6 +41,8 @@
       <details class="settings">
         <summary>Page setup</summary>
         <div class="panel" role="group" aria-label="Print settings">
+          <!-- Values first, toggles second: the 3-column grid then reads as
+             three inputs on top, three switches below, instead of scattered. -->
           <label class="field">
             <span>Format</span>
             <select id="format">
@@ -60,11 +62,6 @@
             </select>
           </label>
 
-          <label class="field checkbox">
-            <input type="checkbox" id="landscape" />
-            <span>Landscape</span>
-          </label>
-
           <label class="field">
             <span>Margin</span>
             <!-- type=text, not number: a CSS length like 15mm is not a number, and
@@ -81,14 +78,19 @@
             />
           </label>
 
-          <label class="field checkbox">
-            <input type="checkbox" id="background" checked />
-            <span>Background</span>
-          </label>
-
           <label class="field">
             <span>Max image PPI</span>
             <input type="number" id="ppi" value="300" min="0" step="10" size="5" />
+          </label>
+
+          <label class="field checkbox">
+            <input type="checkbox" id="landscape" />
+            <span>Landscape</span>
+          </label>
+
+          <label class="field checkbox">
+            <input type="checkbox" id="background" checked />
+            <span>Background</span>
           </label>
 
           <label class="field checkbox">

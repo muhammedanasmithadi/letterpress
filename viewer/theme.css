@@ -13,8 +13,9 @@
 :root {
   color-scheme: light dark;
 
-  /* Follows the OS. Both halves are the standard platform accent blues. */
-  accent-color: light-dark(#0060df, #7cb7ff);
+  /* Follows the theme: deep sage in light for contrast against white, the
+     palette mid green in dark. */
+  accent-color: light-dark(#2f6b5c, #408175);
 
   /* Derived, not declared. One knob controls every divider and every surface
      tint, so light and dark cannot drift apart the way a token table lets
@@ -123,7 +124,7 @@ body {
   cursor: pointer;
   font: inherit;
   font-size: 12px;
-  padding: 4px 12px;
+  padding: 7px 14px;
   white-space: nowrap;
   color: inherit;
   border: 1px solid var(--line);
@@ -154,7 +155,8 @@ body {
   gap: 12px 18px;
   max-width: calc(100vw - 24px);
   padding: 14px 16px;
-  background: var(--bg);
+  /* A band lighter than the wells, so the ink inputs read carved into it. */
+  background: var(--band);
   border: 1px solid var(--line);
   border-radius: 10px;
   box-shadow: var(--shadow);
@@ -200,17 +202,29 @@ body {
 
 select,
 input[type='text'],
-input[type='number'],
-input[type='file'] {
+input[type='number'] {
   grid-area: control;
   font: inherit;
   font-size: 12px;
-  padding: 3px 4px;
+  padding: 7px 10px;
   min-width: 0;
   color: inherit;
-  /* No border override and no background override. The platform's own styling
-     is the point, and replacing either of these is how a control stops looking
-     native. */
+  /* Carved, not flat: ink wells in dark, platform Field in light. The border
+     is the dos-moos slate in dark, the UA gray in light. The file input is
+     deliberately not in this list: forcing a background on it breaks the
+     button/text split in some browsers, so it keeps the platform face. */
+  background: light-dark(Field, #0b0909);
+  border: 1px solid light-dark(ButtonBorder, #3a4849);
+  border-radius: 8px;
+}
+
+/* Focus greens the well's edge in dark; light keeps the platform border and
+   the global ring. Only the ring color is overridden, never removed. */
+select:focus-visible,
+input[type='text']:focus-visible,
+input[type='number']:focus-visible {
+  border-color: light-dark(ButtonBorder, #408175);
+  outline-color: light-dark(AccentColor, #8fd0c0);
 }
 
 /* Widths, because the default is wrong in a toolbar: a number input and a file
@@ -228,6 +242,7 @@ input[type='text'] {
    was the wrap talking, not the width. The button part gets the same padding
    rhythm as the chips beside it; still the platform's own control. */
 input[type='file'] {
+  grid-area: control;
   width: 26ch;
   min-width: 0;
 }
@@ -235,8 +250,14 @@ input[type='file'] {
 input[type='file']::file-selector-button {
   font: inherit;
   font-size: 12px;
-  padding: 4px 12px;
+  font-weight: 600;
+  padding: 7px 14px;
   margin-right: 8px;
+  cursor: pointer;
+  color: light-dark(ButtonText, #0b0909);
+  background: light-dark(ButtonFace, #408175);
+  border: 1px solid transparent;
+  border-radius: 8px;
 }
 /* No width and no max-width. The UA sizes a select to its widest option, which
    is the correct behaviour; capping it at 22ch clipped the default option
@@ -254,17 +275,24 @@ input:disabled {
 button {
   font: inherit;
   font-size: 12px;
-  padding: 4px 12px;
+  padding: 7px 18px;
   cursor: pointer;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 
 button.primary {
-  font-weight: 600;
+  font-weight: 700;
+  color: light-dark(ButtonText, #0b0909);
+  background: light-dark(ButtonFace, #408175);
+  border-color: transparent;
 }
 
 button:disabled {
   cursor: default;
-  opacity: 0.55;
+  opacity: 0.45;
 }
 
 /* The UA default is a 1px ring drawn flush against the control, which on

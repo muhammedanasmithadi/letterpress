@@ -234,7 +234,11 @@ button:disabled {
 #preview-note {
   grid-row: 2;
 }
-#source,
+/* The editor wrapper holds the row the textarea used to hold alone: three
+   children against four tracks put the field in an auto row before. */
+.editor {
+  grid-row: 3;
+}
 #preview {
   grid-row: 3;
 }
@@ -256,18 +260,91 @@ button:disabled {
   min-height: 0;
   resize: none;
   border: 0;
-  padding: 10px 12px;
-  font:
-    12px/1.55 ui-monospace,
-    'SF Mono',
-    'Cascadia Mono',
-    Menlo,
-    monospace;
   /* Without this the textarea's own background wins over the page's, and the
      pane goes light-on-light in dark mode. */
   background: transparent;
   color: inherit;
-  tab-size: 2;
+}
+
+/*
+  Editor overlay. One set of metrics feeds both layers: --ed-font sets the
+  shorthand (size/line-height/family together, so they cannot drift apart),
+  --ed-pad the inset, --ed-tab the tab stops. The textarea's own text is
+  transparent -- the <pre> shows through -- with a visible caret, and
+  white-space: pre (no wrapping) keeps every source line exactly one row so
+  the gutter cannot desynchronise on wrapped text.
+*/
+.editor {
+  --ed-font: 12px/1.55 ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+  --ed-pad: 10px 12px;
+  --ed-tab: 2;
+
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.gutter {
+  overflow: hidden;
+  padding: var(--ed-pad);
+  padding-right: 6px;
+  font: var(--ed-font);
+  text-align: right;
+  user-select: none;
+  color: color-mix(in oklab, CanvasText 45%, transparent);
+  background: var(--tint);
+  border-right: 1px solid var(--line);
+}
+
+.gutter > div {
+  white-space: pre;
+}
+
+.codewrap {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+#highlight,
+#source {
+  font: var(--ed-font);
+  tab-size: var(--ed-tab);
+  white-space: pre;
+  padding: var(--ed-pad);
+}
+
+#highlight {
+  grid-area: 1 / 1;
+  margin: 0;
+  padding: var(--ed-pad);
+  min-width: max-content;
+  pointer-events: none;
+  background: transparent;
+}
+
+#highlight .tok-tag {
+  color: AccentColor;
+}
+
+#highlight .tok-attr {
+  color: inherit;
+}
+
+#highlight .tok-str {
+  color: color-mix(in oklab, AccentColor 55%, CanvasText);
+}
+
+#highlight .tok-com {
+  color: color-mix(in oklab, CanvasText 50%, transparent);
+}
+
+#source {
+  grid-area: 1 / 1;
+  color: transparent;
+  caret-color: CanvasText;
 }
 
 .preview {

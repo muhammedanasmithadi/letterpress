@@ -24,6 +24,9 @@ const el = {
   render: $('render'),
   download: $('download'),
   source: $('source'),
+  gutter: $('gutter'),
+  codewrap: $('codewrap'),
+  highlight: $('highlight'),
   preview: $('preview'),
   previewNote: $('preview-note'),
   status: $('status'),
@@ -361,6 +364,7 @@ el.ppi.addEventListener('input', () => {
 let timer;
 let ppiTimer;
 el.source.addEventListener('input', () => {
+  renderHighlight();
   clearTimeout(timer);
   timer = setTimeout(() => void render(), DEBOUNCE_MS);
 });
@@ -392,3 +396,83 @@ syncMargin();
 // something is clicked cannot show that it works, and the first thing anyone
 // opens it with is already on screen.
 void render();
+
+/**
+ * The editor highlight layer and its line gutter.
+ *
+ * A tokenizer, not a parser: comments and declarations first (they hold < > that
+ * would otherwise lex as tags), then tags with attribute names and quoted
+ * values picked out, everything else plain text. Every piece is HTML-escaped
+ * before any span wraps it, so mismatched markup highlights wrong at worst --
+ * it can never inject. An unterminated `<di` mid-typing still lexes as a tag
+ * start rather than vanishing the line.
+ */
+function esc(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function paintTag(token) {
+  const m = /^(<\/?)([a-zA-Z][a-zA-Z0-9-]*)((?:[\s\S]*?))(\/?>?)$/.exec(token);
+  if (!m) return `<span class="tok-tag">${esc(token)}</span>`;
+  const attrs = m[3].replace(
+    /([a-zA-Z-:]+)(=("[^"]*"|'[^']*'|[^\s>]+))?/g,
+    (whole, name, eq) =>
+      `<span class="tok-attr">${esc(name)}</span>${eq ? `<span class="tok-str">${esc(eq)}</span>` : ''}`,
+  );
+  return `${esc(m[1])}<span class="tok-tag">${esc(m[2])}</span>${attrs}${esc(m[4])}`;
+}
+
+function highlightHtml(src) {
+  const out = [];
+  const re = /<!--[\s\S]*?-->|<![^<>]*>|<\/?[a-zA-Z][^<>]*>?/gi;
+  let at = 0;
+  for (const m of src.matchAll(re)) {
+    out.push(esc(src.slice(at, m.index)));
+    const token = m[0];
+    out.push(
+      token.startsWith('<!--') || token[1] === '!'
+        ? `<span class="tok-com">${esc(token)}</span>`
+        : paintTag(token),
+    );
+    at = m.index + token.length;
+  }
+  out.push(esc(src.slice(at)));
+  return out.join('');
+}
+
+function renderHighlight() {
+  const src = el.source.value;
+  el.highlight.innerHTML = highlightHtml(src);
+  const n = src.split('\n').length;
+  const box = el.gutter;
+  // Rebuild only when the count changes; per-keystroke DOM churn on every
+  // key is what makes editors feel slow on long documents.
+  if (box.childElementCount !== n) {
+    box.replaceChildren();
+    for (let i = 1; i <= n; i++) {
+      const d = document.createElement('div');
+      d.textContent = String(i);
+      box.appendChild(d);
+    }
+  }
+  syncGutter();
+}
+
+function syncGutter() {
+  el.gutter.scrollTop = el.codewrap.scrollTop;
+}
+
+el.codewrap.addEventListener('scroll', syncGutter, { passive: true });
+
+// While composing (CJK, Arabic IME), the textarea shows the composition string
+// but the highlight shows uncomposed text: doubling. Hide the layer for the
+// duration; plain text for a keystroke beats a wrong render.
+el.source.addEventListener('compositionstart', () => {
+  el.highlight.style.visibility = 'hidden';
+});
+el.source.addEventListener('compositionend', () => {
+  el.highlight.style.visibility = '';
+  renderHighlight();
+});
+
+renderHighlight();

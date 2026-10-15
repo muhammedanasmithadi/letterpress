@@ -99,18 +99,28 @@
       <section class="pane" aria-labelledby="editor-label">
         <h2 id="editor-label">Source</h2>
         <!--
-      aria-label, not aria-labelledby: the section's own heading names the
-      region, not the field. Accessibility.getFullAXTree reported this control
-      as textbox name="" while all eight others were correctly named.
+      The editor is a grid-stack overlay, not a plain field: a highlighted <pre>
+      and the textarea share one cell, so they scroll as one. The <pre> is paint
+      only -- aria-hidden, no focus, no pointer events -- and the textarea keeps
+      every native behavior (IME, undo, screen-reader announcements). Both layers
+      read every metric from the same --ed-* variables; a metric set in two
+      places drifts by a pixel per line and compounds.
+      aria-label, not aria-labelledby, on the textarea: the section's own heading
+      names the region, not the field. Accessibility.getFullAXTree reported this
+      control as textbox name="" while all eight others were correctly named.
     -->
-        <textarea
-          id="source"
-          spellcheck="false"
-          autocomplete="off"
-          autocapitalize="off"
-          aria-label="HTML source"
-          aria-describedby="source-hint"
-        >
+        <div class="editor" id="editor">
+          <div class="gutter" id="gutter" aria-hidden="true"></div>
+          <div class="codewrap" id="codewrap">
+            <pre id="highlight" aria-hidden="true"></pre>
+            <textarea
+              id="source"
+              spellcheck="false"
+              autocomplete="off"
+              autocapitalize="off"
+              aria-label="HTML source"
+              aria-describedby="source-hint"
+            >
 <!doctype html>
 <style>
   @page { size: A4; margin: 15mm }
@@ -123,6 +133,8 @@
    the PDF contains. This is the actual PDF, not a live HTML preview, because
    print media emulation does not paginate.</p>
 </textarea>
+          </div>
+        </div>
         <p id="source-hint" class="hint">Ctrl+Enter renders. Edits render after a short pause.</p>
       </section>
 

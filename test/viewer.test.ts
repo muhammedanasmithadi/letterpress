@@ -222,12 +222,13 @@ describe('the shell itself', () => {
   test('the editor and the preview are placed on the flex row, not auto-sized', async () => {
     // Each pane holds three children against four grid tracks, so auto-placement put
     // the textarea in an auto row: measured 57px tall inside a 544px pane, with the
-    // flex track going to the hint paragraph. Both content elements need explicit rows.
+    // flex track going to the hint paragraph. The editor wrapper holds the row now
+    // that the field lives inside an overlay; both content elements need explicit rows.
     const css = (await (await fetch(`${origin}/assets/theme.css`)).text()).replace(
       /\/\*[\s\S]*?\*\//g,
       '',
     );
-    expect(css).toMatch(/#source[\s,{][^}]*grid-row\s*:\s*3/s);
+    expect(css).toMatch(/\.editor[\s,{][^}]*grid-row\s*:\s*3/s);
     expect(css).toMatch(/#preview[\s,{][^}]*grid-row\s*:\s*3/s);
   });
 
@@ -241,6 +242,39 @@ describe('the shell itself', () => {
     const page = await html();
     expect(page).toContain('aria-describedby="source-hint"');
     expect(page).toContain('aria-labelledby="preview-label"');
+  });
+
+  test('the highlight layer is paint only, over one shared set of metrics', async () => {
+    // Both layers must read every metric from the same variables; a metric set
+    // in two places drifts per line and compounds. Measured the failure first:
+    // a 57px textarea inside a 544px pane, from grid auto-placement.
+    const page = await html();
+    expect(page).toContain('id="editor"');
+    expect(page).toContain('id="highlight" aria-hidden="true"');
+    expect(page).toContain('id="gutter" aria-hidden="true"');
+    const sheet = (await (await fetch(`${origin}/assets/theme.css`)).text()).replace(
+      /\/\*[\s\S]*?\*\//g,
+      '',
+    );
+    for (const metric of ['--ed-font', '--ed-pad', '--ed-tab']) {
+      expect(sheet).toContain(metric);
+    }
+    expect(sheet).toMatch(/#highlight,\s*#source\s*\{[^}]*font:\s*var\(--ed-font\)/s);
+  });
+
+  test('the tokenizer escapes before it wraps, and yields on IME', async () => {
+    const js = await (await fetch(`${origin}/assets/app.js`)).text();
+    // Escape-then-wrap: a mismatched tag highlights wrong at worst, never injects.
+    expect(js).toContain('tok-tag');
+    expect(js).toContain('tok-str');
+    expect(js).toContain('tok-com');
+    // While composing, the textarea shows the composition string and the layer
+    // would show uncomposed text: doubling. It hides for the duration.
+    expect(js).toContain('compositionstart');
+    expect(js).toContain('compositionend');
+    // The gutter follows the code pane; the highlight layer scrolls with it by
+    // sharing its cell, so only the gutter needs syncing.
+    expect(js).toContain('syncGutter');
   });
 });
 

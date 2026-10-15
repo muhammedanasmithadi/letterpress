@@ -4,6 +4,15 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
+    <!--
+  darkreader-lock: this page ships a real dark scheme (above), so a rewriting
+  extension must leave it alone. Dark Reader's own docs warn Filter mode
+  "inverts already dark parts into light"; its code calls removeDynamicTheme
+  on seeing this meta (verified in the installed build). Without it, a user in
+  Light/Filter mode sees a light page while matchMedia still reports dark --
+  exactly the contradiction debugged on 2026-10-15. No-op for everyone else.
+-->
+    <meta name="darkreader-lock" />
     <title>letterpress</title>
     <link rel="stylesheet" href="/assets/theme.css" />
   </head>

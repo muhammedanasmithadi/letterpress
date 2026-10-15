@@ -204,6 +204,10 @@ describe('the shell itself', () => {
     // The meta sets UA defaults before the stylesheet loads; the CSS alone
     // arrives too late for first-paint form controls and scrollbars.
     expect(await html()).toContain('name="color-scheme" content="light dark"');
+    // darkreader-lock: verified in the extension's code (removeDynamicTheme on
+    // seeing this meta). Without it a rewriter in Light/Filter mode inverts our
+    // dark-native page back to light while matchMedia still reports dark.
+    expect(await html()).toContain('name="darkreader-lock"');
 
     const colourTokens = [...css.matchAll(/--[\w-]+\s*:\s*([^;]*#[0-9a-f]{3,8}[^;]*)/gi)];
     expect(

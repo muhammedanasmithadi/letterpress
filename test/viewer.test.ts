@@ -194,8 +194,8 @@ describe('the shell itself', () => {
     // row wrapped and stranded the actions on a second line. The settings now
     // live in a native <details>; every control keeps its id.
     const page = (await html()).replace(/<!--[\s\S]*?-->/g, '');
-    expect(page).toContain('<details class="settings">');
-    expect(page).toContain('<summary>Page setup</summary>');
+    expect(page).toContain('<details class="settings"');
+    expect(page).toContain('<summary>');
     const panel = page.slice(page.indexOf('class="panel"'));
     for (const id of [
       'format',
@@ -227,7 +227,7 @@ describe('the shell itself', () => {
     // PDF is the compact download action; Render leads through underlined
     // sage text, never a filled box. The status opens plain.
     expect(page).toContain('id="download"');
-    expect(page).toContain('>PDF<');
+    expect(page).toMatch(/>\s*PDF\s*</s);
     expect(page).toContain('Ready to render.');
     const css = await (await fetch(`${origin}/assets/theme.css`)).text();
     expect(css).toMatch(/button\.primary\s*\{[^}]*text-decoration:\s*underline/s);
@@ -238,6 +238,32 @@ describe('the shell itself', () => {
     expect(css).toMatch(
       /\.segmented\.underline button\[aria-pressed='true'\]\s*\{[^}]*box-shadow:\s*inset 0 -2px/s,
     );
+  });
+
+  test('nocturne review: context strip, pane metadata, quiet icons', async () => {
+    // Single sources: the filename syncs from the file control, the right
+    // side from format/orientation state. Counts also live in the live status
+    // line, so pane metadata hides from assistive tech.
+    const page = await html();
+    expect(page).toContain('id="filename"');
+    expect(page).toContain('untitled.html');
+    expect(page).toContain('id="context-meta"');
+    expect(page).toContain('id="source-meta"');
+    expect(page).toContain('id="preview-meta"');
+    expect(page).toContain('aria-hidden="true">HTML<');
+    expect(page).toContain('class="paneltitle"');
+    // Icons are texture: every svg hides itself, the adjacent text names the
+    // action. The starter demonstrates print, set in Georgia serif.
+    const svgs = [...page.matchAll(/<svg[\s\S]*?>/g)];
+    expect(svgs.length).toBeGreaterThanOrEqual(2);
+    expect(svgs.every((m) => m[0].includes('aria-hidden="true"'))).toBe(true);
+    expect(page).toContain('Georgia, serif');
+    const js = await (await fetch(`${origin}/assets/app.js`)).text();
+    expect(js).toContain('el.filename.textContent = file.name');
+    expect(js).toContain('formatLabel()');
+    expect(js).toContain('closeOutside');
+    expect(js).toContain('el.sourceMeta.textContent = `HTML ·');
+    expect(js).toContain('el.previewMeta.textContent');
   });
 
   test('every control has a label', async () => {
@@ -291,7 +317,7 @@ describe('the shell itself', () => {
       'hex colour outside light-dark()',
     ).toEqual([]);
     expect(css).toContain('--bg: light-dark(Canvas, #0b0909)');
-    expect(css).toContain('--fg: light-dark(CanvasText, #b5b9f0)');
+    expect(css).toContain('--fg: light-dark(CanvasText, #e6e8dd)');
     expect(css).toContain('--band: light-dark(var(--tint), #2e4540)');
     expect(css).toContain('::selection');
     expect(css).toContain('#408175');
@@ -318,7 +344,7 @@ describe('the shell itself', () => {
   test('the panes scroll and the window does not', async () => {
     const css = await (await fetch(`${origin}/assets/theme.css`)).text();
 
-    expect(css).toMatch(/grid-template-rows: auto minmax\(0, 1fr\) auto/);
+    expect(css).toMatch(/grid-template-rows: auto auto minmax\(0, 1fr\) auto/);
     expect(css).toMatch(/\.preview\s*\{[^}]*overflow: auto/s);
   });
 

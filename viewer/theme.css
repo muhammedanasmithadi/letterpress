@@ -2,10 +2,10 @@
   Native light, moss dark.
 
   Light scheme stays stock: the OS picks surface and text, borders derive from
-  currentColor, and only the accent is declared. Dark scheme wears the
-  ColorHunt green set (#0B0909 #2E4540 #408175 #B5B9F0, lavender on ink
-  measures 10.6:1, ink on the selection green 4.4:1): --bg/--fg/--band carry
-  it, everything else still derives, so the two schemes cannot drift. The only
+  currentColor, and only the accent is declared. Dark scheme wears the green
+  set warmed toward paper: ink #0B0909, slate #2E4540, warm near-white #E6E8DD
+  text (16.0:1 on ink), sage #408175 actions. --bg/--fg/--band carry it,
+  everything else still derives, so the two schemes cannot drift. The only
   literal hex values are the dark halves inside light-dark(), plus
   accent-color which has no keyword.
 */
@@ -27,7 +27,7 @@
   /* Dark-scheme palette. Light halves are the platform values, so light mode
      is untouched; the green halves only ever resolve in dark. */
   --bg: light-dark(Canvas, #0b0909);
-  --fg: light-dark(CanvasText, #b5b9f0);
+  --fg: light-dark(CanvasText, #e6e8dd);
   --band: light-dark(var(--tint), #2e4540);
 }
 
@@ -57,9 +57,9 @@ body {
 
 body {
   display: grid;
-  /* Rows: toolbar, panes, status. The middle row takes the slack so the panes
-     scroll rather than the window. */
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  /* Rows: toolbar, context, panes, status. The middle row takes the slack so
+     the panes scroll rather than the window. */
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   /* A grid item defaults to min-width:auto, so the column is forced to the
      toolbar's min-content. That is 522px, which laid the whole app out 522px
      wide inside a 380px window and put Download off screen. */
@@ -84,7 +84,7 @@ body {
   /* One row at real widths now that the settings live in a disclosure. */
   align-items: center;
   gap: 4px 14px;
-  padding: 8px 12px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--line);
   background: var(--band);
   /* The settings panel anchors here. */
@@ -97,7 +97,7 @@ body {
   /* The wordmark, not a UI label: display face at text size, so it reads as
      a masthead rather than another control. Falls back to a quiet serif. */
   font-family: 'Letterpress Wordmark', Didot, 'Bodoni MT', 'Playfair Display', serif;
-  font-size: 19px;
+  font-size: 21px;
   font-weight: 400;
   letter-spacing: 0.02em;
   /* Sits with the control row rather than floating above it. */
@@ -117,6 +117,41 @@ body {
   flex: 1 1 auto;
 }
 
+/* Context strip: which document, in what shape. One source each -- the
+   filename syncs from the file control, the right side from format and
+   orientation state -- so nothing is announced twice. */
+.contextbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  color: color-mix(in oklab, var(--fg) 60%, transparent);
+}
+
+.doctag {
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: color-mix(in oklab, var(--fg) 70%, transparent);
+}
+
+.filename {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in oklab, var(--fg) 85%, transparent);
+}
+
+.context-meta {
+  margin-left: auto;
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 /* Settings disclosure. A native <details>: keyboard-focusable summary, no JS,
    and the panel is plain markup so nothing about rendering changes. */
 .settings > summary {
@@ -128,6 +163,16 @@ body {
   white-space: nowrap;
   color: inherit;
   background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* Action icons are texture only: aria-hidden in markup, never the name. */
+.icon {
+  width: 15px;
+  height: 15px;
+  flex: none;
 }
 
 /* Quiet like the file action: underline on hover, chevron always. */
@@ -164,6 +209,16 @@ body {
   border: 1px solid var(--line);
   border-radius: 10px;
   box-shadow: var(--shadow);
+}
+
+/* Editorial serif heading, the wordmark's voice inside the panel. */
+.paneltitle {
+  grid-column: 1 / -1;
+  margin: 0 0 2px;
+  font-family: 'Letterpress Wordmark', Didot, 'Bodoni MT', serif;
+  font-size: 17px;
+  font-weight: 400;
+  color: var(--fg);
 }
 
 @media (width < 560px) {
@@ -352,6 +407,9 @@ button.primary {
 button#download {
   border-color: transparent;
   padding: 7px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 button:disabled {
@@ -405,6 +463,21 @@ button:disabled {
   text-transform: uppercase;
   color: color-mix(in oklab, var(--fg) 60%, transparent);
   border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+/* Pane metadata rides right, plain case against the uppercase head. Hidden
+   from assistive tech: the counts also live in the live status line. */
+.panemeta {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: color-mix(in oklab, var(--fg) 50%, transparent);
+  white-space: nowrap;
 }
 
 /*
@@ -460,8 +533,8 @@ button:disabled {
   the gutter cannot desynchronise on wrapped text.
 */
 .editor {
-  --ed-font: 12px/1.55 ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
-  --ed-pad: 10px 12px;
+  --ed-font: 11px/1.7 ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+  --ed-pad: 12px 16px;
   --ed-tab: 2;
 
   display: grid;

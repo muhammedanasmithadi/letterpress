@@ -216,10 +216,13 @@ el.pageNum.addEventListener('change', () => goToPage(Number(el.pageNum.value)));
 function markStale(on, why = '') {
   // The note names a render the user can still see. With no successful render
   // behind it there is nothing stale -- the placeholder already says nothing
-  // rendered yet -- so claiming a "last good render" would be false.
+  // rendered yet -- so claiming a "last good render" would be false. Kept to
+  // one short line: at half-pane width a longer note wraps to two, and the
+  // detail lives in the title and was already announced in the status line.
   el.previewNote.hidden = !on || !lastBytes;
   if (on && lastBytes) {
-    el.previewNote.textContent = `Showing the last good render; the preview is out of date${why ? `: ${why}` : ''}`;
+    el.previewNote.textContent = 'Showing the last good render (out of date).';
+    el.previewNote.title = why;
   }
   // Download is disabled on a failure, because the bytes on offer belong to a
   // document the user has already changed.

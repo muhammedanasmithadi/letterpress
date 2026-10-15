@@ -283,7 +283,7 @@ describe('the shell itself', () => {
     // findings keep their lowercase voice, but the shell's own words do not.
     const js = await (await fetch(`${origin}/assets/app.js`)).text();
     expect(js).toContain('!on || !lastBytes');
-    expect(js).toContain('Showing the last good render; the preview is out of date');
+    expect(js).toContain('Showing the last good render (out of date).');
     expect(js).not.toContain('showing the last good render, not the current source');
     expect(js).toContain('Could not reach the renderer');
     expect(js).toContain('Gave up after');
@@ -375,6 +375,9 @@ describe('the toolbar wiring holds', () => {
     const sheet = await css();
     expect(sheet).toMatch(/#preview iframe\s*\{[^}]*width:\s*100%/s);
     expect(sheet).toMatch(/#preview iframe\s*\{[^}]*height:\s*100%/s);
+    // The foreign toolbar cannot be styled from outside, so the frame carries
+    // the integration: hairline border, rounded like the app's own controls.
+    expect(sheet).toMatch(/#preview iframe\s*\{[^}]*border-radius:\s*6px/s);
   });
 
   test('an unprintable background is actually not painted', async () => {

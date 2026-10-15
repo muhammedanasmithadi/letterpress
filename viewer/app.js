@@ -35,6 +35,11 @@ const el = {
   pageNext: $('page-next'),
   preview: $('preview'),
   previewNote: $('preview-note'),
+  filename: $('filename'),
+  contextMeta: $('context-meta'),
+  sourceMeta: $('source-meta'),
+  previewMeta: $('preview-meta'),
+  settings: $('settings'),
   status: $('status'),
   metrics: $('metrics'),
 };
@@ -304,6 +309,11 @@ async function render() {
         : `${(body.bytes / 1048576).toFixed(1)} MB`;
     const pages = `${body.pages} page${body.pages === 1 ? '' : 's'}`;
     el.metrics.textContent = `${pages} · ${kb} · ${body.ms} ms`;
+    // Pane and context metadata follow the render: format and orientation name
+    // the shape, pages name the result. The metrics keep the full triple.
+    const shape = `${formatLabel()} · ${landscapeOn ? 'Landscape' : 'Portrait'}`;
+    el.previewMeta.textContent = `${formatLabel()} · ${pages}`;
+    el.contextMeta.textContent = shape;
     pageCount = body.pages;
     currentPage = 1;
     syncPager();
@@ -423,6 +433,25 @@ function setOrientation(toLandscape) {
 
 el.landscape.addEventListener('click', () => setOrientation(true));
 el.portrait.addEventListener('click', () => setOrientation(false));
+
+/** The shape name for context and preview metadata: chosen format, or the
+ * document's own box when nothing is chosen. */
+function formatLabel() {
+  const v = el.format.value.trim();
+  return v ? v.toUpperCase() : 'Document';
+}
+
+// The disclosure is a dropdown, not a drawer: clicking elsewhere dismisses
+// it. Re-armed after an inside click, so choosing a setting never collapses
+// the panel mid-thought.
+el.settings.addEventListener('toggle', () => {
+  if (el.settings.open) document.addEventListener('click', closeOutside, { once: true });
+});
+
+function closeOutside(e) {
+  if (!el.settings.contains(e.target)) el.settings.open = false;
+  else document.addEventListener('click', closeOutside, { once: true });
+}
 el.ppi.addEventListener('input', () => {
   readPpi();
   clearTimeout(ppiTimer);
@@ -454,6 +483,9 @@ el.file.addEventListener('change', async () => {
   const file = el.file.files?.[0];
   if (!file) return;
   el.source.value = await file.text();
+  // The context strip names the open document; the status line announces the
+  // load once for assistive tech.
+  el.filename.textContent = file.name;
   say(`Loaded ${file.name}, ${el.source.value.length} characters.`);
   void render();
 });
@@ -512,6 +544,7 @@ function renderHighlight() {
   const src = el.source.value;
   el.highlight.innerHTML = highlightHtml(src);
   const n = src.split('\n').length;
+  el.sourceMeta.textContent = `HTML · ${n} line${n === 1 ? '' : 's'}`;
   const box = el.gutter;
   // Rebuild only when the count changes; per-keystroke DOM churn on every
   // key is what makes editors feel slow on long documents.

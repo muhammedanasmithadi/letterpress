@@ -38,9 +38,24 @@
     clipped mid-word. <details> is a native disclosure -- keyboard, SR labels
     and no JS -- and every control keeps its id, so app.js never notices.
   -->
-      <details class="settings">
-        <summary>Page setup</summary>
+      <details class="settings" id="settings">
+        <summary>
+          <svg
+            class="icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            aria-hidden="true"
+          >
+            <path d="M4 7h16M4 12h16M4 17h16" />
+            <circle cx="9" cy="7" r="2" />
+            <circle cx="15" cy="12" r="2" />
+            <circle cx="8" cy="17" r="2" /></svg
+          >Page setup
+        </summary>
         <div class="panel" role="group" aria-label="Print settings">
+          <h2 class="paneltitle">Page setup</h2>
           <!-- Values first, toggles second: the 3-column grid then reads as
              three inputs on top, three switches below, instead of scattered. -->
           <label class="field">
@@ -108,13 +123,40 @@
 
       <div class="group">
         <button type="button" id="render" class="primary">Render</button>
-        <button type="button" id="download" title="Download the rendered PDF" disabled>PDF</button>
+        <button type="button" id="download" title="Download the rendered PDF" disabled>
+          <svg
+            class="icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            aria-hidden="true"
+          >
+            <path d="M7 3h10v5H7z" />
+            <rect x="4" y="8" width="16" height="8" rx="1" />
+            <path d="M7 13h10v8H7z" /></svg
+          >PDF
+        </button>
       </div>
     </header>
 
+    <!--
+    Context strip: what document is open, in what shape. The filename syncs
+    from the file control, the right side from format/orientation state. One
+    source each: the toolbar keeps no second copy of the name, and page counts
+    live in the preview head and metrics, not here.
+  -->
+    <div class="contextbar">
+      <span class="doctag">HTML</span>
+      <span id="filename" class="filename">untitled.html</span>
+      <span id="context-meta" class="context-meta">Document · Portrait</span>
+    </div>
+
     <main class="split">
       <section class="pane" aria-labelledby="editor-label">
-        <h2 id="editor-label">Source</h2>
+        <h2 id="editor-label">
+          Source <span class="panemeta" id="source-meta" aria-hidden="true">HTML</span>
+        </h2>
         <!--
       The editor is a grid-stack overlay, not a plain field: a highlighted <pre>
       and the textarea share one cell, so they scroll as one. The <pre> is paint
@@ -141,8 +183,8 @@
 <!doctype html>
 <style>
   @page { size: A4; margin: 15mm }
-  body { font: 11pt/1.5 sans-serif; color: #1a1a1a }
-  h1 { font-size: 18pt; margin: 0 0 2mm }
+  body { font: 11pt/1.65 Georgia, serif; color: #1a1a1a }
+  h1 { font-size: 28pt; line-height: 1.1; margin: 0 0 4mm }
 </style>
 
 <h1>Rendered by Chromium's own print engine</h1>
@@ -156,7 +198,9 @@
       </section>
 
       <section class="pane" aria-labelledby="preview-label">
-        <h2 id="preview-label">Preview</h2>
+        <h2 id="preview-label">
+          Preview <span class="panemeta" id="preview-meta" aria-hidden="true">—</span>
+        </h2>
         <!--
       Outside #preview, not inside it. The preview is rebuilt with
       replaceChildren on every render, so a marker living in there was deleted by

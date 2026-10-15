@@ -186,12 +186,19 @@ body {
 }
 
 .settings > summary::after {
-  content: ' ▸';
-  color: color-mix(in oklab, var(--fg) 55%, transparent);
+  /* A drawn chevron, not a unicode glyph: border square, rotated. Closed
+     points right, open points down. */
+  content: '';
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-right: 1px solid color-mix(in oklab, var(--fg) 55%, transparent);
+  border-bottom: 1px solid color-mix(in oklab, var(--fg) 55%, transparent);
+  transform: rotate(-45deg);
 }
 
 .settings[open] > summary::after {
-  content: ' ▾';
+  transform: rotate(45deg);
 }
 
 .settings .panel {
@@ -697,6 +704,27 @@ button:disabled {
   padding: 0 8px;
   font-size: 14px;
   line-height: 1.4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Drawn pager chevrons, matching the summary marker: no unicode glyphs, and
+   aria-hidden in markup so readers hear only the button's name. */
+.chev {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+}
+
+.chev.left {
+  transform: rotate(135deg);
+}
+
+.chev.right {
+  transform: rotate(-45deg);
 }
 
 .pagelabel {

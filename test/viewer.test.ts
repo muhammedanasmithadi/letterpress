@@ -258,6 +258,13 @@ describe('the shell itself', () => {
     expect(svgs.length).toBeGreaterThanOrEqual(2);
     expect(svgs.every((m) => m[0].includes('aria-hidden="true"'))).toBe(true);
     expect(page).toContain('Georgia, serif');
+    // No unicode chevrons anywhere in the shell: markers are drawn with
+    // borders, and every svg hides itself.
+    const css = await (await fetch(`${origin}/assets/theme.css`)).text();
+    expect(css).not.toContain('▸');
+    expect(css).not.toContain('▾');
+    expect(page).toContain('class="chev left"');
+    expect(page).toContain('class="chev right"');
     const js = await (await fetch(`${origin}/assets/app.js`)).text();
     expect(js).toContain('el.filename.textContent = file.name');
     expect(js).toContain('formatLabel()');

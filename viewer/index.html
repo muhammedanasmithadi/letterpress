@@ -234,13 +234,17 @@
     clutter. Fragment navigation only -- it never re-renders.
   -->
       <div class="pager" id="pager" hidden>
-        <button type="button" id="page-prev" aria-label="Previous page">‹</button>
+        <button type="button" id="page-prev" aria-label="Previous page">
+          <span class="chev left" aria-hidden="true"></span>
+        </button>
         <label class="pagelabel">
           <span class="visually-hidden">Page number</span>
           <input type="text" id="page-num" inputmode="numeric" size="3" value="1" />
           <span id="page-count" aria-hidden="true">of 1</span>
         </label>
-        <button type="button" id="page-next" aria-label="Next page">›</button>
+        <button type="button" id="page-next" aria-label="Next page">
+          <span class="chev right" aria-hidden="true"></span>
+        </button>
       </div>
       <span id="metrics" class="metrics"></span>
     </footer>

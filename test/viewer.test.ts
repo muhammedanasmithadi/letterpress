@@ -348,11 +348,14 @@ describe('the shell itself', () => {
 
     expect(css).toContain('color-mix(in oklab, currentColor');
     expect(css).toMatch(/accent-color:\s*light-dark\(/);
-    // The focus ring draws in the system accent. `accent-color` is a property,
-    // not a color -- as an outline value it is invalid and the ring falls back
-    // to the UA default. The keyword is AccentColor.
-    expect(css).toContain('solid AccentColor');
+    // The focus ring draws in theme amber, not system blue: blue read as
+    // leftover from the previous set. `accent-color` (the property) is still
+    // never valid as an outline value -- that assertion guards the old bug.
+    expect(css).toContain('outline: 2px solid light-dark(#7a5416, #d98327)');
+    expect(css).not.toContain('solid AccentColor');
     expect(css).not.toContain('solid accent-color');
+    // Syntax tokens follow the theme too, in both schemes.
+    expect(css).toMatch(/#highlight \.tok-tag\s*\{\s*color:\s*light-dark\(#7a5416, #d98327\)/s);
   });
 
   test('the panes scroll and the window does not', async () => {

@@ -271,7 +271,6 @@ input[type='number'] {
 select:focus-visible,
 input[type='text']:focus-visible,
 input[type='number']:focus-visible {
-  outline-color: light-dark(AccentColor, #d98327);
   border-bottom-color: light-dark(ButtonBorder, #d98327);
 }
 
@@ -373,11 +372,10 @@ button:disabled {
   opacity: 0.45;
 }
 
-/* The UA default is a 1px ring drawn flush against the control, which on
-   #source — border: 0 — is the only focus indicator there is. Offset, thicker,
-   and the accent the file already declares. */
+/* The ring draws in the theme amber, deep bronze in light: the system blue
+   read as leftover from the previous set. Offset, thicker, unmissable. */
 :where(a, button, input, select, summary, textarea):focus-visible {
-  outline: 2px solid AccentColor;
+  outline: 2px solid light-dark(#7a5416, #d98327);
   outline-offset: 2px;
   border-radius: 2px;
 }
@@ -540,7 +538,7 @@ button:disabled {
 }
 
 #highlight .tok-tag {
-  color: AccentColor;
+  color: light-dark(#7a5416, #d98327);
 }
 
 #highlight .tok-attr {
@@ -548,7 +546,7 @@ button:disabled {
 }
 
 #highlight .tok-str {
-  color: color-mix(in oklab, AccentColor 55%, var(--fg));
+  color: color-mix(in oklab, light-dark(#7a5416, #d98327) 55%, var(--fg));
 }
 
 #highlight .tok-com {

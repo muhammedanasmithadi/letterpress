@@ -417,7 +417,8 @@ button:disabled {
   font-weight: 650;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: color-mix(in oklab, var(--fg) 60%, transparent);
+  /* 70% holds 5.0:1 on the band; 60% measured 4.1, under AA for small text. */
+  color: color-mix(in oklab, var(--fg) 70%, transparent);
   border-bottom: 1px solid var(--line);
   display: flex;
   align-items: baseline;
@@ -622,7 +623,8 @@ button:disabled {
 
 .metrics {
   margin-left: auto;
-  color: color-mix(in oklab, var(--fg) 60%, transparent);
+  /* Same 70% floor as pane heads for the same 4.5 reason. */
+  color: color-mix(in oklab, var(--fg) 70%, transparent);
   /* Compact technical metadata reads in mono; prose never does. */
   font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
   font-size: 11px;

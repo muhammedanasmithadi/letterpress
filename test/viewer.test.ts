@@ -201,6 +201,9 @@ describe('the shell itself', () => {
   test('the theme uses the system scheme rather than a palette', async () => {
     const css = await (await fetch(`${origin}/assets/theme.css`)).text();
     expect(css).toContain('color-scheme: light dark');
+    // The meta sets UA defaults before the stylesheet loads; the CSS alone
+    // arrives too late for first-paint form controls and scrollbars.
+    expect(await html()).toContain('name="color-scheme" content="light dark"');
 
     const colourTokens = [...css.matchAll(/--[\w-]+\s*:\s*([^;]*#[0-9a-f]{3,8}[^;]*)/gi)];
     expect(
@@ -210,6 +213,11 @@ describe('the shell itself', () => {
 
     expect(css).toContain('color-mix(in oklab, currentColor');
     expect(css).toMatch(/accent-color:\s*light-dark\(/);
+    // The focus ring draws in the system accent. `accent-color` is a property,
+    // not a color -- as an outline value it is invalid and the ring falls back
+    // to the UA default. The keyword is AccentColor.
+    expect(css).toContain('solid AccentColor');
+    expect(css).not.toContain('solid accent-color');
   });
 
   test('the panes scroll and the window does not', async () => {

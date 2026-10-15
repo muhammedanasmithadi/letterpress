@@ -1,14 +1,13 @@
 /*
-  Two colours and a shadow.
+  Native light, moss dark.
 
-  The platform already styles form controls well, and hand-writing a palette on
-  top of them mostly produces a toolbar that looks like a 2019 clone. So: let
-  the OS pick the surface and the text, take the accent from the system, and
-  derive every border from currentColor at low alpha. That reads as native in
-  light and dark without a token table.
-
-  The only literal hex values here are the two halves of accent-color, which
-  has no keyword equivalent.
+  Light scheme stays stock: the OS picks surface and text, borders derive from
+  currentColor, and only the accent is declared. Dark scheme wears the
+  ColorHunt green set (#0B0909 #2E4540 #408175 #B5B9F0, lavender on ink
+  measures 10.6:1, ink on the selection green 4.4:1): --bg/--fg/--band carry
+  it, everything else still derives, so the two schemes cannot drift. The only
+  literal hex values are the dark halves inside light-dark(), plus
+  accent-color which has no keyword.
 */
 
 :root {
@@ -23,6 +22,12 @@
   --line: color-mix(in oklab, currentColor 16%, transparent);
   --tint: color-mix(in oklab, currentColor 4%, transparent);
   --shadow: 0 1px 2px color-mix(in oklab, black 12%, transparent);
+
+  /* Dark-scheme palette. Light halves are the platform values, so light mode
+     is untouched; the green halves only ever resolve in dark. */
+  --bg: light-dark(Canvas, #0b0909);
+  --fg: light-dark(CanvasText, #b5b9f0);
+  --band: light-dark(var(--tint), #2e4540);
 }
 
 * {
@@ -46,8 +51,8 @@ body {
   grid-template-columns: minmax(0, 1fr);
   overflow: hidden;
 
-  background: Canvas;
-  color: CanvasText;
+  background: var(--bg);
+  color: var(--fg);
   font:
     13px/1.4 system-ui,
     -apple-system,
@@ -65,7 +70,7 @@ body {
   gap: 4px 14px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
-  background: var(--tint);
+  background: var(--band);
 }
 
 .toolbar h1 {
@@ -96,7 +101,7 @@ body {
   grid-template-areas: 'label' 'control';
   gap: 2px;
   font-size: 11px;
-  color: color-mix(in oklab, CanvasText 70%, transparent);
+  color: color-mix(in oklab, var(--fg) 70%, transparent);
 }
 
 .field > span {
@@ -163,7 +168,7 @@ select {
 input:disabled {
   /* Not opacity. Stacked on a label already at 70% it measured 2.72:1 against
      white, which exempts inactive components but is not readable by anyone. */
-  color: color-mix(in oklab, CanvasText 45%, transparent);
+  color: color-mix(in oklab, var(--fg) 45%, transparent);
 }
 
 button {
@@ -189,6 +194,14 @@ button:disabled {
   outline: 2px solid AccentColor;
   outline-offset: 2px;
   border-radius: 2px;
+}
+
+/* Selection wears the palette's mid green, with ink text: lavender on it only
+   manages 2.4:1, ink on it 4.4:1. Dragging across the editor feels like the
+   same app rather than the platform default. */
+::selection {
+  background: light-dark(SelectedItem, #408175);
+  color: light-dark(SelectedItemText, #0b0909);
 }
 
 /* ---------- split panes ---------- */
@@ -218,7 +231,7 @@ button:disabled {
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: color-mix(in oklab, CanvasText 60%, transparent);
+  color: color-mix(in oklab, var(--fg) 60%, transparent);
   border-bottom: 1px solid var(--line);
 }
 
@@ -250,7 +263,7 @@ button:disabled {
   margin: 0;
   padding: 4px 12px;
   font-size: 11px;
-  color: color-mix(in oklab, CanvasText 55%, transparent);
+  color: color-mix(in oklab, var(--fg) 55%, transparent);
   border-top: 1px solid var(--line);
 }
 
@@ -292,8 +305,8 @@ button:disabled {
   font: var(--ed-font);
   text-align: right;
   user-select: none;
-  color: color-mix(in oklab, CanvasText 45%, transparent);
-  background: var(--tint);
+  color: color-mix(in oklab, var(--fg) 45%, transparent);
+  background: var(--band);
   border-right: 1px solid var(--line);
 }
 
@@ -334,17 +347,17 @@ button:disabled {
 }
 
 #highlight .tok-str {
-  color: color-mix(in oklab, AccentColor 55%, CanvasText);
+  color: color-mix(in oklab, AccentColor 55%, var(--fg));
 }
 
 #highlight .tok-com {
-  color: color-mix(in oklab, CanvasText 50%, transparent);
+  color: color-mix(in oklab, var(--fg) 50%, transparent);
 }
 
 #source {
   grid-area: 1 / 1;
   color: transparent;
-  caret-color: CanvasText;
+  caret-color: var(--fg);
 }
 
 .preview {
@@ -352,7 +365,7 @@ button:disabled {
   padding: 16px;
   /* The page shadow needs a slightly darker backdrop than the page itself, or a
      white sheet on a white pane has no edge. */
-  background: var(--tint);
+  background: var(--band);
 }
 
 /* The preview is the returned bytes drawn by the browser's own PDF renderer.
@@ -370,7 +383,7 @@ button:disabled {
 
 .placeholder {
   margin: 0;
-  color: color-mix(in oklab, CanvasText 55%, transparent);
+  color: color-mix(in oklab, var(--fg) 55%, transparent);
   text-align: center;
   padding-top: 40px;
 }
@@ -403,12 +416,12 @@ button:disabled {
   padding: 5px 12px;
   font-size: 11px;
   border-top: 1px solid var(--line);
-  background: var(--tint);
+  background: var(--band);
 }
 
 .metrics {
   margin-left: auto;
-  color: color-mix(in oklab, CanvasText 60%, transparent);
+  color: color-mix(in oklab, var(--fg) 60%, transparent);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }

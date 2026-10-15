@@ -198,18 +198,29 @@ describe('the shell itself', () => {
     }
   });
 
-  test('the theme uses the system scheme rather than a palette', async () => {
-    const css = await (await fetch(`${origin}/assets/theme.css`)).text();
+  test('light stays native while dark wears the green set', async () => {
+    const css = (await (await fetch(`${origin}/assets/theme.css`)).text()).replace(
+      /\/\*[\s\S]*?\*\//g,
+      '',
+    );
     expect(css).toContain('color-scheme: light dark');
     // The meta sets UA defaults before the stylesheet loads; the CSS alone
     // arrives too late for first-paint form controls and scrollbars.
     expect(await html()).toContain('name="color-scheme" content="light dark"');
 
+    // The dark scheme wears the green set; every hex must live inside a
+    // light-dark() so light mode stays exactly stock. Comments are stripped
+    // above because the header names the palette.
     const colourTokens = [...css.matchAll(/--[\w-]+\s*:\s*([^;]*#[0-9a-f]{3,8}[^;]*)/gi)];
     expect(
-      colourTokens.map((m) => m[0]),
-      'custom properties holding a hex colour',
+      colourTokens.map((m) => m[0]).filter((d) => !d.includes('light-dark')),
+      'custom properties holding a hex colour outside light-dark()',
     ).toEqual([]);
+    expect(css).toContain('--bg: light-dark(Canvas, #0b0909)');
+    expect(css).toContain('--fg: light-dark(CanvasText, #b5b9f0)');
+    expect(css).toContain('--band: light-dark(var(--tint), #2e4540)');
+    expect(css).toContain('::selection');
+    expect(css).toContain('#408175');
 
     expect(css).toContain('color-mix(in oklab, currentColor');
     expect(css).toMatch(/accent-color:\s*light-dark\(/);

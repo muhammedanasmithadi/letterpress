@@ -34,6 +34,20 @@
   box-sizing: border-box;
 }
 
+/*
+  Wordmark face. Italiana by Santiago Orozco, SIL Open Font License 1.1
+  (vendored from Google Fonts, same-origin so the app stays offline-safe).
+  Used for the toolbar wordmark only; every other glyph on the page stays in
+  the platform stacks, which read better at UI sizes and cost nothing.
+*/
+@font-face {
+  font-family: 'Letterpress Wordmark';
+  src: url('/assets/italiana.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 html,
 body {
   height: 100%;
@@ -75,8 +89,12 @@ body {
 
 .toolbar h1 {
   margin: 0 8px 0 0;
-  font-size: 14px;
-  font-weight: 600;
+  /* The wordmark, not a UI label: display face at text size, so it reads as
+     a masthead rather than another control. Falls back to a quiet serif. */
+  font-family: 'Letterpress Wordmark', Didot, 'Bodoni MT', 'Playfair Display', serif;
+  font-size: 19px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
   /* Sits with the control row rather than floating above it. */
   align-self: center;
   white-space: nowrap;

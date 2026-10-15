@@ -37,6 +37,7 @@ describe('the shell is served', () => {
     for (const [path, type] of [
       ['/assets/theme.css', 'text/css'],
       ['/assets/app.js', 'text/javascript'],
+      ['/assets/italiana.woff2', 'font/woff2'],
     ] as const) {
       const r = await fetch(`${origin}${path}`);
       expect(r.status, path).toBe(200);
@@ -221,6 +222,12 @@ describe('the shell itself', () => {
     expect(css).toContain('--band: light-dark(var(--tint), #2e4540)');
     expect(css).toContain('::selection');
     expect(css).toContain('#408175');
+    // The wordmark face is vendored same-origin (offline-safe), used on the
+    // toolbar heading only; everything else stays in platform stacks.
+    expect(css).toContain('@font-face');
+    expect(css).toContain("'Letterpress Wordmark'");
+    expect(css).toContain('/assets/italiana.woff2');
+    expect(css).toMatch(/\.toolbar h1\s*\{[^}]*font-family:\s*'Letterpress Wordmark'/s);
 
     expect(css).toContain('color-mix(in oklab, currentColor');
     expect(css).toMatch(/accent-color:\s*light-dark\(/);

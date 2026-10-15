@@ -122,6 +122,13 @@ function readPpi() {
     return undefined;
   }
   el.ppi.removeAttribute('aria-invalid');
+  // The server clamps to 1200 silently, so the box shows the effective cap
+  // instead of claiming a resolution the engine ignores. The max attribute
+  // above already paints out-of-range input invalid.
+  if (n > 1200) {
+    el.ppi.value = '1200';
+    return 1200;
+  }
   return n;
 }
 

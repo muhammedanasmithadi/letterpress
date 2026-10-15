@@ -269,6 +269,11 @@ describe('the shell itself', () => {
     expect(js).not.toContain('formatLabel()');
     expect(js).toContain('closeOutside');
     expect(js).toContain('el.sourceMeta.textContent = `HTML ·');
+    // PPI honesty: the server clamps to 1200, so the box caps there natively
+    // and the reader reflects the effective value instead of sending a number
+    // the engine silently ignores.
+    expect(page).toContain('max="1200"');
+    expect(js).toContain("el.ppi.value = '1200'");
   });
 
   test('every control has a label', async () => {

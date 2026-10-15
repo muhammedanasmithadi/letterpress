@@ -83,10 +83,24 @@
             <input type="number" id="ppi" value="300" min="0" step="10" size="5" />
           </label>
 
-          <label class="field checkbox">
-            <input type="checkbox" id="landscape" />
-            <span>Landscape</span>
-          </label>
+          <!-- Orientation as an editorial choice, not a checkbox: two native
+             radios, sage underline on the active one (plus the radio itself,
+             so state never rides on color alone). #landscape stays the
+             Landscape radio, so its .checked semantics -- payload and
+             listeners -- are untouched. -->
+          <fieldset class="orient">
+            <legend>Orientation</legend>
+            <span class="opts">
+              <label
+                ><input type="radio" name="orientation" value="portrait" checked />
+                <span>Portrait</span></label
+              >
+              <label
+                ><input type="radio" name="orientation" value="landscape" id="landscape" />
+                <span>Landscape</span></label
+              >
+            </span>
+          </fieldset>
 
           <label class="field checkbox">
             <input type="checkbox" id="background" checked />
@@ -104,7 +118,7 @@
 
       <div class="group">
         <button type="button" id="render" class="primary">Render</button>
-        <button type="button" id="download" disabled>Download</button>
+        <button type="button" id="download" title="Download the rendered PDF" disabled>PDF</button>
       </div>
     </header>
 
@@ -176,7 +190,9 @@
     were a sibling element, so the count was painted and never announced, and it
     is the one number a user wants.
   -->
-      <output id="status" role="status" aria-live="polite" aria-atomic="true">Ready.</output>
+      <output id="status" role="status" aria-live="polite" aria-atomic="true"
+        >Ready to render.</output
+      >
       <!--
     The pager lives in the footer, not the preview pane: the preview container
     is rebuilt on every render, and the pane grid has no free track for a fifth

@@ -203,6 +203,32 @@ describe('the shell itself', () => {
     expect(css).toMatch(/\.settings \.panel\s*\{[^}]*position:\s*absolute/s);
   });
 
+  test('nocturne controls: radios, text actions, underline fields', async () => {
+    // Orientation is an editorial radio choice; #landscape stays the Landscape
+    // radio so payload and listeners keep their .checked semantics untouched.
+    const page = await html();
+    expect(page).toContain('name="orientation"');
+    expect(page).toContain('<legend>Orientation</legend>');
+    expect(page).toContain('value="portrait" checked');
+    expect(page).toContain('value="landscape" id="landscape"');
+    const js = await (await fetch(`${origin}/assets/app.js`)).text();
+    expect(js).toContain('el.landscape.checked');
+    // PDF is the compact download action; Render leads through underlined
+    // sage text, never a filled box. The status opens plain.
+    expect(page).toContain('id="download"');
+    expect(page).toContain('>PDF<');
+    expect(page).toContain('Ready to render.');
+    const css = await (await fetch(`${origin}/assets/theme.css`)).text();
+    expect(css).toMatch(/button\.primary\s*\{[^}]*text-decoration:\s*underline/s);
+    expect(css).toContain('border-bottom: 1px solid light-dark(ButtonBorder, #3a4849)');
+    expect(css).toContain(':user-invalid');
+    expect(css).toContain('border-bottom-style: dotted');
+    expect(css).toMatch(/\.metrics\s*\{[^}]*monospace/s);
+    expect(css).toMatch(
+      /\.orient label:has\(input:checked\) > span\s*\{[^}]*text-decoration:\s*underline/s,
+    );
+  });
+
   test('every control has a label', async () => {
     const page = await html();
 
@@ -258,9 +284,9 @@ describe('the shell itself', () => {
     expect(css).toContain('--band: light-dark(var(--tint), #2e4540)');
     expect(css).toContain('::selection');
     expect(css).toContain('#408175');
-    // Carved inputs: platform Field in light, ink wells in dark; the wells
-    // sit on the band panel, never on the page background.
-    expect(css).toContain('background: light-dark(Field, #0b0909)');
+    // Underline fields: transparent face, one discreet line; the resting line
+    // is the UA gray in light, dos-moos slate in dark.
+    expect(css).toContain('border-bottom: 1px solid light-dark(ButtonBorder, #3a4849)');
     expect(css).toContain('accent-color: light-dark(#2f6b5c, #408175)');
     // The wordmark face is vendored same-origin (offline-safe), used on the
     // toolbar heading only; everything else stays in platform stacks.

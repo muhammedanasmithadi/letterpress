@@ -124,12 +124,16 @@ body {
   cursor: pointer;
   font: inherit;
   font-size: 12px;
-  padding: 7px 14px;
+  padding: 7px 2px;
   white-space: nowrap;
   color: inherit;
-  border: 1px solid var(--line);
-  border-radius: 8px;
   background: transparent;
+}
+
+/* Quiet like the file action: underline on hover, chevron always. */
+.settings > summary:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 
 .settings > summary::-webkit-details-marker {
@@ -192,6 +196,48 @@ body {
   padding-bottom: 3px;
 }
 
+/* Orientation as an editorial choice: two native radios, sage underline on
+   the active label. The radio itself stays visible, so state never rides on
+   color alone. */
+.orient {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.orient > legend {
+  font-size: 11px;
+  color: color-mix(in oklab, var(--fg) 70%, transparent);
+  padding: 0;
+  margin-bottom: 2px;
+}
+
+.orient .opts {
+  display: flex;
+  gap: 16px;
+}
+
+.orient label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 7px 0;
+  cursor: pointer;
+}
+
+.orient input {
+  margin: 0;
+}
+
+.orient label:has(input:checked) > span {
+  text-decoration: underline;
+  text-decoration-color: light-dark(#2f6b5c, #408175);
+  text-underline-offset: 4px;
+  font-weight: 600;
+}
+
 .field.checkbox > input {
   grid-area: control;
   margin: 0;
@@ -206,25 +252,37 @@ input[type='number'] {
   grid-area: control;
   font: inherit;
   font-size: 12px;
-  padding: 7px 10px;
+  padding: 7px 1px;
   min-width: 0;
   color: inherit;
-  /* Carved, not flat: ink wells in dark, platform Field in light. The border
-     is the dos-moos slate in dark, the UA gray in light. The file input is
-     deliberately not in this list: forcing a background on it breaks the
-     button/text split in some browsers, so it keeps the platform face. */
-  background: light-dark(Field, #0b0909);
-  border: 1px solid light-dark(ButtonBorder, #3a4849);
-  border-radius: 8px;
+  /* Underline fields: transparent face, one discreet line, labels above (the
+     .field grid). The resting line is the UA gray in light, dos-moos slate in
+     dark; the file input is not in this list -- it keeps the platform face
+     with a quiet text button (see below). */
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid light-dark(ButtonBorder, #3a4849);
+  border-radius: 0;
 }
 
-/* Focus greens the well's edge in dark; light keeps the platform border and
-   the global ring. Only the ring color is overridden, never removed. */
+/* Focus sages the line; the global ring still draws, only its color is
+   tuned here. Disabled goes dotted as well as dim, so the state is not
+   color alone; invalid sages to red only after interaction. */
 select:focus-visible,
 input[type='text']:focus-visible,
 input[type='number']:focus-visible {
-  border-color: light-dark(ButtonBorder, #408175);
   outline-color: light-dark(AccentColor, #8fd0c0);
+  border-bottom-color: light-dark(ButtonBorder, #408175);
+}
+
+select:disabled,
+input:disabled {
+  border-bottom-style: dotted;
+}
+
+input:user-invalid,
+select:user-invalid {
+  border-bottom-color: light-dark(#b3261e, #f9d67c);
 }
 
 /* Widths, because the default is wrong in a toolbar: a number input and a file
@@ -245,19 +303,26 @@ input[type='file'] {
   grid-area: control;
   width: 26ch;
   min-width: 0;
+  background: transparent;
+  border: 0;
 }
 
+/* Open file as a quiet secondary action: plain text that underlines on hover,
+   still the platform's own button underneath. */
 input[type='file']::file-selector-button {
   font: inherit;
   font-size: 12px;
-  font-weight: 600;
-  padding: 7px 14px;
+  padding: 7px 2px;
   margin-right: 8px;
   cursor: pointer;
-  color: light-dark(ButtonText, #0b0909);
-  background: light-dark(ButtonFace, #408175);
-  border: 1px solid transparent;
-  border-radius: 8px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+}
+
+input[type='file']::file-selector-button:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 /* No width and no max-width. The UA sizes a select to its widest option, which
    is the correct behaviour; capping it at 22ch clipped the default option
@@ -283,11 +348,21 @@ button {
   border-radius: 8px;
 }
 
+/* Render stays the primary action through sage text and a quiet underline,
+   never a filled box. PDF is the compact sibling: borderless, tighter. */
 button.primary {
   font-weight: 700;
-  color: light-dark(ButtonText, #0b0909);
-  background: light-dark(ButtonFace, #408175);
+  color: light-dark(#2f6b5c, #8fd0c0);
+  background: transparent;
   border-color: transparent;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 5px;
+}
+
+button#download {
+  border-color: transparent;
+  padding: 7px 10px;
 }
 
 button:disabled {
@@ -530,6 +605,9 @@ button:disabled {
 .metrics {
   margin-left: auto;
   color: color-mix(in oklab, var(--fg) 60%, transparent);
+  /* Compact technical metadata reads in mono; prose never does. */
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }

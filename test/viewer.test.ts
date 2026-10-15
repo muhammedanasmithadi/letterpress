@@ -234,6 +234,10 @@ describe('the shell itself', () => {
     expect(css).toContain('border-bottom: 1px solid light-dark(ButtonBorder, #3a4849)');
     expect(css).toContain(':user-invalid');
     expect(css).toContain('border-bottom-style: dotted');
+    // Margin re-renders as you type, but only for committable values:
+    // intermediates must not flash server rejections.
+    expect(js).toContain("el.margin.addEventListener('input'");
+    expect(js).toContain('isLengthLike');
     expect(css).toMatch(/\.metrics\s*\{[^}]*monospace/s);
     expect(css).toMatch(
       /\.segmented\.underline button\[aria-pressed='true'\]\s*\{[^}]*box-shadow:\s*inset 0 -2px/s,

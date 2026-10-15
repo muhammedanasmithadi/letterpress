@@ -405,6 +405,25 @@ el.format.addEventListener('change', () => {
   syncMargin();
   void render();
 });
+
+// Margin types like PPI: debounced input, but gated on validity. Intermediate
+// keystrokes ("2", "20m") are not CSS lengths, and sending them would flash a
+// 400 the user never committed. change (blur/Enter) below still sends whatever
+// is there, so a genuinely bad value gets a real rejection, not silence.
+let marginTimer;
+el.margin.addEventListener('input', () => {
+  clearTimeout(marginTimer);
+  marginTimer = setTimeout(() => {
+    const v = el.margin.value.trim();
+    if (v === '' || isLengthLike(v)) void render();
+  }, DEBOUNCE_MS);
+});
+
+/** Mirrors the server's checkMargin length test. Transient input only. */
+function isLengthLike(v) {
+  return /^0(?:\.0+)?$/.test(v) || /^-?\d*\.?\d+(mm|cm|in|pt|px|pc|q)$/.test(v);
+}
+
 el.margin.addEventListener('change', () => void render());
 
 for (const control of [el.background, el.network]) {

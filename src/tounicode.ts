@@ -1,6 +1,15 @@
 import { deflateSync } from 'node:zlib';
 import { inflateSync } from 'node:zlib';
-import { dictOf, inflatedStream, join, LATIN1, objsByNum, trySplit, type Obj } from './pdfparts.ts';
+import {
+  dictOf,
+  inflatedStream,
+  isEncrypted,
+  join,
+  LATIN1,
+  objsByNum,
+  trySplit,
+  type Obj,
+} from './pdfparts.ts';
 
 const PRESENTATION_FORMS: ReadonlyArray<readonly [number, number]> = [
   [0xfb00, 0xfb4f],
@@ -218,6 +227,7 @@ function rewrittenStream(o: Obj, cmap: string): Buffer {
 }
 
 export function fixToUnicode(pdf: Uint8Array): Uint8Array {
+  if (isEncrypted(pdf)) return pdf;
   const parts = trySplit(pdf);
   if (!parts) return pdf;
 

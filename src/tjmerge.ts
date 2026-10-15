@@ -43,6 +43,7 @@ import {
   LATIN1,
   dictOf,
   hasPostTrailerObjects,
+  isEncrypted,
   join,
   streamRange,
   trySplit,
@@ -465,6 +466,9 @@ export function mergeTextRuns(pdf: Uint8Array): { pdf: Uint8Array; stats: MergeS
   // Same fragment hazard as stripRedundantSpans: rewriting streams split() only
   // partly sees drops the rest. Decline whole.
   if (hasPostTrailerObjects(pdf)) return { pdf, stats };
+  // Ciphertext matches glyph patterns by chance on some producers; rewriting
+  // from it is unsound even when the bytes look parseable.
+  if (isEncrypted(pdf)) return { pdf, stats };
   const parts = trySplit(pdf);
   if (!parts) return { pdf, stats };
   const byStream = widthsByResource(parts);

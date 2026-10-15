@@ -2,6 +2,7 @@ import { inflateSync } from 'node:zlib';
 import {
   inflatedStream,
   insertIntoDict,
+  isEncrypted,
   join,
   LATIN1,
   objsByNum,
@@ -142,6 +143,7 @@ function embeddedFont(o: Obj): Buffer | undefined {
 type DescriptorFix = { flags: number; capHeight?: number };
 
 export function fixFontDescriptors(pdf: Uint8Array): Uint8Array {
+  if (isEncrypted(pdf)) return pdf;
   const parts = trySplit(pdf);
   if (!parts) return pdf;
 

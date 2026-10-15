@@ -3,6 +3,7 @@ import {
   insertIntoDict,
   join,
   LATIN1,
+  isEncrypted,
   structElementsInOrder,
   trySplit,
   objsByNum,
@@ -60,6 +61,7 @@ export function linkAnnotations(parts: Parts, linkNum: number): number[] {
 
 export function fixLinkDescs(pdf: Uint8Array, descs: string[]): Uint8Array {
   if (descs.length === 0) return pdf;
+  if (isEncrypted(pdf)) return pdf;
   const parts = trySplit(pdf);
   if (!parts) return pdf;
 

@@ -3,6 +3,7 @@ import {
   join,
   kidsOf,
   LATIN1,
+  isEncrypted,
   structElementsInOrder,
   trySplit,
   type Obj,
@@ -49,6 +50,7 @@ export function redundantFigures(parts: Parts): number[] {
 }
 
 export function fixRedundantFigures(pdf: Uint8Array): Uint8Array {
+  if (isEncrypted(pdf)) return pdf;
   const parts = trySplit(pdf);
   if (!parts) return pdf;
   const targets = redundantFigures(parts);

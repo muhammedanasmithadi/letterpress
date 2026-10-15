@@ -108,6 +108,15 @@ describe('format validation', () => {
     expect(() => toInches('5furlongs')).toThrow(/unsupported margin unit/);
     expect(() => toInches('abc')).toThrow(/not a css length/);
     expect(() => toInches('10')).toThrow(/needs a unit/);
+    expect(() => toInches('.')).toThrow(/not a number/);
+  });
+
+  test('render refuses non-documents before touching the browser', async () => {
+    // resolveSource runs before any tab exists, so a dummy browser never
+    // gets touched: these fail in validation, not in Chromium.
+    const noBrowser = null as never;
+    await expect(render(noBrowser, {})).rejects.toThrow(/one of: html, path, url/);
+    await expect(render(noBrowser, { html: '%PDF-1.4\n1 0 obj\n' })).rejects.toThrow(/not HTML/);
   });
 });
 

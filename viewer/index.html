@@ -25,68 +25,78 @@
       <h1>letterpress</h1>
 
       <div class="group">
-        <label class="field">
+        <label class="field filefield">
           <span>File</span>
           <input type="file" id="file" accept=".html,.htm,.xhtml,.svg,text/html" />
         </label>
       </div>
 
-      <div class="group" role="group" aria-label="Print settings">
-        <label class="field">
-          <span>Format</span>
-          <select id="format">
-            <!--
-          The first option is not "a4". It is "whatever the document declares",
-          because a document's own @page size wins over every flag here, and
-          pretending otherwise is how a user ends up debugging the tool for a
-          document that is correct.
-        -->
-            <option value="">document's own @page</option>
-            <option value="a3">A3</option>
-            <option value="a4">A4</option>
-            <option value="a5">A5</option>
-            <option value="legal">Legal</option>
-            <option value="letter">Letter</option>
-            <option value="tabloid">Tabloid</option>
-          </select>
-        </label>
+      <!--
+    The six print settings live in a disclosure, not in the row. Eleven
+    controls plus a wordmark never fit a real window: at 900px the row wrapped
+    and stranded Render/Download alone on a second line, with the filename
+    clipped mid-word. <details> is a native disclosure -- keyboard, SR labels
+    and no JS -- and every control keeps its id, so app.js never notices.
+  -->
+      <details class="settings">
+        <summary>Page setup</summary>
+        <div class="panel" role="group" aria-label="Print settings">
+          <label class="field">
+            <span>Format</span>
+            <select id="format">
+              <!--
+            The first option is not "a4". It is "whatever the document declares",
+            because a document's own @page size wins over every flag here, and
+            pretending otherwise is how a user ends up debugging the tool for a
+            document that is correct.
+          -->
+              <option value="">document's own @page</option>
+              <option value="a3">A3</option>
+              <option value="a4">A4</option>
+              <option value="a5">A5</option>
+              <option value="legal">Legal</option>
+              <option value="letter">Letter</option>
+              <option value="tabloid">Tabloid</option>
+            </select>
+          </label>
 
-        <label class="field checkbox">
-          <input type="checkbox" id="landscape" />
-          <span>Landscape</span>
-        </label>
+          <label class="field checkbox">
+            <input type="checkbox" id="landscape" />
+            <span>Landscape</span>
+          </label>
 
-        <label class="field">
-          <span>Margin</span>
-          <!-- type=text, not number: a CSS length like 15mm is not a number, and
-           type=number rejects it outright. -->
-          <input
-            type="text"
-            id="margin"
-            placeholder="15mm"
-            size="6"
-            spellcheck="false"
-            autocomplete="off"
-            aria-disabled="true"
-            readonly
-          />
-        </label>
+          <label class="field">
+            <span>Margin</span>
+            <!-- type=text, not number: a CSS length like 15mm is not a number, and
+             type=number rejects it outright. -->
+            <input
+              type="text"
+              id="margin"
+              placeholder="15mm"
+              size="6"
+              spellcheck="false"
+              autocomplete="off"
+              aria-disabled="true"
+              readonly
+            />
+          </label>
 
-        <label class="field checkbox">
-          <input type="checkbox" id="background" checked />
-          <span>Background</span>
-        </label>
+          <label class="field checkbox">
+            <input type="checkbox" id="background" checked />
+            <span>Background</span>
+          </label>
 
-        <label class="field">
-          <span>Max image PPI</span>
-          <input type="number" id="ppi" value="300" min="0" step="10" size="5" />
-        </label>
+          <label class="field">
+            <span>Max image PPI</span>
+            <input type="number" id="ppi" value="300" min="0" step="10" size="5" />
+          </label>
 
-        <label class="field checkbox">
-          <input type="checkbox" id="network" />
-          <span>Allow network</span>
-        </label>
-      </div>
+          <label class="field checkbox">
+            <input type="checkbox" id="network" />
+            <span>Allow network</span>
+          </label>
+        </div>
+      </details>
 
       <div class="spacer"></div>
 

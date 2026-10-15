@@ -188,6 +188,21 @@ describe('the shell itself', () => {
     }
   });
 
+  test('print settings live in a disclosure, one row at real widths', async () => {
+    // Eleven controls plus a wordmark never fit a real window: at 900px the
+    // row wrapped and stranded the actions on a second line. The settings now
+    // live in a native <details>; every control keeps its id and its label.
+    const page = (await html()).replace(/<!--[\s\S]*?-->/g, '');
+    expect(page).toContain('<details class="settings">');
+    expect(page).toContain('<summary>Page setup</summary>');
+    const panel = page.slice(page.indexOf('class="panel"'));
+    for (const id of ['format', 'landscape', 'margin', 'background', 'ppi', 'network']) {
+      expect(panel, `#${id} inside the panel`).toContain(`id="${id}"`);
+    }
+    const css = await (await fetch(`${origin}/assets/theme.css`)).text();
+    expect(css).toMatch(/\.settings \.panel\s*\{[^}]*position:\s*absolute/s);
+  });
+
   test('every control has a label', async () => {
     const page = await html();
 

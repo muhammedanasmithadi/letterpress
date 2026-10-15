@@ -80,11 +80,15 @@ body {
   display: flex;
   flex-wrap: wrap;
   min-width: 0;
-  align-items: end;
+  /* One row at real widths now that the settings live in a disclosure. */
+  align-items: center;
   gap: 4px 14px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
   background: var(--band);
+  /* The settings panel anchors here. */
+  position: relative;
+  z-index: 10;
 }
 
 .toolbar h1 {
@@ -110,6 +114,56 @@ body {
 
 .spacer {
   flex: 1 1 auto;
+}
+
+/* Settings disclosure. A native <details>: keyboard-focusable summary, no JS,
+   and the panel is plain markup so nothing about rendering changes. */
+.settings > summary {
+  list-style: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 12px;
+  white-space: nowrap;
+  color: inherit;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+}
+
+.settings > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings > summary::after {
+  content: ' ▸';
+  color: color-mix(in oklab, var(--fg) 55%, transparent);
+}
+
+.settings[open] > summary::after {
+  content: ' ▾';
+}
+
+.settings .panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 12px;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, max-content));
+  gap: 12px 18px;
+  max-width: calc(100vw - 24px);
+  padding: 14px 16px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+
+@media (width < 560px) {
+  .settings .panel {
+    grid-template-columns: repeat(2, minmax(0, max-content));
+  }
 }
 
 .field {
@@ -170,11 +224,19 @@ input[type='number'] {
 input[type='text'] {
   width: 8ch;
 }
-/* min-width:0, not just width. The file input's min-content is 242px, which
-   drove the whole toolbar to 442px and pushed Download off a 380px screen. */
+/* Room for a real filename now that the row fits: the clipped "No f...ed."
+   was the wrap talking, not the width. The button part gets the same padding
+   rhythm as the chips beside it; still the platform's own control. */
 input[type='file'] {
-  width: 20ch;
+  width: 26ch;
   min-width: 0;
+}
+
+input[type='file']::file-selector-button {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 12px;
+  margin-right: 8px;
 }
 /* No width and no max-width. The UA sizes a select to its widest option, which
    is the correct behaviour; capping it at 22ch clipped the default option
@@ -208,7 +270,7 @@ button:disabled {
 /* The UA default is a 1px ring drawn flush against the control, which on
    #source — border: 0 — is the only focus indicator there is. Offset, thicker,
    and the accent the file already declares. */
-:where(a, button, input, select, textarea):focus-visible {
+:where(a, button, input, select, summary, textarea):focus-visible {
   outline: 2px solid AccentColor;
   outline-offset: 2px;
   border-radius: 2px;

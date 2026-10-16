@@ -32,111 +32,76 @@
       </div>
 
       <!--
-    The six print settings live in a disclosure, not in the row. Eleven
-    controls plus a wordmark never fit a real window: at 900px the row wrapped
-    and stranded Render/Download alone on a second line, with the filename
-    clipped mid-word. <details> is a native disclosure -- keyboard, SR labels
-    and no JS -- and every control keeps its id, so app.js never notices.
+    Print settings ride a second toolbar row, always visible, no dropdown.
+    Six small controls fit where eleven never did; the row wraps internally
+    on narrow screens instead of stranding the actions.
   -->
-      <details class="settings" id="settings">
-        <summary>
-          <svg
-            class="icon"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            aria-hidden="true"
-          >
-            <path d="M4 7h16M4 12h16M4 17h16" />
-            <circle cx="9" cy="7" r="2" />
-            <circle cx="15" cy="12" r="2" />
-            <circle cx="8" cy="17" r="2" /></svg
-          >Page setup
-        </summary>
-        <div class="panel" role="group" aria-label="Print settings">
-          <h2 class="paneltitle">Page setup</h2>
-          <!-- Values first, toggles second: the 3-column grid then reads as
-             three inputs on top, three switches below, instead of scattered. -->
-          <label class="field">
-            <span>Format</span>
-            <select id="format">
-              <!--
+      <div class="settings-row" role="group" aria-label="Print settings">
+        <label class="field">
+          <span>Format</span>
+          <select id="format">
+            <!--
             The first option is not "a4". It is "whatever the document declares",
             because a document's own @page size wins over every flag here, and
             pretending otherwise is how a user ends up debugging the tool for a
             document that is correct.
           -->
-              <option value="">document's own @page</option>
-              <option value="a3">A3</option>
-              <option value="a4">A4</option>
-              <option value="a5">A5</option>
-              <option value="legal">Legal</option>
-              <option value="letter">Letter</option>
-              <option value="tabloid">Tabloid</option>
-            </select>
-          </label>
+            <option value="">document's own @page</option>
+            <option value="a3">A3</option>
+            <option value="a4">A4</option>
+            <option value="a5">A5</option>
+            <option value="legal">Legal</option>
+            <option value="letter">Letter</option>
+            <option value="tabloid">Tabloid</option>
+          </select>
+        </label>
 
-          <label class="field">
-            <span>Margin</span>
-            <!-- type=text, not number: a CSS length like 15mm is not a number, and
+        <label class="field">
+          <span>Margin</span>
+          <!-- type=text, not number: a CSS length like 15mm is not a number, and
              type=number rejects it outright. -->
-            <input
-              type="text"
-              id="margin"
-              placeholder="15mm"
-              size="6"
-              spellcheck="false"
-              autocomplete="off"
-              aria-disabled="true"
-              readonly
-            />
-          </label>
+          <input
+            type="text"
+            id="margin"
+            placeholder="15mm"
+            size="6"
+            spellcheck="false"
+            autocomplete="off"
+            aria-disabled="true"
+            readonly
+          />
+        </label>
 
-          <label class="field">
-            <span>Max image PPI</span>
-            <input type="number" id="ppi" value="300" min="0" max="1200" step="10" size="5" />
-          </label>
+        <label class="field">
+          <span>Max image PPI</span>
+          <input type="number" id="ppi" value="300" min="0" max="1200" step="10" size="5" />
+        </label>
 
-          <!-- Orientation as a segmented toggle: two buttons, amber underline on
+        <!-- Orientation as a segmented toggle: two buttons, amber underline on
              the pressed one (plus aria-pressed itself, so state never rides
              on color alone). #landscape is the Landscape button; app.js keeps
              a boolean for the payload instead of reading .checked. -->
-          <div class="segmented underline" role="group" aria-label="Orientation">
-            <button type="button" id="portrait" aria-pressed="true">Portrait</button>
-            <button type="button" id="landscape" aria-pressed="false">Landscape</button>
-          </div>
-
-          <label class="field checkbox">
-            <input type="checkbox" id="background" checked />
-            <span>Background</span>
-          </label>
-
-          <label class="field checkbox">
-            <input type="checkbox" id="network" />
-            <span>Allow network</span>
-          </label>
+        <div class="segmented underline" role="group" aria-label="Orientation">
+          <button type="button" id="portrait" aria-pressed="true">Portrait</button>
+          <button type="button" id="landscape" aria-pressed="false">Landscape</button>
         </div>
-      </details>
+
+        <label class="field checkbox">
+          <input type="checkbox" id="background" checked />
+          <span>Background</span>
+        </label>
+
+        <label class="field checkbox">
+          <input type="checkbox" id="network" />
+          <span>Allow network</span>
+        </label>
+      </div>
 
       <div class="spacer"></div>
 
-      <div class="group">
+      <div class="group actions">
         <button type="button" id="render" class="primary">Render</button>
-        <button type="button" id="download" title="Download the rendered PDF" disabled>
-          <svg
-            class="icon"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            aria-hidden="true"
-          >
-            <path d="M7 3h10v5H7z" />
-            <rect x="4" y="8" width="16" height="8" rx="1" />
-            <path d="M7 13h10v8H7z" /></svg
-          >PDF
-        </button>
+        <button type="button" id="download" title="Download the rendered PDF" disabled>PDF</button>
       </div>
     </header>
 

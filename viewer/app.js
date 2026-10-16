@@ -36,7 +36,6 @@ const el = {
   preview: $('preview'),
   previewNote: $('preview-note'),
   sourceMeta: $('source-meta'),
-  settings: $('settings'),
   status: $('status'),
   metrics: $('metrics'),
 };
@@ -451,18 +450,6 @@ function setOrientation(toLandscape) {
 
 el.landscape.addEventListener('click', () => setOrientation(true));
 el.portrait.addEventListener('click', () => setOrientation(false));
-
-// The disclosure is a dropdown, not a drawer: clicking elsewhere dismisses
-// it. Re-armed after an inside click, so choosing a setting never collapses
-// the panel mid-thought.
-el.settings.addEventListener('toggle', () => {
-  if (el.settings.open) document.addEventListener('click', closeOutside, { once: true });
-});
-
-function closeOutside(e) {
-  if (!el.settings.contains(e.target)) el.settings.open = false;
-  else document.addEventListener('click', closeOutside, { once: true });
-}
 el.ppi.addEventListener('input', () => {
   readPpi();
   clearTimeout(ppiTimer);

@@ -188,14 +188,14 @@ describe('the shell itself', () => {
     }
   });
 
-  test('print settings live in a disclosure, one row at real widths', async () => {
-    // Eleven controls plus a wordmark never fit a real window: at 900px the
-    // row wrapped and stranded the actions on a second line. The settings now
-    // live in a native <details>; every control keeps its id.
+  test('print settings ride a second toolbar row, always visible', async () => {
+    // Eleven controls plus a wordmark never fit one row; the settings wrap
+    // onto a full-width second row instead of a dropdown. Every control keeps
+    // its id and its label.
     const page = (await html()).replace(/<!--[\s\S]*?-->/g, '');
-    expect(page).toContain('<details class="settings"');
-    expect(page).toContain('<summary>');
-    const panel = page.slice(page.indexOf('class="panel"'));
+    expect(page).not.toContain('<details');
+    expect(page).toContain('class="settings-row"');
+    const row = page.slice(page.indexOf('class="settings-row"'));
     for (const id of [
       'format',
       'portrait',
@@ -205,10 +205,10 @@ describe('the shell itself', () => {
       'ppi',
       'network',
     ]) {
-      expect(panel, `#${id} inside the panel`).toContain(`id="${id}"`);
+      expect(row, `#${id} inside the settings row`).toContain(`id="${id}"`);
     }
     const css = await (await fetch(`${origin}/assets/theme.css`)).text();
-    expect(css).toMatch(/\.settings \.panel\s*\{[^}]*position:\s*absolute/s);
+    expect(css).toMatch(/\.settings-row\s*\{[^}]*flex:\s*1 1 100%/s);
   });
 
   test('bare shell: native controls, wired toggle, plain text actions', async () => {
@@ -245,12 +245,10 @@ describe('the shell itself', () => {
     expect(page).toContain('id="source-meta"');
     expect(page).not.toContain('id="preview-meta"');
     expect(page).toContain('aria-hidden="true">HTML<');
-    expect(page).toContain('class="paneltitle"');
-    // Icons are texture: every svg hides itself, the adjacent text names the
-    // action. The starter demonstrates print, set in Georgia serif.
-    const svgs = [...page.matchAll(/<svg[\s\S]*?>/g)];
-    expect(svgs.length).toBeGreaterThanOrEqual(2);
-    expect(svgs.every((m) => m[0].includes('aria-hidden="true"'))).toBe(true);
+    // No svg icons and no dropdown: quiet text throughout, settings always
+    // visible. The starter demonstrates print, set in Georgia serif.
+    expect(page).not.toContain('<svg');
+    expect(page).not.toContain('class="paneltitle"');
     expect(page).toContain('Georgia, serif');
     // No unicode chevrons anywhere in the shell: markers are drawn with
     // borders, and every svg hides itself.
@@ -262,7 +260,7 @@ describe('the shell itself', () => {
     const js = await (await fetch(`${origin}/assets/app.js`)).text();
     expect(js).not.toContain('el.filename');
     expect(js).not.toContain('formatLabel()');
-    expect(js).toContain('closeOutside');
+    expect(js).not.toContain('closeOutside');
     expect(js).toContain('el.sourceMeta.textContent = `HTML ·');
     // PPI honesty: the server clamps to 1200, so the box caps there natively
     // and the reader reflects the effective value instead of sending a number
@@ -308,7 +306,7 @@ describe('the shell itself', () => {
     // transparent text, the dropdown anchor, the pager hide, keyboard ring.
     expect(css).toMatch(/#highlight,\s*#source\s*\{[^}]*padding:\s*var\(--ed-pad\)/s);
     expect(css).toContain('caret-color: CanvasText');
-    expect(css).toMatch(/\.settings \.panel\s*\{[^}]*position:\s*absolute/s);
+    expect(css).toMatch(/\.settings-row\s*\{[^}]*flex:\s*1 1 100%/s);
     expect(css).toContain('.pager[hidden]');
     expect(css).toMatch(/:focus-visible\s*\{[^}]*outline:\s*2px solid/s);
     // Severity still reads: failure must not look like success.

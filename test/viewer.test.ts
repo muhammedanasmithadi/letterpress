@@ -271,6 +271,10 @@ describe('the shell itself', () => {
     expect(js).not.toContain('formatLabel()');
     expect(js).not.toContain('closeOutside');
     expect(js).toContain('el.sourceMeta.textContent = `HTML ·');
+    // File import repaints the highlight layer and gutter: programmatic value
+    // sets fire no input event, so without this the editor shows the previous
+    // document while value and preview are already new.
+    expect(js).toMatch(/el\.file\.addEventListener\('change'[\s\S]{0,400}renderHighlight\(\)/);
     // PPI honesty: the server clamps to 1200, so the box caps there natively
     // and the reader reflects the effective value instead of sending a number
     // the engine silently ignores.
@@ -315,6 +319,11 @@ describe('the shell itself', () => {
     // transparent text, the dropdown anchor, the pager hide, keyboard ring.
     expect(css).toMatch(/#highlight,\s*#source\s*\{[^}]*padding:\s*var\(--ed-pad\)/s);
     expect(css).toContain('caret-color: CanvasText');
+    // Visible tokens without paint: bold tags, italic strings, dimmed
+    // comments -- monochrome emphasis, no colors admitted.
+    expect(css).toMatch(/#highlight \.tok-tag\s*\{[^}]*font-weight:\s*700/s);
+    expect(css).toMatch(/#highlight \.tok-str\s*\{[^}]*font-style:\s*italic/s);
+    expect(css).toMatch(/#highlight \.tok-com\s*\{[^}]*color:\s*color-mix/s);
     expect(css).toMatch(/\.settings-row\s*\{[^}]*flex:\s*1 1 100%/s);
     expect(css).toContain('.pager[hidden]');
     expect(css).toMatch(/:focus-visible\s*\{[^}]*outline:\s*2px solid/s);
@@ -583,5 +592,50 @@ div{height:250px;background:#c03030}</style><div>BOX</div>`;
     expect(line, 'and the rest is counted rather than printed').toContain('more)');
 
     expect(js).toContain('el.status.title = findings.map');
+  });
+
+  test('the severity level lands on the element the css names', async () => {
+    // The rules are `.status[data-level=...]` and `.status` is the footer. The
+    // level used to be set on the live-region output, which carries no such
+    // class, so the colour never applied: measured, an error painted rgb(0,0,0).
+    const js = await script();
+    expect(js).toContain('el.statusBar.dataset.level');
+    expect(js).not.toMatch(/el\.status\.dataset\.level/);
+    const page = await shell();
+    expect(page).toMatch(/<footer class="status">\s*[\s\S]*?id="status"/);
+  });
+
+  test('a clean success does not keep an old failure in the tooltip', async () => {
+    const js = await script();
+    expect(js).toMatch(/el\.status\.title = ''/);
+  });
+
+  test('the preview frame is out of the tab order', async () => {
+    // A browser PDF viewer holds its own tab stops; measured, ~16 Tabs were
+    // consumed inside the frame before the pager was reached.
+    const js = await script();
+    expect(js).toContain('iframe.tabIndex = -1');
+  });
+
+  test('the toolbar DOM order is the visual order, so focus follows paint', async () => {
+    // `order` reorders paint, not the focus sequence. The actions must precede
+    // the settings row in the DOM, and no `order` value may put them back.
+    const page = await shell();
+    expect(page.indexOf('class="group actions"')).toBeLessThan(
+      page.indexOf('class="settings-row"'),
+    );
+    const sheet = await css();
+    expect(sheet).not.toMatch(/\.settings-row\s*\{[^}]*\border:/s);
+    expect(sheet).not.toMatch(/\.spacer\s*\{[^}]*\border:/s);
+  });
+
+  test('the stale note is actually styled', async () => {
+    const sheet = await css();
+    expect(sheet).toMatch(/\.stale\s*\{[^}]*font-style:\s*italic/s);
+  });
+
+  test('an unusable ppi value explains itself instead of going silent', async () => {
+    const js = await script();
+    expect(js).toContain('el.ppi.title');
   });
 });

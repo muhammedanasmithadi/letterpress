@@ -63,18 +63,13 @@ body {
 
 .spacer {
   flex: 1 1 auto;
-  order: 2;
-}
-
-.toolbar .actions {
-  order: 3;
 }
 
 /* Print settings ride a second toolbar row: full width forces the wrap after
-   the actions, order keeps the visual sequence wordmark, file, actions, then
-   settings however the DOM reads. */
+   the actions. The DOM reads wordmark, file, actions, settings, in that order,
+   so the tab sequence matches what is painted -- an `order` value here would
+   move the row on screen without moving the focus order with it. */
 .settings-row {
-  order: 4;
   flex: 1 1 100%;
   display: flex;
   flex-wrap: wrap;
@@ -193,6 +188,20 @@ button#download {
 }
 
 /*
+  The out-of-date note above the preview. It was given class="stale" in the HTML
+  and no rule ever matched it, so a stale preview looked identical to a current
+  one. Distinguished without an authored colour, which the bare-shell test
+  forbids outside the severity rules: italic plus the same hairline the panes
+  use. It leaves the grid row when hidden, so it costs no height.
+*/
+.stale {
+  margin: 0;
+  padding: 5px 12px;
+  font-style: italic;
+  border-bottom: 1px solid ButtonBorder;
+}
+
+/*
   Editor overlay. One set of metrics feeds both layers: --ed-font sets the
   shorthand (size/line-height/family together, so they cannot drift apart),
   --ed-pad the inset, --ed-tab the tab stops. The textarea's own text is
@@ -245,6 +254,22 @@ button#download {
   margin: 0;
   min-width: max-content;
   pointer-events: none;
+}
+
+/* Visible tokens without paint: tags bold, strings italic, comments dimmed.
+   Monochrome emphasis only -- the bare shell admits no token colors, and each
+   kind still reads distinct from plain text and from each other. */
+#highlight .tok-tag {
+  font-weight: 700;
+}
+
+#highlight .tok-str {
+  font-style: italic;
+}
+
+#highlight .tok-com {
+  color: color-mix(in oklab, var(--fg) 55%, transparent);
+  font-style: italic;
 }
 
 #source {

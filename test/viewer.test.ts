@@ -303,14 +303,15 @@ describe('the shell itself', () => {
     // arrives too late for first-paint form controls and scrollbars.
     expect(await html()).toContain('name="color-scheme" content="light dark"');
 
-    // No authored color anywhere except severity: failure must not look like
-    // success, so the two data-level rules keep their pairs and are cut out
-    // before the scan.
-    const unpainted = css.replace(/\.status\[data-level='(?:error|warn)'\]\s*\{[^}]*\}/g, '');
+    // No authored color anywhere except the error rule: failure must not
+    // look like success, so it keeps its pair and is cut out before the scan.
+    // Warnings read in the default text -- no second color.
+    const unpainted = css.replace(/\.status\[data-level='error'\]\s*\{[^}]*\}/g, '');
+    expect(css).not.toMatch(/\.status\[data-level='warn'\]/s);
     const bare = [...unpainted.matchAll(/#[0-9a-f]{3,8}\b/gi)];
     expect(
       bare.map((m) => m[0]),
-      'hex colour outside severity rules',
+      'hex colour outside the error rule',
     ).toEqual([]);
     expect(css).not.toContain('@font-face');
     expect(css).not.toContain('box-shadow');

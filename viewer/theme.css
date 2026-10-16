@@ -322,9 +322,8 @@ button#download {
 .status[data-level='error'] {
   color: light-dark(#b3261e, #ffb4ab);
 }
-.status[data-level='warn'] {
-  color: light-dark(#8a5300, #f9d67c);
-}
+/* No warn color: warnings read in the default text. Only failure gets a
+   color of its own. */
 
 /* ---------- pager ---------- */
 

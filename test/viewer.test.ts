@@ -321,9 +321,9 @@ describe('the shell itself', () => {
   });
 
   test('the editor and the preview are placed on the flex row, not auto-sized', async () => {
-    // Each pane holds three children against four grid tracks, so auto-placement put
+    // Each pane holds three children against three grid tracks, so auto-placement put
     // the textarea in an auto row: measured 57px tall inside a 544px pane, with the
-    // flex track going to the hint paragraph. The editor wrapper holds the row now
+    // flex track going nowhere useful. The editor wrapper holds the row now
     // that the field lives inside an overlay; both content elements need explicit rows.
     const css = (await (await fetch(`${origin}/assets/theme.css`)).text()).replace(
       /\/\*[\s\S]*?\*\//g,
@@ -339,9 +339,9 @@ describe('the shell itself', () => {
     expect(page).toMatch(/aria-live=["']polite["']/);
   });
 
-  test('the editor is labelled and described', async () => {
+  test('the editor is labelled', async () => {
     const page = await html();
-    expect(page).toContain('aria-describedby="source-hint"');
+    expect(page).toContain('aria-label="HTML source"');
     expect(page).toContain('aria-labelledby="preview-label"');
   });
 

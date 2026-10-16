@@ -134,7 +134,7 @@ button#download {
 
 .pane {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
 }
@@ -160,10 +160,10 @@ button#download {
 }
 
 /*
-  Explicit rows, because each pane holds three children against four tracks and
-  auto-placement put the textarea in an auto row: measured 57px tall inside a
-  544px pane, with the flex track going to the hint paragraph instead. The
-  preview pane had the same fault whenever its note was hidden.
+  Explicit rows, because each pane holds three children against three tracks
+  and auto-placement put the textarea in an auto row: measured 57px tall inside
+  a 544px pane, with the flex track going nowhere useful. The preview pane had
+  the same fault whenever its note was hidden.
 */
 .pane > h2 {
   grid-row: 1;
@@ -178,15 +178,6 @@ button#download {
 }
 #preview {
   grid-row: 3;
-}
-#source-hint {
-  grid-row: 4;
-}
-
-.hint {
-  margin: 0;
-  padding: 4px 12px;
-  border-top: 1px solid ButtonBorder;
 }
 
 /*

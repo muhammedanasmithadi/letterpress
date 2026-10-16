@@ -223,6 +223,15 @@ describe('the shell itself', () => {
     expect(js).toContain('landscape: isLandscape()');
     expect(js).not.toContain('el.landscape.checked');
     expect(js).toContain("setAttribute('aria-pressed'");
+    // A rejected orientation reverts the toggle to the effective state: the
+    // control must not display a request the engine refused.
+    expect(js).toContain('orientation-ignored');
+    expect(js).toContain('paintOrientation');
+    // The pressed button is bold, laid side by side -- the only visual signal,
+    // and color-free per the bare shell.
+    const sheet = await (await fetch(`${origin}/assets/theme.css`)).text();
+    expect(sheet).toMatch(/\.segmented\s*\{[^}]*display:\s*flex/s);
+    expect(sheet).toMatch(/\.segmented button\[aria-pressed='true'\]\s*\{[^}]*font-weight:\s*700/s);
     // Plain buttons with clear names. The status opens plain.
     expect(page).toContain('id="download"');
     expect(page).toMatch(/>\s*PDF\s*</s);

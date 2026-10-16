@@ -325,6 +325,14 @@ async function render() {
     }
 
     const findings = body.findings ?? [];
+    if (findings.some((f) => f.code === 'orientation-ignored')) {
+      // The engine kept the document's own box: show the effective state, not
+      // the request. Paint only -- the bytes on screen already match, so no
+      // second render. The status message beside this carries the why and the
+      // fix; the control stops overpromising.
+      landscapeOn = false;
+      paintOrientation();
+    }
     if (!findings.length) {
       // The page count is in the message as well as the metrics, because the
       // status line is the live region and the metrics are not. Saying the same
@@ -443,9 +451,15 @@ function isLandscape() {
 
 function setOrientation(toLandscape) {
   landscapeOn = toLandscape;
-  el.landscape.setAttribute('aria-pressed', String(toLandscape));
-  el.portrait.setAttribute('aria-pressed', String(!toLandscape));
+  paintOrientation();
   void render();
+}
+
+/** Reflect the state in both buttons. Split out so the engine can correct the
+ * display without requesting another render (see orientation-ignored below). */
+function paintOrientation() {
+  el.landscape.setAttribute('aria-pressed', String(landscapeOn));
+  el.portrait.setAttribute('aria-pressed', String(!landscapeOn));
 }
 
 el.landscape.addEventListener('click', () => setOrientation(true));

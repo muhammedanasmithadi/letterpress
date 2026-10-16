@@ -37,7 +37,6 @@ describe('the shell is served', () => {
     for (const [path, type] of [
       ['/assets/theme.css', 'text/css'],
       ['/assets/app.js', 'text/javascript'],
-      ['/assets/italiana.woff2', 'font/woff2'],
     ] as const) {
       const r = await fetch(`${origin}${path}`);
       expect(r.status, path).toBe(200);
@@ -212,9 +211,9 @@ describe('the shell itself', () => {
     expect(css).toMatch(/\.settings \.panel\s*\{[^}]*position:\s*absolute/s);
   });
 
-  test('nocturne controls: segmented toggle, text actions, underline fields', async () => {
-    // Orientation is a two-button toggle; aria-pressed carries the state and
-    // a boolean carries it to the payload (no .checked anywhere).
+  test('bare shell: native controls, wired toggle, plain text actions', async () => {
+    // Orientation is a two-button native toggle; aria-pressed carries the
+    // state and a boolean carries it to the payload (no .checked anywhere).
     const page = await html();
     expect(page).toContain('aria-label="Orientation"');
     expect(page).toContain('id="portrait" aria-pressed="true">Portrait');
@@ -224,24 +223,16 @@ describe('the shell itself', () => {
     expect(js).toContain('landscape: isLandscape()');
     expect(js).not.toContain('el.landscape.checked');
     expect(js).toContain("setAttribute('aria-pressed'");
-    // PDF is the compact download action; Render leads through underlined
-    // sage text, never a filled box. The status opens plain.
+    // Plain buttons with clear names. The status opens plain.
     expect(page).toContain('id="download"');
     expect(page).toMatch(/>\s*PDF\s*</s);
     expect(page).toContain('Ready to render.');
     const css = await (await fetch(`${origin}/assets/theme.css`)).text();
-    expect(css).toMatch(/button\.primary\s*\{[^}]*text-decoration:\s*underline/s);
-    expect(css).toContain('border-bottom: 1px solid light-dark(ButtonBorder, color-mix');
-    expect(css).toContain(':user-invalid');
-    expect(css).toContain('border-bottom-style: dotted');
+    expect(css).not.toContain('text-decoration');
     // Margin re-renders as you type, but only for committable values:
     // intermediates must not flash server rejections.
     expect(js).toContain("el.margin.addEventListener('input'");
     expect(js).toContain('isLengthLike');
-    expect(css).toMatch(/\.metrics\s*\{[^}]*monospace/s);
-    expect(css).toMatch(
-      /\.segmented\.underline button\[aria-pressed='true'\]\s*\{[^}]*box-shadow:\s*inset 0 -2px/s,
-    );
   });
 
   test('nocturne review: pane metadata, quiet icons', async () => {
@@ -291,7 +282,7 @@ describe('the shell itself', () => {
     }
   });
 
-  test('light stays native while dark wears the amber set', async () => {
+  test('bare shell: platform paint only, mechanics intact', async () => {
     const css = (await (await fetch(`${origin}/assets/theme.css`)).text()).replace(
       /\/\*[\s\S]*?\*\//g,
       '',
@@ -301,61 +292,27 @@ describe('the shell itself', () => {
     // arrives too late for first-paint form controls and scrollbars.
     expect(await html()).toContain('name="color-scheme" content="light dark"');
 
-    // Every hex in the sheet must live inside a light-dark(), so light mode
-    // stays exactly stock. light-dark() spans are cut out with balanced parens
-    // because some hold var() calls.
-    const stripLightDark = (src: string) => {
-      let out = '';
-      let i = 0;
-      while (i < src.length) {
-        const at = src.indexOf('light-dark(', i);
-        if (at < 0) {
-          out += src.slice(i);
-          break;
-        }
-        out += src.slice(i, at);
-        let depth = 1;
-        let j = at + 'light-dark('.length;
-        while (j < src.length && depth > 0) {
-          if (src[j] === '(') depth++;
-          else if (src[j] === ')') depth--;
-          j++;
-        }
-        i = j;
-      }
-      return out;
-    };
-    const bare = [...stripLightDark(css).matchAll(/#[0-9a-f]{3,8}\b/gi)];
+    // No authored color anywhere except severity: failure must not look like
+    // success, so the two data-level rules keep their pairs and are cut out
+    // before the scan.
+    const unpainted = css.replace(/\.status\[data-level='(?:error|warn)'\]\s*\{[^}]*\}/g, '');
+    const bare = [...unpainted.matchAll(/#[0-9a-f]{3,8}\b/gi)];
     expect(
       bare.map((m) => m[0]),
-      'hex colour outside light-dark()',
+      'hex colour outside severity rules',
     ).toEqual([]);
-    expect(css).toContain('--bg: light-dark(Canvas, #0b0909)');
-    expect(css).toContain('--fg: light-dark(CanvasText, #ece8af)');
-    expect(css).toContain('--band: light-dark(var(--tint), #14110d)');
-    expect(css).toContain('::selection');
-    expect(css).toContain('#4a943e');
-    // Underline fields: transparent face, one discreet line; the resting line
-    // is the UA gray in light, dos-moos slate in dark.
-    expect(css).toContain('border-bottom: 1px solid light-dark(ButtonBorder, color-mix');
-    expect(css).toContain('accent-color: light-dark(#7a5416, #d98327)');
-    // The wordmark face is vendored same-origin (offline-safe), used on the
-    // toolbar heading only; everything else stays in platform stacks.
-    expect(css).toContain('@font-face');
-    expect(css).toContain("'Letterpress Wordmark'");
-    expect(css).toContain('/assets/italiana.woff2');
-    expect(css).toMatch(/\.toolbar h1\s*\{[^}]*font-family:\s*'Letterpress Wordmark'/s);
-
-    expect(css).toContain('color-mix(in oklab, currentColor');
-    expect(css).toMatch(/accent-color:\s*light-dark\(/);
-    // The focus ring draws in theme amber, not system blue: blue read as
-    // leftover from the previous set. `accent-color` (the property) is still
-    // never valid as an outline value -- that assertion guards the old bug.
-    expect(css).toContain('outline: 2px solid light-dark(#7a5416, #d98327)');
-    expect(css).not.toContain('solid AccentColor');
-    expect(css).not.toContain('solid accent-color');
-    // Syntax tokens follow the theme too, in both schemes.
-    expect(css).toMatch(/#highlight \.tok-tag\s*\{\s*color:\s*light-dark\(#7a5416, #d98327\)/s);
+    expect(css).not.toContain('@font-face');
+    expect(css).not.toContain('box-shadow');
+    expect(css).not.toContain('woff2');
+    // What stays is mechanics: the overlay cell, the caret that must survive
+    // transparent text, the dropdown anchor, the pager hide, keyboard ring.
+    expect(css).toMatch(/#highlight,\s*#source\s*\{[^}]*padding:\s*var\(--ed-pad\)/s);
+    expect(css).toContain('caret-color: CanvasText');
+    expect(css).toMatch(/\.settings \.panel\s*\{[^}]*position:\s*absolute/s);
+    expect(css).toContain('.pager[hidden]');
+    expect(css).toMatch(/:focus-visible\s*\{[^}]*outline:\s*2px solid/s);
+    // Severity still reads: failure must not look like success.
+    expect(css).toMatch(/\.status\[data-level='error'\]/s);
   });
 
   test('the panes scroll and the window does not', async () => {
@@ -522,8 +479,8 @@ describe('the toolbar wiring holds', () => {
     expect(sheet).toMatch(/#preview iframe\s*\{[^}]*width:\s*100%/s);
     expect(sheet).toMatch(/#preview iframe\s*\{[^}]*height:\s*100%/s);
     // The foreign toolbar cannot be styled from outside, so the frame carries
-    // the integration: hairline border, rounded like the app's own controls.
-    expect(sheet).toMatch(/#preview iframe\s*\{[^}]*border-radius:\s*6px/s);
+    // a hairline edge where paper meets pane.
+    expect(sheet).toMatch(/#preview iframe\s*\{[^}]*border:\s*1px solid ButtonBorder/s);
   });
 
   test('an unprintable background is actually not painted', async () => {

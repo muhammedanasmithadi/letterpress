@@ -1,53 +1,20 @@
 /*
-  Native light, amber dark.
+  Bare shell: layout and mechanics only.
 
-  Light scheme stays stock: the OS picks surface and text, borders derive from
-  currentColor, and only the accent is declared. Dark scheme wears amber on
-  ink: near-black #0B0909 surfaces, warm lift #14110D bands, cream #ECE8AF
-  text (15.8:1 on ink), amber #D98327 actions (6.8:1 on ink), leaf #4A943E
-  selection with ink text (5.3:1). The preview surround stays page ink: the
-  white sheet carries its own edge. --bg/--fg/--band carry it, everything else still
-  derives, so the two schemes cannot drift. The only literal hex values are
-  the dark halves inside light-dark(), plus accent-color which has no keyword.
+  Everything painted lives in platform defaults plus color-scheme. What stays
+  is what the app needs to work: the grid that holds the panes, the overlay
+  that keeps highlight and textarea as one row set, keyboard visibility,
+  native dark controls, severity colors (a failure must not look like
+  success), and edges where same-color surfaces meet (panel over editor,
+  sheet on pane, regions apart).
 */
 
 :root {
   color-scheme: light dark;
-
-  /* Follows the theme: deep bronze in light for contrast against white, vivid
-     amber in dark. */
-  accent-color: light-dark(#7a5416, #d98327);
-
-  /* Derived, not declared. One knob controls every divider and every surface
-     tint, so light and dark cannot drift apart the way a token table lets
-     them. */
-  --line: color-mix(in oklab, currentColor 16%, transparent);
-  --tint: color-mix(in oklab, currentColor 4%, transparent);
-  --shadow: 0 1px 2px color-mix(in oklab, black 12%, transparent);
-
-  /* Dark-scheme palette. Light halves are the platform values, so light mode
-     is untouched; the green halves only ever resolve in dark. */
-  --bg: light-dark(Canvas, #0b0909);
-  --fg: light-dark(CanvasText, #ece8af);
-  --band: light-dark(var(--tint), #14110d);
 }
 
 * {
   box-sizing: border-box;
-}
-
-/*
-  Wordmark face. Italiana by Santiago Orozco, SIL Open Font License 1.1
-  (vendored from Google Fonts, same-origin so the app stays offline-safe).
-  Used for the toolbar wordmark only; every other glyph on the page stays in
-  the platform stacks, which read better at UI sizes and cost nothing.
-*/
-@font-face {
-  font-family: 'Letterpress Wordmark';
-  src: url('/assets/italiana.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
 }
 
 html,
@@ -62,18 +29,10 @@ body {
      scroll rather than the window. */
   grid-template-rows: auto minmax(0, 1fr) auto;
   /* A grid item defaults to min-width:auto, so the column is forced to the
-     toolbar's min-content. That is 522px, which laid the whole app out 522px
-     wide inside a 380px window and put Download off screen. */
+     toolbar's min-content. That laid the whole app out 522px wide inside a
+     380px window and put Download off screen. */
   grid-template-columns: minmax(0, 1fr);
   overflow: hidden;
-
-  background: var(--bg);
-  color: var(--fg);
-  font:
-    13px/1.4 system-ui,
-    -apple-system,
-    'Segoe UI',
-    sans-serif;
 }
 
 /* ---------- toolbar ---------- */
@@ -82,12 +41,10 @@ body {
   display: flex;
   flex-wrap: wrap;
   min-width: 0;
-  /* One row at real widths now that the settings live in a disclosure. */
   align-items: center;
-  gap: 6px 26px;
-  padding: 14px 26px;
-  border-bottom: 1px solid var(--line);
-  background: var(--band);
+  gap: 4px 14px;
+  padding: 8px 12px;
+  border-bottom: 1px solid ButtonBorder;
   /* The settings panel anchors here. */
   position: relative;
   z-index: 10;
@@ -95,13 +52,6 @@ body {
 
 .toolbar h1 {
   margin: 0 8px 0 0;
-  /* The wordmark, not a UI label: display face at text size, so it reads as
-     a masthead rather than another control. Falls back to a quiet serif. */
-  font-family: 'Letterpress Wordmark', Didot, 'Bodoni MT', 'Playfair Display', serif;
-  font-size: 23px;
-  font-weight: 400;
-  letter-spacing: 0.02em;
-  /* Sits with the control row rather than floating above it. */
   align-self: center;
   white-space: nowrap;
 }
@@ -109,7 +59,7 @@ body {
 .group {
   display: flex;
   flex-wrap: wrap;
-  align-items: end;
+  align-items: center;
   gap: 10px;
   min-width: 0;
 }
@@ -118,33 +68,14 @@ body {
   flex: 1 1 auto;
 }
 
-/* Settings disclosure. A native <details>: keyboard-focusable summary, no JS,
-   and the panel is plain markup so nothing about rendering changes. */
+/* Settings disclosure. A native <details>: keyboard-focusable summary, no JS.
+   The panel is opaque and edged so it reads over the editor, not through it. */
 .settings > summary {
-  list-style: none;
   cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  padding: 7px 2px;
-  white-space: nowrap;
-  color: inherit;
-  background: transparent;
   display: flex;
   align-items: center;
   gap: 7px;
-}
-
-/* Action icons are texture only: aria-hidden in markup, never the name. */
-.icon {
-  width: 15px;
-  height: 15px;
-  flex: none;
-}
-
-/* Quiet like the file action: underline on hover, chevron always. */
-.settings > summary:hover {
-  text-decoration: underline;
-  text-underline-offset: 4px;
+  list-style: none;
 }
 
 .settings > summary::-webkit-details-marker {
@@ -161,127 +92,21 @@ body {
   gap: 12px 18px;
   max-width: calc(100vw - 24px);
   padding: 14px 16px;
-  /* A band lighter than the wells, so the ink inputs read carved into it. */
-  background: var(--band);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: var(--shadow);
+  background: Canvas;
+  border: 1px solid ButtonBorder;
 }
 
-/* Editorial serif heading, the wordmark's voice inside the panel. */
-.paneltitle {
-  grid-column: 1 / -1;
-  margin: 0 0 2px;
-  font-family: 'Letterpress Wordmark', Didot, 'Bodoni MT', serif;
-  font-size: 17px;
-  font-weight: 400;
-  color: var(--fg);
+/* Action icons are texture only: aria-hidden in markup, never the name. */
+.icon {
+  width: 15px;
+  height: 15px;
+  flex: none;
 }
 
 @media (width < 560px) {
   .settings .panel {
     grid-template-columns: repeat(2, minmax(0, max-content));
   }
-}
-
-.field {
-  display: grid;
-  /* Labels above controls. Reads as a row of settings rather than a row of
-     captions, and survives a long option name. */
-  grid-template-areas: 'label' 'control';
-  gap: 2px;
-  font-size: 11px;
-  color: color-mix(in oklab, var(--fg) 70%, transparent);
-}
-
-.field > span {
-  grid-area: label;
-}
-
-.field.checkbox {
-  grid-template-areas: 'control label';
-  align-items: center;
-  gap: 5px;
-  /* Same baseline as a labelled control, so a row of checkboxes lines up with
-     the inputs above and below them. */
-  align-self: end;
-  padding-bottom: 3px;
-}
-
-/* Orientation as a segmented toggle: quiet text pair on a hairline, amber
-   underline under the pressed choice. Buttons keep our 12px control size and
-   comfortable padding -- the 29px/10px study mockup was cramped. State lives
-   in aria-pressed (announced), never in color alone. */
-.segmented.underline {
-  display: flex;
-  gap: 14px;
-  padding: 0;
-  border: 0;
-  border-bottom: 1px solid var(--line);
-  border-radius: 0;
-  background: transparent;
-  align-self: end;
-}
-
-.segmented.underline button {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 7px 2px;
-  font-size: 12px;
-  color: color-mix(in oklab, var(--fg) 60%, transparent);
-}
-
-.segmented.underline button[aria-pressed='true'] {
-  background: transparent;
-  color: light-dark(#7a5416, #d98327);
-  font-weight: 600;
-  box-shadow: inset 0 -2px light-dark(#7a5416, #d98327);
-}
-
-.field.checkbox > input {
-  grid-area: control;
-  margin: 0;
-}
-.field.checkbox > span {
-  grid-area: label;
-}
-
-select,
-input[type='text'],
-input[type='number'] {
-  grid-area: control;
-  font: inherit;
-  font-size: 12px;
-  padding: 7px 1px;
-  min-width: 0;
-  color: inherit;
-  /* Underline fields: transparent face, one discreet line, labels above (the
-     .field grid). The resting line derives warm from the text in dark, UA gray
-     in light. */
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid light-dark(ButtonBorder, color-mix(in oklab, var(--fg) 22%, transparent));
-  border-radius: 0;
-}
-
-/* Focus ambers the line; the global ring still draws, only its color is
-   tuned here. Disabled goes dotted as well as dim, so the state is not
-   color alone; invalid turns red only after interaction. */
-select:focus-visible,
-input[type='text']:focus-visible,
-input[type='number']:focus-visible {
-  border-bottom-color: light-dark(ButtonBorder, #d98327);
-}
-
-select:disabled,
-input:disabled {
-  border-bottom-style: dotted;
-}
-
-input:user-invalid,
-select:user-invalid {
-  border-bottom-color: light-dark(#b3261e, #f9d67c);
 }
 
 /* Widths, because the default is wrong in a toolbar: a number input and a file
@@ -295,33 +120,11 @@ input[type='number'] {
 input[type='text'] {
   width: 8ch;
 }
-/* Room for a real filename now that the row fits: the clipped "No f...ed."
-   was the wrap talking, not the width. The button part gets the same padding
-   rhythm as the chips beside it; still the platform's own control. */
+/* Room for a real filename: the clipped "No f...ed." was the wrap talking,
+   not the width. */
 input[type='file'] {
-  grid-area: control;
   width: 26ch;
   min-width: 0;
-  background: transparent;
-  border: 0;
-}
-
-/* Open file as a quiet secondary action: plain text that underlines on hover,
-   still the platform's own button underneath. */
-input[type='file']::file-selector-button {
-  font: inherit;
-  font-size: 12px;
-  padding: 7px 2px;
-  margin-right: 8px;
-  cursor: pointer;
-  color: inherit;
-  background: transparent;
-  border: 0;
-}
-
-input[type='file']::file-selector-button:hover {
-  text-decoration: underline;
-  text-underline-offset: 4px;
 }
 /* No width and no max-width. The UA sizes a select to its widest option, which
    is the correct behaviour; capping it at 22ch clipped the default option
@@ -330,61 +133,17 @@ select {
   min-width: 0;
 }
 
-input:disabled {
-  /* Not opacity. Stacked on a label already at 70% it measured 2.72:1 against
-     white, which exempts inactive components but is not readable by anyone. */
-  color: color-mix(in oklab, var(--fg) 45%, transparent);
-}
-
-button {
-  font: inherit;
-  font-size: 12px;
-  padding: 7px 18px;
-  cursor: pointer;
-  color: inherit;
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-}
-
-/* Render stays the primary action through amber text and a quiet underline,
-   never a filled box. PDF is the compact sibling: borderless, tighter. */
-button.primary {
-  font-weight: 700;
-  color: light-dark(#7a5416, #d98327);
-  background: transparent;
-  border-color: transparent;
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 5px;
-}
-
 button#download {
-  border-color: transparent;
-  padding: 7px 10px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
-button:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
-
-/* The ring draws in the theme amber, deep bronze in light: the system blue
-   read as leftover from the previous set. Offset, thicker, unmissable. */
+/* A visible keyboard position on every control. currentColor, so it is always
+   the text color against its own background. */
 :where(a, button, input, select, summary, textarea):focus-visible {
-  outline: 2px solid light-dark(#7a5416, #d98327);
+  outline: 2px solid;
   outline-offset: 2px;
-  border-radius: 2px;
-}
-
-/* Selection wears leaf with ink text (5.3:1): the one palette job where the
-   mid green wins over amber. */
-::selection {
-  background: light-dark(SelectedItem, #4a943e);
-  color: light-dark(SelectedItemText, #0b0909);
 }
 
 /* ---------- split panes ---------- */
@@ -404,33 +163,22 @@ button:disabled {
 }
 
 .pane + .pane {
-  border-left: 1px solid var(--line);
+  border-left: 1px solid ButtonBorder;
 }
 
 .pane h2 {
   margin: 0;
-  padding: 0 22px;
-  font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  /* 70% holds 5.0:1 on the band; 60% measured 4.1, under AA for small text. */
-  color: color-mix(in oklab, var(--fg) 70%, transparent);
-  border-bottom: 1px solid var(--line);
+  padding: 5px 12px;
   display: flex;
   align-items: baseline;
   gap: 8px;
+  border-bottom: 1px solid ButtonBorder;
 }
 
-/* Pane metadata rides right, plain case against the uppercase head. Hidden
-   from assistive tech: the counts also live in the live status line. */
+/* Pane metadata rides right. Hidden from assistive tech: the counts also live
+   in the live status line. */
 .panemeta {
   margin-left: auto;
-  font-size: 10px;
-  font-weight: 400;
-  letter-spacing: 0;
-  text-transform: none;
-  color: color-mix(in oklab, var(--fg) 50%, transparent);
   white-space: nowrap;
 }
 
@@ -461,21 +209,7 @@ button:disabled {
 .hint {
   margin: 0;
   padding: 4px 12px;
-  font-size: 11px;
-  color: color-mix(in oklab, var(--fg) 55%, transparent);
-  border-top: 1px solid var(--line);
-}
-
-#source {
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  resize: none;
-  border: 0;
-  /* Without this the textarea's own background wins over the page's, and the
-     pane goes light-on-light in dark mode. */
-  background: transparent;
-  color: inherit;
+  border-top: 1px solid ButtonBorder;
 }
 
 /*
@@ -504,9 +238,7 @@ button:disabled {
   font: var(--ed-font);
   text-align: right;
   user-select: none;
-  color: color-mix(in oklab, var(--fg) 45%, transparent);
-  background: var(--band);
-  border-right: 1px solid var(--line);
+  white-space: pre;
 }
 
 .gutter > div {
@@ -531,79 +263,40 @@ button:disabled {
 #highlight {
   grid-area: 1 / 1;
   margin: 0;
-  padding: var(--ed-pad);
   min-width: max-content;
   pointer-events: none;
-  background: transparent;
-}
-
-#highlight .tok-tag {
-  color: light-dark(#7a5416, #d98327);
-}
-
-#highlight .tok-attr {
-  color: inherit;
-}
-
-#highlight .tok-str {
-  color: color-mix(in oklab, light-dark(#7a5416, #d98327) 55%, var(--fg));
-}
-
-#highlight .tok-com {
-  color: color-mix(in oklab, var(--fg) 50%, transparent);
 }
 
 #source {
   grid-area: 1 / 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  resize: none;
+  border: 0;
+  /* Without transparency the textarea's own text covers the highlight layer;
+     without a caret color the caret goes invisible with it. CanvasText adapts. */
+  background: transparent;
   color: transparent;
-  caret-color: var(--fg);
+  caret-color: CanvasText;
 }
 
 .preview {
   overflow: auto;
   padding: 16px;
-  /* Seamless with the page: the white sheet carries its own edge, so any
-     surround color here reads as a leftover theme. */
-  background: var(--bg);
 }
 
 /* The preview is the returned bytes drawn by the browser's own PDF renderer.
    It fills the pane like the editor fills its own: an auto-sized frame would
-   repeat the crammed-textarea fault in the other half. */
+   repeat the crammed-textarea fault in the other half. The hairline is the
+   sheet's edge where paper meets pane. */
 #preview iframe {
   display: block;
   width: 100%;
   height: 100%;
   min-height: 0;
-  border: 1px solid var(--line);
-  border-radius: 6px;
+  border: 1px solid ButtonBorder;
   background: transparent;
-}
-
-.placeholder {
-  margin: 0;
-  color: color-mix(in oklab, var(--fg) 60%, transparent);
-  text-align: center;
-  padding-top: 40px;
-}
-
-.stale {
-  margin: 0 auto 12px;
-  padding: 6px 10px;
-  max-width: 46ch;
-  font-size: 11px;
-  text-align: center;
-  color: light-dark(#8a5300, #f9d67c);
-  background: color-mix(in oklab, currentColor 8%, transparent);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-}
-
-.placeholder .sub {
-  display: block;
-  margin-top: 6px;
-  font-size: 11px;
-  opacity: 0.8;
 }
 
 /* ---------- status ---------- */
@@ -611,21 +304,13 @@ button:disabled {
 .status {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 8px 26px;
-  font-size: 11px;
-  border-top: 1px solid var(--line);
-  background: var(--band);
+  gap: 12px;
+  padding: 5px 12px;
+  border-top: 1px solid ButtonBorder;
 }
 
 .metrics {
   margin-left: auto;
-  /* Same 70% floor as pane heads for the same 4.5 reason. */
-  color: color-mix(in oklab, var(--fg) 70%, transparent);
-  /* Compact technical metadata reads in mono; prose never does. */
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
@@ -636,43 +321,17 @@ button:disabled {
   color: light-dark(#8a5300, #f9d67c);
 }
 
-/* Pager: page controls for multi-page previews. Hidden on single-page
-   documents. Fragment navigation only -- it never re-renders. */
+/* ---------- pager ---------- */
+
 .pager {
   display: flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap;
 }
 
 .pager[hidden] {
   display: none;
-}
-
-.pager button {
-  padding: 0 8px;
-  font-size: 14px;
-  line-height: 1.4;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* Drawn pager chevrons, matching the summary marker: no unicode glyphs, and
-   aria-hidden in markup so readers hear only the button's name. */
-.chev {
-  width: 8px;
-  height: 8px;
-  flex: none;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-}
-
-.chev.left {
-  transform: rotate(135deg);
-}
-
-.chev.right {
-  transform: rotate(-45deg);
 }
 
 .pagelabel {
@@ -691,14 +350,6 @@ button:disabled {
   white-space: nowrap;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  button,
-  select,
-  input {
-    transition: background-color 120ms ease;
-  }
-}
-
 @media (width < 700px) {
   /* Below this the two panes are unreadable side by side, so stack them. */
   .split {
@@ -707,6 +358,6 @@ button:disabled {
   }
   .pane + .pane {
     border-left: 0;
-    border-top: 1px solid var(--line);
+    border-top: 1px solid ButtonBorder;
   }
 }

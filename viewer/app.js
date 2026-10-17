@@ -37,6 +37,12 @@ const el = {
   previewNote: $('preview-note'),
   sourceMeta: $('source-meta'),
   status: $('status'),
+  // The severity rules in theme.css are written `.status[data-level=...]`, and
+  // `.status` is the footer that holds the live region, not the live region
+  // itself. Setting the level on the output left the whole rule dead: measured,
+  // an error painted rgb(0,0,0). The level belongs on the element the selector
+  // actually names.
+  statusBar: document.querySelector('.status'),
   metrics: $('metrics'),
 };
 
@@ -108,19 +114,28 @@ function settings() {
 /**
  * The image resolution cap, or undefined to leave the default alone.
  *
- * Number("") is 0 and 0 means "do not downsample", so an empty or mistyped field
- * used to silently switch the cap off and hand back a huge PDF reported as a
- * clean render. An unusable value now leaves the cap at its default and says so.
+ * Number("") is 0 and 0 means "do not downsample", so an empty or unusable
+ * field used to silently switch the cap off and hand back a huge PDF reported
+ * as a clean render. An unusable value now leaves the cap at its default, marks
+ * the field invalid for assistive tech, and explains itself on the field's own
+ * title: a number input cannot hold the text "abc" at all, so the reader has no
+ * broken value to see and needs the sentence instead.
  */
 function readPpi() {
   const raw = el.ppi.value.trim();
-  if (raw === '') return undefined;
+  if (raw === '') {
+    el.ppi.removeAttribute('aria-invalid');
+    el.ppi.title = 'Empty: the 300 ppi default applies.';
+    return undefined;
+  }
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
     el.ppi.setAttribute('aria-invalid', 'true');
+    el.ppi.title = `"${raw}" is not a whole number of ppi; the 300 ppi default applies.`;
     return undefined;
   }
   el.ppi.removeAttribute('aria-invalid');
+  el.ppi.title = '';
   // The server clamps to 1200 silently, so the box shows the effective cap
   // instead of claiming a resolution the engine ignores. The max attribute
   // above already paints out-of-range input invalid.
@@ -133,7 +148,10 @@ function readPpi() {
 
 function say(message, level = 'info') {
   el.status.textContent = message;
-  el.status.dataset.level = level;
+  // Cleared here so a later clean success cannot keep hovering an old failure.
+  // fail() and the findings branch set it again right after.
+  el.status.title = '';
+  el.statusBar.dataset.level = level;
 }
 
 /**
@@ -188,6 +206,12 @@ function showPdf() {
   const iframe = document.createElement('iframe');
   iframe.title = 'PDF preview';
   iframe.src = objectUrl;
+  // Out of the tab order. A browser PDF viewer holds a dozen or more of its own
+  // tab stops (Firefox's PDF.js toolbar), and every one of them sits between the
+  // editor and the pager: measured, a keyboard user pressed Tab ~16 times inside
+  // this frame before reaching the page controls. The preview is paint; the
+  // pager beside it and Download are the keyboard paths.
+  iframe.tabIndex = -1;
   el.preview.replaceChildren(iframe);
   frame = iframe;
   return true;
@@ -479,8 +503,10 @@ el.source.addEventListener('input', () => {
 });
 
 // Ctrl+Enter renders without waiting for the debounce, which is the reflex after
-// half a second of typing. It queues rather than bypassing the in-flight guard,
-// because the old version let it start a second render while one was running.
+// half a second of typing. It supersedes any render already running: render()
+// aborts the previous request and starts this one, so the newest source always
+// wins and a slow earlier render cannot land on top of it. The Render button,
+// by contrast, is disabled while a render is in flight.
 el.source.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
     e.preventDefault();
@@ -495,6 +521,10 @@ el.file.addEventListener('change', async () => {
   const file = el.file.files?.[0];
   if (!file) return;
   el.source.value = await file.text();
+  // Repaint the highlight layer and gutter: programmatic value sets fire no
+  // input event, so without this the editor keeps showing the previous
+  // document while the value and preview are already the new one.
+  renderHighlight();
   say(`Loaded ${file.name}, ${el.source.value.length} characters.`);
   void render();
 });

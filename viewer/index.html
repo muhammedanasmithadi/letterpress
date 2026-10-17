@@ -31,10 +31,24 @@
         </label>
       </div>
 
+      <div class="spacer"></div>
+
+      <div class="group actions">
+        <button type="button" id="render" class="primary">Render</button>
+        <button type="button" id="download" title="Download the rendered PDF" disabled>PDF</button>
+      </div>
+
       <!--
     Print settings ride a second toolbar row, always visible, no dropdown.
     Six small controls fit where eleven never did; the row wraps internally
     on narrow screens instead of stranding the actions.
+
+    The row sits after the actions in the DOM, not before them. It used to be
+    first and was moved into row two only by CSS `order`, which left the tab
+    order running file -> settings -> Render -> PDF while the eye saw file,
+    Render, PDF, then settings. A grid or flex `order` value reorders paint and
+    not the focus sequence, so tab order follows the DOM here and matches what
+    is on screen. The full-width basis is what still forces the wrap.
   -->
       <div class="settings-row" role="group" aria-label="Print settings">
         <label class="field">
@@ -77,10 +91,10 @@
           <input type="number" id="ppi" value="300" min="0" max="1200" step="10" size="5" />
         </label>
 
-        <!-- Orientation as a segmented toggle: two buttons, amber underline on
-             the pressed one (plus aria-pressed itself, so state never rides
-             on color alone). #landscape is the Landscape button; app.js keeps
-             a boolean for the payload instead of reading .checked. -->
+        <!-- Orientation as a segmented toggle: two buttons, pressed one bold
+             (plus aria-pressed itself, so state never rides on color alone).
+             #landscape is the Landscape button; app.js keeps a boolean for the
+             payload instead of reading .checked. -->
         <div class="segmented underline" role="group" aria-label="Orientation">
           <button type="button" id="portrait" aria-pressed="true">Portrait</button>
           <button type="button" id="landscape" aria-pressed="false">Landscape</button>
@@ -95,13 +109,6 @@
           <input type="checkbox" id="network" />
           <span>Allow network</span>
         </label>
-      </div>
-
-      <div class="spacer"></div>
-
-      <div class="group actions">
-        <button type="button" id="render" class="primary">Render</button>
-        <button type="button" id="download" title="Download the rendered PDF" disabled>PDF</button>
       </div>
     </header>
 

@@ -236,6 +236,31 @@ answers 500 with `ok: false` and an `error`; anything the body gets wrong
 answers 400 naming the field. With `"responseFormat": "pdf"` the answer is the
 bytes with the report as headers (see above).
 
+## The viewer
+
+`bun src/server.ts` also serves a browser shell at `http://127.0.0.1:8787/`
+(the port comes from `$PORT`, and the CLI message names it). It renders through
+the same `render()` the CLI uses, so the preview and the PDF you download cannot
+differ.
+
+The starter document renders on load. Edit the source and it re-renders 400 ms
+after the last keystroke; Ctrl+Enter (Cmd+Enter) renders at once. The settings
+row mirrors the CLI flags: format, margin, image PPI, orientation, background
+graphics, network. The preview draws the returned bytes with the browser's own
+PDF viewer — nothing is vendored — and the PDF button saves exactly those bytes.
+
+Notes:
+
+- The editor is a plain textarea behind a tokenized highlight layer. There is no
+  editor library and no build step.
+- Where `navigator.pdfViewerEnabled` is false the preview pane says so and
+  Download still works.
+- The preview frame is outside the tab order on purpose: a browser PDF viewer
+  brings a dozen tab stops of its own, which otherwise land between the editor
+  and the page controls.
+- Every edit re-renders the whole document. There is no page-range render and no
+  large-document cutoff yet, so a very long document re-renders in full.
+
 ## Right-to-left text
 
 Arabic shapes and joins correctly, reading order is right, and numeric columns
@@ -400,7 +425,7 @@ escaped and printed.
 ## Development
 
 ```bash
-bun test          # 642 tests across 35 files
+bun test          # 667 tests across 35 files
 bun tools/selection.ts ~/Documents/a.html   # what a browser will do when a selection is dragged across it
 bun run bench     # cold start, concurrency and footprint, cross-runtime
 bun run typecheck

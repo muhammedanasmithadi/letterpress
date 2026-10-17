@@ -4,6 +4,21 @@ Status: approved to build. Written 2026-10-04, after eight adversarial user-test
 rounds and a CDP protocol investigation. Everything asserted below was measured
 on this machine unless marked unverified.
 
+> **Update 2026-10-16 — the shell shipped, but not as this plan proposed.**
+> The viewer is finished and in `viewer/`: `index.html`, `theme.css`, `app.js`
+> and nothing else. It has **no CodeMirror and no vendored PDF.js**; the editor
+> is a textarea over a hand-written highlight layer, and the preview is the
+> browser's own PDF viewer drawing the returned bytes in an `<iframe>`. Two
+> plan mitigations (per-page `pageRanges` renders and a large-document
+> auto-render cutoff) were never built, and Phase 4 (WebMCP) was not either.
+> Sections below are corrected where the code disagrees; the CDP findings that
+> drove the original decision are kept, because they are still true.
+>
+> One artifact of the blob URL: the platform viewer logs
+> `Invalid absolute docBaseUrl: "blob:..."` once per render, because a blob has
+> no base for relative links. It is inside the browser's own viewer and cannot
+> be silenced from the page.
+
 ## What already exists
 
 `src/render.ts` drives Chromium's own print pipeline over CDP. 57 tests green,
@@ -39,29 +54,44 @@ basis for treating heading roles as an engine defect.
 show real page breaks, and any "live preview" that claims to is lying by about
 half its output. So:
 
-**The viewer renders the actual PDF and displays it with PDF.js.**
+**The viewer renders the actual PDF and displays it.**
+
+The plan proposed displaying it with a vendored PDF.js. The shipped code instead
+hands the bytes to the platform's own PDF viewer through an `<iframe>` on a
+`blob:` URL. That keeps the repository dependency-free — the plan's own
+"Explicitly not doing" list rules out a build step — and the frame that renders
+the preview is the same object URL the Download button hands out, so the two
+cannot diverge. The cost the plan named still holds: there is no programmatic
+control of the drawn pages, so no thumbnails and no text-layer hook. In Firefox
+the platform viewer _is_ PDF.js (the console reports `PDF.js: 6.3.335`), which
+is why the RTL caveats below still apply to the preview; the version is whatever
+the user's browser ships, not a version this repository pins.
 
 This is the opposite of a live-HTML preview, and it is the honest choice. The
-cost is a render round trip per edit. Three mitigations make it acceptable:
+cost is a render round trip per edit. The plan proposed three mitigations; the
+notes say which were built:
 
-1. Debounce 400 ms.
+1. Debounce 400 ms. **Built** (`DEBOUNCE_MS`).
 2. `pageRanges` renders only the page in view — a 3-page doc costs a third of a
-   full render.
-3. Above ~10 pages or ~250 KB of HTML, the viewer stops re-rendering on
-   keystroke and shows a "press Render" affordance. A 400-page document takes
-   ~5 s to print; pretending otherwise is how you ship a broken document.
+   full render. **Not built.** The viewer never sends `pageRanges`; every edit
+   re-renders the whole document.
+3. Above ~10 pages or ~250 KB of HTML, stop re-rendering on keystroke and show
+   a "press Render" affordance. **Not built.** A 44-page, 471 KB document was
+   measured auto-rendering in ~1.5 s after the debounce, with no cutoff.
 
 Rejected: live HTML at paper width (cannot paginate), native `<embed>` PDF
 viewer (renders nothing headless; prints a 1,072-byte blank PDF; zero
-programmatic control).
+programmatic control). The shipped `<iframe>` is not the rejected `<embed>`: it
+carries a title, is taken out of the tab order, and always points at the bytes
+the Download button offers.
 
 ## Architecture
 
 ```
 browser (user's own window)
   └── viewer/index.html          shell: toolbar, split panes, native controls
-        ├── CodeMirror 6         HTML+CSS, minimal extension set
-        ├── pdf.js               renders the returned bytes to canvas
+        ├── textarea + highlight  HTML editing, no CodeMirror
+        ├── <iframe src=blob:>    the browser's own PDF viewer, no vendored PDF.js
         └── fetch POST /render   → server.ts
                                     └── src/render.ts  (unchanged core)
                                           └── warm Chromium via CDP
@@ -137,8 +167,12 @@ works across all three engines. Custom `<select>` styling is the one place to
 avoid: Firefox has no `appearance: base-select`, so a styled select looks
 broken there.
 
-**`viewer/editor.js`** — CodeMirror 6, hand-picked extensions, **not**
-`basicSetup` (saves 42 KB gzip):
+**`viewer/editor.js`** — **Not built.** The plan called for CodeMirror 6 with
+hand-picked extensions. The shipped `app.js` instead paints a tokenized
+highlight layer behind a plain `<textarea>` and never loads an editor library:
+the shell has no build step and no dependencies, and the shell had to be judged
+on its own before an editor landed. The CodeMirror extension list below is kept
+as the design that was dropped, not as a description of the code:
 
 ```js
 import { EditorView, keymap } from '@codemirror/view';
@@ -159,17 +193,19 @@ import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 ~146 KB gzip, ~94 ms import. `@codemirror/lang-html` pulls `@lezer/javascript`
 (78 KB) statically and cannot be dropped without losing HTML completion — accepted.
 
-**`viewer/preview.js`** — PDF.js 6.4.299, Apache-2.0, loaded from our own origin.
-`pdf.min.mjs` + `pdf.worker.min.mjs` = 505 KB gzip. Must:
+**`viewer/preview.js`** — **Not built.** The plan called for PDF.js 6.4.299,
+Apache-2.0, vendored and self-hosted. The shipped preview is an `<iframe>` on
+the object URL, drawn by the browser's own PDF viewer; `navigator.pdfViewerEnabled
+=== false` falls back to a text placeholder. Nothing is vendored. For reference,
+the dropped design specified:
 
 - call `getDocument({url})`, **not** a bare string — v6 rejects it
 - set `GlobalWorkerOptions.workerSrc` explicitly, or the fast worker path is lost
 - self-host `cmaps/`, `standard_fonts/`, `wasm/`
 
-Renders the current page plus neighbours, at `devicePixelRatio` capped to 2.
-Known limitation to surface in the UI: PDF.js has open RTL bugs in selection
-and search (#20097, #16116, #16716), which matters given this project's Arabic
-work.
+The RTL caveat still reaches the shipped preview, because Firefox's own viewer
+is PDF.js: it has open RTL bugs in selection and search (#20097, #16116,
+#16716), which matters given this project's Arabic work.
 
 **`viewer/theme.css`** — the research says these five remove most hand-written
 UI CSS: anchor positioning (Firefox 147 closed the last gap in 2026),
@@ -183,6 +219,10 @@ iframe's own `:root` sets `color-scheme`. Set it explicitly and keep it in sync,
 because a mismatch forces an opaque canvas.
 
 ### Phase 4 — WebMCP surface (optional, cheap, no infrastructure)
+
+**Not built.** `src/server.ts` still passes `--enable-blink-features=WebMCP`
+when `HTML2PDF_WEBMCP` is set, but nothing registers a tool, so the flag has no
+effect on the shell today. The design, for when it is picked up:
 
 Because the extension route is gone, use the CDP domain. The viewer page
 registers one tool; the server invokes it:
@@ -286,12 +326,16 @@ can run commands.
 
 ## Order of work
 
-1. Render API: `pageRanges`, stream drain, fast path. Plus tests.
-2. `src/server.ts` + a curl-level smoke test.
-3. Viewer shell with native controls and theme. Verify by screenshot.
-4. CodeMirror editor, then PDF.js preview.
-5. Headful parity test.
-6. WebMCP tool, if it still seems worth it once the viewer exists.
+1. Render API: `pageRanges`, stream drain, fast path. Plus tests. **Done.**
+2. `src/server.ts` + a curl-level smoke test. **Done.**
+3. Viewer shell with native controls and theme. Verify by screenshot. **Done**,
+   but the shell is a textarea, not CodeMirror — the editor library was dropped
+   to keep the shell dependency-free and to judge the layout on its own.
+4. CodeMirror editor, then PDF.js preview. **Not done, and now rejected:** the
+   shipped preview is the browser's own viewer, and the editor is a tokenized
+   highlight layer over a textarea.
+5. Headful parity test. **Done** (`test/parity.test.ts`).
+6. WebMCP tool, if it still seems worth it once the viewer exists. **Not done.**
 
 ## Explicitly not doing
 
@@ -299,5 +343,5 @@ can run commands.
 - Native `<embed>` PDF viewer. Blank in headless, no control.
 - Monaco. 7× the bytes.
 - Framework wrappers around PDF.js. They re-export an API we call directly.
-- A build step. PDF.js is vendored as-is; CodeMirror needs an import map, not a
-  bundler.
+- A build step. Nothing is vendored, because the browser draws the preview; a
+  build-free shell is why the editor is not CodeMirror either.

@@ -211,6 +211,30 @@ export function transposePageSize(html: string): string | null {
   return rewritten === '' ? null : out;
 }
 
+/**
+ * The same document with an `@page` rule of the engine's own appended to it.
+ *
+ * Paper travels in CSS rather than in `printToPDF`'s inch parameters, because
+ * Chromium quantizes those: measured across 19 widths, a request that lands on
+ * a whole CSS pixel comes back exact and every other one comes back *larger*,
+ * in steps of 1/300 inch and never smaller -- A4 asked for as 8.2677in came
+ * back 595.92pt where the same paper written as `@page { size: a4 }` is
+ * 594.96pt. A flag that silently prints 0.34mm off is worse than a slow one.
+ *
+ * Appended last so it wins the cascade against the document's own rules. That
+ * is belt and braces rather than the whole plan: a named page such as
+ * `@page :first` is more specific than a bare `@page`, and callers strip the
+ * document's sizes before calling this rather than trusting source order alone.
+ */
+export function injectPageRule(html: string, declarations: string): string {
+  const style = `<style>@page{${declarations}}</style>`;
+  const body = /<\/body\s*>/i.exec(html);
+  if (body) return html.slice(0, body.index) + style + html.slice(body.index);
+  const doc = /<\/html\s*>/i.exec(html);
+  if (doc) return html.slice(0, doc.index) + style + html.slice(doc.index);
+  return html + style;
+}
+
 const COMMENT_OR_STRING = String.raw`\/\*[\s\S]*?\*\/|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'`;
 
 /** An `@page` rule, or a comment or string that must survive untouched. */

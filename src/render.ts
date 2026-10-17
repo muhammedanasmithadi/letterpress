@@ -16,6 +16,7 @@ import {
   declaredPageMargin,
   declaredPageOrientation,
   declaredPageSize,
+  injectPageRule,
   inspect,
   stripPageSize,
   toInches,
@@ -130,21 +131,48 @@ const close = (a: number, b: number) => Math.abs(a - b) < 0.05;
 /**
  * The document as it must be rewritten before printing, or null for none.
  *
- * Two rewrites, chosen by what the request asked for. A format takes the paper
- * outright, so the declaration is stripped and the flag's paper wins.
- * Landscape without a format must keep the document's own paper and margin, so
- * the declaration is transposed in place and only its orientation changes --
- * Chromium discards its `landscape` parameter whenever `preferCSSPageSize` is
- * set, so asking it to rotate a page it defers to does nothing at all.
+ * Every paper decision ends up in an `@page` rule, because that is the only
+ * channel that yields the sheet a browser would have chosen: Chromium
+ * quantizes `printToPDF`'s inch parameters (measured: A4 asked for as 8.2677in
+ * returns 595.92pt, and `size: a4` returns 594.96pt), and it ignores
+ * `preferCSSPageSize` outright when no rule exists, falling back to Letter. So
+ * the paper is written where the browser can honour it exactly.
  *
- * The transpose asks the same question the finding above asks, so the paper in
- * the output and the finding beside it cannot disagree.
+ * Which rewrite depends on what was asked for:
+ *
+ * - a format takes the paper outright, so the document's sizes are stripped and
+ *   the flag's size and margin are appended;
+ * - landscape without a format keeps the document's own paper and margin, and
+ *   only the declared orientation is transposed;
+ * - no format and no declared page gets the A4 default written down, which is
+ *   the same sheet the old default sent and now arrives exact;
+ * - a document that declares its own page, with nothing asked of it, is left
+ *   byte-identical.
+ *
+ * Only reachable with source markup in hand: a remote document is navigated to,
+ * not rewritten, so its paper still travels the old way.
  */
 function pageOverride(html: string | null | undefined, req: RenderRequest): string | null {
-  if (html == null || declaredPageSize(html) === null) return null;
-  if (req.format) return stripPageSize(html);
-  if (!req.landscape || declaredPageOrientation(html) !== 'portrait') return null;
-  return transposePageSize(html);
+  if (html == null) return null;
+  const declared = declaredPageSize(html);
+
+  if (req.format) {
+    const size = `${req.format}${req.landscape ? ' landscape' : ''}`;
+    return injectPageRule(stripPageSize(html), `size:${size};margin:${req.margin ?? '0'}`);
+  }
+
+  if (declared === null) {
+    // Nothing declared, so the engine is choosing. A4 is what the old default
+    // asked for in inches; written as a keyword it is exact.
+    const size = req.landscape ? 'a4 landscape' : 'a4';
+    return injectPageRule(html, `size:${size};margin:${req.margin ?? '0'}`);
+  }
+
+  // Declared, and the only thing asked for is an orientation it does not have.
+  if (req.landscape && declaredPageOrientation(html) === 'portrait') {
+    return transposePageSize(html);
+  }
+  return null;
 }
 
 function precedenceFindings(html: string, req: RenderRequest): Finding[] {
@@ -644,19 +672,22 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
 
     let outsideRoot: RefusedRef[] = [];
     const relative = hasRelativeAssets(src.html ?? '');
-    // Computed before fastPath because that decision depends on it. The fast
-    // path hands Chromium the source as `about:blank`, so it has nowhere to
-    // put a rewritten document; a request that needs one and quietly does not
-    // get it renders the wrong paper with nothing said, which is the failure
-    // the rewrite exists to remove.
-    const override = pageOverride(src.html, req);
+    // The fast path hands Chromium the source through setDocumentContent, which
+    // takes the rewrite as readily as the original, so an override costs it
+    // nothing: no temp directory, no static file server. A rewrite that forced
+    // the slow path would have been a real price for an exact sheet.
+    //
+    // Remote sources carry `html: ''` as a sentinel, which reads exactly like "a
+    // document that declares no page" and would be rewritten into an @page rule
+    // for markup that is never loaded -- the document is navigated to, not
+    // served. So the decision is made here, where being remote is knowable.
+    const override = isRemote ? null : pageOverride(src.html, req);
     const fastPath =
       !isRemote &&
       src.html != null &&
       req.preferFastPath !== false &&
       !relative &&
-      !req.maxImagePpi &&
-      override === null;
+      !req.maxImagePpi;
 
     if (!isRemote && !fastPath) {
       outsideRoot = await stageAssets(src.html, src.source, dir, req.root);
@@ -908,8 +939,12 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       }
 
       const docOverridesPaper = declaresPaper;
-      const preferCss = docOverridesPaper && !req.format;
-      const paper = req.format ? FORMATS[req.format] : preferCss ? undefined : FORMATS.a4;
+      // The paper is in CSS whenever the engine wrote a rule for it, and
+      // otherwise whenever the document declares one. Everything else -- a
+      // remote document, which is navigated to rather than rewritten -- still
+      // goes through the inch parameters, the one path left that Chromium
+      // quantizes.
+      const preferCss = override !== null || (docOverridesPaper && !req.format);
       const margin = req.margin ? toInches(req.margin) : undefined;
       if (margin !== undefined && margin < 0) {
         throw new Error(
@@ -918,9 +953,14 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
             `in a stylesheet if you need it.`,
         );
       }
-      const transposed = !!req.landscape && !!paper && !preferCss;
-      const paperWidth = transposed ? paper![1] : paper?.[0];
-      const paperHeight = transposed ? paper![0] : paper?.[1];
+      // Remote fallback only. Transposing by hand is what Chromium's own
+      // `landscape` parameter would have done, and that parameter is not sent:
+      // it is discarded whenever preferCSSPageSize is set, and combining it
+      // with explicit dimensions asks for a rotation twice.
+      const paper = req.format ? FORMATS[req.format] : FORMATS.a4;
+      const transposed = !!req.landscape && !preferCss;
+      const paperWidth = preferCss ? undefined : transposed ? paper[1] : paper[0];
+      const paperHeight = preferCss ? undefined : transposed ? paper[0] : paper[1];
 
       let res: any;
       const useStream = req.transfer === 'stream';
@@ -930,9 +970,10 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           {
             printBackground: req.printBackground ?? true,
             preferCSSPageSize: preferCss,
-            ...(paperWidth !== undefined ? { paperWidth, paperHeight } : {}),
-            ...(paper && !preferCss
+            ...(paperWidth !== undefined
               ? {
+                  paperWidth,
+                  paperHeight,
                   scale: 1,
                   marginTop: margin ?? 0,
                   marginBottom: margin ?? 0,
@@ -940,9 +981,6 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
                   marginRight: margin ?? 0,
                 }
               : {}),
-
-            landscape: req.landscape && preferCss,
-
             displayHeaderFooter: false,
             generateDocumentOutline: true,
             generateTaggedPDF: true,

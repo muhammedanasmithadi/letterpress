@@ -6,6 +6,7 @@ import { deflateSync } from 'node:zlib';
 import { Browser } from '../src/browser.ts';
 import { render } from '../src/render.ts';
 import { readXmpPacket } from '../src/meta.ts';
+import { launchTestServer, serverOrigin } from './servers.ts';
 
 function widePng(width: number, height: number): Buffer {
   const raw = Buffer.alloc(height * (1 + width * 3));
@@ -83,10 +84,19 @@ test('a page count above eight is reported correctly', async () => {
 
 test('a document that declares no paper defaults to a4, not us letter', async () => {
   const r = await render(browser, { html: '<!doctype html><p>no @page here</p>' });
-  expect(r.info.mediaBoxes[0]).toMatch(/595\.\d+ 841\.\d+/);
+  // 594.96pt, not 595.92. The default is written as `@page { size: a4 }` rather
+  // than passed to printToPDF as 8.2677 inches, because Chromium quantizes the
+  // inch form: measured across 19 widths, a request landing on a whole CSS pixel
+  // comes back exact and every other one comes back larger, never smaller.
+  expect(r.info.mediaBoxes[0]).toMatch(/594\.9\d+ 841\.9\d+/);
 }, 30_000);
 
-test('--format a4 and @page size a4 agree to within a point', async () => {
+test('--format a4 and @page size a4 are the same sheet, not nearly', async () => {
+  // This was "agree to within a point", and 1.5pt was the drift: the flag went
+  // to printToPDF as 8.2677 inches and came back 595.92pt where the same paper
+  // written in CSS is 594.96pt. Both are now the same rule, so the tolerance is
+  // gone rather than narrowed -- two spellings of one paper that disagree are
+  // exactly the failure a preview tool cannot have.
   const viaFlag = await render(browser, { html: '<!doctype html><p>x</p>', format: 'a4' });
   const viaCss = await render(browser, {
     html: '<!doctype html><style>@page{size:a4;margin:0}</style><p>x</p>',
@@ -96,11 +106,11 @@ test('--format a4 and @page size a4 agree to within a point', async () => {
       .match(/([\d.]+)\s+([\d.]+)\s*\]/)!
       .slice(1)
       .map(Number);
-  const a = size(viaFlag.info.mediaBoxes[0]!);
-  const b = size(viaCss.info.mediaBoxes[0]!);
+  // The numbers are asserted as well as the strings, so a failure says which
+  // edge moved rather than only that the two differ.
+  expect(size(viaFlag.info.mediaBoxes[0]!)).toEqual(size(viaCss.info.mediaBoxes[0]!));
 
-  expect(Math.abs(a[0]! - b[0]!)).toBeLessThan(1.5);
-  expect(Math.abs(a[1]! - b[1]!)).toBeLessThan(1.5);
+  expect(viaFlag.info.mediaBoxes[0]).toBe(viaCss.info.mediaBoxes[0]);
 }, 30_000);
 
 test('--landscape under a portrait @page transposes the document own declaration', async () => {
@@ -531,8 +541,34 @@ test('an http failure is reported instead of printing the error page', async () 
 test('a document declaring no paper defaults to a4 through the work server', async () => {
   const r = await render(browser, { html: '<!doctype html><p>served</p>' });
   expect(r.info.pages).toBe(1);
-  expect(r.info.mediaBoxes[0]).toMatch(/59[45]\.\d+ 84[12]\.\d+/);
+  expect(r.info.mediaBoxes[0]).toMatch(/594\.9\d+ 841\.9\d+/);
 }, 30_000);
+
+test('a remote document is never rewritten, whatever the flags ask for', async () => {
+  // A remote source carries `html: ''` as a sentinel, which reads exactly like a
+  // document that declares no page -- so the paper injector built an @page rule
+  // for markup that is never loaded and then asked for the local work server
+  // that does not exist. Measured: `undefined is not an object (evaluating
+  // 'server.origin')`, on the way to printing nothing at all.
+  const s = await launchTestServer();
+  try {
+    const r = await render(browser, {
+      url: serverOrigin(s),
+      format: 'a4',
+      margin: '15mm',
+      landscape: true,
+      allowNetwork: true,
+    });
+    expect(r.info.pages).toBe(1);
+    // A remote page keeps the old inch path, which Chromium rounds up: A4
+    // landscape arrives as 841.92 x 595.92 where the local path gives 594.96.
+    // Named here so the remaining difference is a stated limit rather than an
+    // accident waiting to be rediscovered.
+    expect(r.info.mediaBoxes[0]).toMatch(/841\.9\d+ 595\.9\d+/);
+  } finally {
+    await s.stop();
+  }
+}, 60_000);
 
 test('SOURCE_DATE_EPOCH makes output byte-reproducible', async () => {
   const previous = process.env.SOURCE_DATE_EPOCH;

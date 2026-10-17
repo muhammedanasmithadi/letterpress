@@ -60,7 +60,10 @@ describe('the toolbar controls reach the renderer', () => {
     expect(own.mediaBoxes[0]).toContain('420');
     const a4 = (await (await post({ html: DOC, format: 'a4' })).json()) as { mediaBoxes: string[] };
 
-    expect(a4.mediaBoxes[0]).toContain('595');
+    // 594.96pt: the flag is written as `@page { size: a4 }` and read back by the
+    // browser, so it is the same sheet the document's own `size: a4` produces.
+    // Passed as inches it was 595.92 -- Chromium rounds that form upward.
+    expect(a4.mediaBoxes[0]).toContain('594.9');
   }, 90_000);
 
   test('landscape transposes the paper', async () => {

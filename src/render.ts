@@ -328,109 +328,22 @@ function clampedUrlPath(rel: string): string {
   return out.join('/');
 }
 
-export async function stageAssets(
-  html: string,
-  source: string,
-  dir: string,
-  rootArg?: string,
-): Promise<RefusedRef[]> {
-  if (!html || /^https?:/i.test(source)) return [];
-
-  const base = source.startsWith('/') ? dirname(source) : process.cwd();
-  const root = rootArg ? absRoot(rootArg) : base;
-
-  const rootReal = await realpath(root).catch(() => root);
-  const insideRoot = (p: string) => p === rootReal || p.startsWith(rootReal + '/');
-
-  const lexicallyInside = (p: string) => p === root || p.startsWith(root + '/');
-  const written = new Set<string>();
-
-  const queue: Array<{ ref: string; from: string; outside: boolean }> = [];
-
-  const refused: Array<{ ref: string; abs: string; why: RefusalReason }> = [];
-
-  const seen = new Set<string>();
-
-  const consider = (ref: string, from: string) => {
-    const clean = ref.trim().split(/[?#]/)[0];
-    if (!clean) return;
-    if (NOT_A_LOCAL_FILE.test(clean)) return;
-    const abs = isAbsolute(clean) ? clean : resolve(from, clean);
-
-    if (seen.has(abs)) return;
-    seen.add(abs);
-
-    const urlPath = clampedUrlPath(relative(base, abs));
-    if (!urlPath) return;
-    const target = join(dir, urlPath);
-    if (!target.startsWith(dir + '/') || written.has(target)) return;
-
-    if (urlPath === SERVED_DOCUMENT || urlPath === OVERRIDE_DOCUMENT) {
-      if (refused.length < 8) refused.push({ ref: clean, abs, why: 'document' });
-      return;
-    }
-    written.add(target);
-
-    queue.push({ ref: clean, from: abs, outside: !lexicallyInside(abs) });
-  };
-
-  const scan = (text: string, from: string) => {
-    // The same list `hasRelativeAssets` reads, deliberately: that function decides whether
-    // this one runs at all, and two lists is how a document ends up printed unstyled.
-    for (const ref of refsIn(text)) consider(ref, from);
-  };
-
-  scan(html, base);
-
-  while (queue.length) {
-    const { ref, from, outside } = queue.shift()!;
-
-    const real = await realpath(from).catch(() => null);
-
-    if (real && !insideRoot(real)) {
-      if (refused.length < 8 && !refused.some((r) => r.abs === real))
-        refused.push({ ref, abs: real, why: 'outside-root' });
-      continue;
-    }
-    if (!real) {
-      if (outside && refused.length < 8 && !refused.some((r) => r.abs === from)) {
-        refused.push({ ref, abs: from, why: 'outside-root' });
-      }
-      continue;
-    }
-
-    let bytes: Buffer;
-    try {
-      bytes = Buffer.from(await Bun.file(real).arrayBuffer());
-    } catch {
-      continue;
-    }
-    if (!bytes.length) continue;
-    const target = join(dir, clampedUrlPath(relative(base, from)));
-    try {
-      await Bun.write(target, bytes);
-    } catch {
-      continue;
-    }
-
-    if (/\.(?:css|mjs|js)$/i.test(from)) {
-      try {
-        scan(new TextDecoder('latin1').decode(bytes), dirname(real));
-      } catch {}
-    }
-  }
-
-  return refused;
-}
-
-// Every place a document can name a local file.
-//
-// `stageAssets` copies what these find, and `hasRelativeAssets` decides from the same list
-// whether `stageAssets` needs to run at all -- if it does not, the document is rendered from
-// `about:blank` with no server and no staged files. The two lists were written separately
-// and the second missed `@import` and module imports, so a document whose only local
-// reference was an imported stylesheet was rendered from nothing and printed unstyled, with
-// no finding and no error. One list, so the question cannot be asked two ways again.
+/**
+ * Copy the assets a document references into the work directory, so the page can
+ * load them from one origin.
+ *
+ * Two phases, because they answer different questions. Planning asks what the
+ * markup names -- following `@import` and `url()` through the stylesheets it
+ * pulls in -- and refuses anything that is not a file the engine may read.
+ * Staging then copies each one, resolving symlinks first and refusing again if
+ * the real path lands outside the root. Both phases can refuse, and they refuse
+ * for different reasons: a document named for the page itself is refused while
+ * planning, and a symlink out of the tree is refused while staging.
+ *
+ * The two phases are separate functions because the planning half is where the
+ * branching is, and it was measured as one function with the staging half
+ * inside it.
+ */
 const REF_PATTERNS: ReadonlyArray<{ re: RegExp; candidates?: true }> = [
   { re: /(?:src|href)\s*=\s*["']([^"']+)["']/gi },
   { re: /(?:src|href)\s*=\s*([^\s>]+)/gi },
@@ -460,13 +373,161 @@ function* refsIn(text: string): Generator<string> {
 }
 
 /**
- * The finding for a file that will not pass the structural check, or null when it will.
+ * Copy the assets a document references into the work directory, so the page can
+ * load them from one origin.
  *
- * A pure function of the bytes on purpose. It was inline at the end of the pipeline first,
- * and testing it needed `mock.module` on the verify module -- which is global in Bun, so the
- * test that proved this path works broke every test that ran after it. A decision that is a
- * function of its argument does not need the module registry to reach.
+ * Walking and copying cannot be two phases: a stylesheet is only read once it
+ * has been copied, so every `url()` and `@import` inside it is discovered after
+ * the first pass has already started. They share one queue and one set of
+ * refusals, and the two halves are separate functions because the branching
+ * belongs to both.
  */
+export async function stageAssets(
+  html: string,
+  source: string,
+  dir: string,
+  rootArg?: string,
+): Promise<RefusedRef[]> {
+  if (!html || /^https?:/i.test(source)) return [];
+
+  const base = source.startsWith('/') ? dirname(source) : process.cwd();
+  const root = rootArg ? absRoot(rootArg) : base;
+
+  const rootReal = await realpath(root).catch(() => root);
+  const insideRoot = (p: string) => p === rootReal || p.startsWith(rootReal + '/');
+
+  const state: AssetState = {
+    base,
+    root,
+    dir,
+    seen: new Set<string>(),
+    written: new Set<string>(),
+    queue: [],
+    refused: [],
+  };
+
+  scanAssets(state, html, base);
+
+  while (state.queue.length) {
+    const next = state.queue.shift()!;
+    await stageOne(state, next, insideRoot);
+  }
+
+  return state.refused;
+}
+
+/** One referenced path, and whether it was written outside the document's own tree. */
+type AssetPlan = { ref: string; from: string; outside: boolean };
+
+type AssetState = {
+  base: string;
+  root: string;
+  dir: string;
+  seen: Set<string>;
+  written: Set<string>;
+  queue: AssetPlan[];
+  refused: RefusedRef[];
+};
+
+/**
+ * Whether a path is inside a root, compared as written rather than resolved.
+ *
+ * Deliberately not the real path: a `../` that lexically leaves the root is
+ * refused before anything is read, which is the check that cannot be defeated
+ * by a path the engine has not resolved yet.
+ */
+function lexicallyInside(p: string, root: string): boolean {
+  return p === root || p.startsWith(root + '/');
+}
+
+/**
+ * Consider one referenced path: refuse what must not be staged, queue the rest.
+ *
+ * The refusals are capped at eight. A generated page can name ten thousand of
+ * them, and the finding that reports them does not read better for the length.
+ */
+function considerAsset(state: AssetState, ref: string, from: string): void {
+  const clean = ref.trim().split(/[?#]/)[0];
+  if (!clean) return;
+  if (NOT_A_LOCAL_FILE.test(clean)) return;
+  const abs = isAbsolute(clean) ? clean : resolve(from, clean);
+  if (state.seen.has(abs)) return;
+  state.seen.add(abs);
+
+  const urlPath = clampedUrlPath(relative(state.base, abs));
+  if (!urlPath) return;
+  const target = join(state.dir, urlPath);
+  if (!target.startsWith(state.dir + '/') || state.written.has(target)) return;
+
+  // The document may not be replaced by one of its own assets: staging a file
+  // named after the page would print a different document than the one asked
+  // for, with nothing to say so.
+  if (urlPath === SERVED_DOCUMENT || urlPath === OVERRIDE_DOCUMENT) {
+    if (state.refused.length < 8) state.refused.push({ ref: clean, abs, why: 'document' });
+    return;
+  }
+  state.written.add(target);
+
+  state.queue.push({ ref: clean, from: abs, outside: !lexicallyInside(abs, state.root) });
+}
+
+/**
+ * The same list `hasRelativeAssets` reads, deliberately: that function decides
+ * whether this one runs at all, and two lists is how a document ends up printed
+ * unstyled.
+ */
+function scanAssets(state: AssetState, text: string, from: string): void {
+  for (const ref of refsIn(text)) considerAsset(state, ref, from);
+}
+
+/**
+ * Copy one referenced file, or refuse it, and queue whatever it references.
+ *
+ * The real path is read before anything is written, so a symlink pointing out of
+ * the root is caught rather than followed. A file that cannot be read is
+ * skipped without a finding: the document will report the asset as missing,
+ * which is the same fact said by the thing that can see it.
+ */
+async function stageOne(state: AssetState, next: AssetPlan, insideRoot: InsideRoot): Promise<void> {
+  const { ref, from, outside } = next;
+  const real = await realpath(from).catch(() => null);
+
+  if (real && !insideRoot(real)) {
+    if (state.refused.length < 8 && !state.refused.some((r) => r.abs === real)) {
+      state.refused.push({ ref, abs: real, why: 'outside-root' });
+    }
+    return;
+  }
+  if (!real) {
+    // A path inside the root that does not exist is the document's own
+    // business; one naming something outside it is the engine's.
+    if (outside && state.refused.length < 8 && !state.refused.some((r) => r.abs === from)) {
+      state.refused.push({ ref, abs: from, why: 'outside-root' });
+    }
+    return;
+  }
+
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(await Bun.file(real).arrayBuffer());
+  } catch {
+    return;
+  }
+  if (!bytes.length) return;
+  const target = join(state.dir, clampedUrlPath(relative(state.base, from)));
+  try {
+    await Bun.write(target, bytes);
+  } catch {
+    return;
+  }
+
+  if (/\.(?:css|mjs|js)$/i.test(from)) {
+    try {
+      scanAssets(state, new TextDecoder('latin1').decode(bytes), dirname(real));
+    } catch {}
+  }
+}
+
 export function finalCheckFinding(pdf: Uint8Array): Finding | null {
   const finalCheck = verify(pdf);
   if (finalCheck.ok) return null;
@@ -653,59 +714,18 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
   const isRemote = /^https?:/i.test(req.url ?? '');
 
   try {
-    const src = await resolveSource(req, dir);
-
-    if (src.html != null) {
-      const binary = looksBinary(src.html);
-      if (binary) {
-        throw new Error(
-          `this input is not HTML: ${binary}. letterpress prints html, so a document with the wrong ` +
-            `file extension produces a page of binary noise rather than an error. check the path.`,
-        );
-      }
-
-      if (!req.url && !src.html.trim()) {
-        throw new Error(EMPTY_INPUT_MESSAGE);
-      }
-      findings.push(...precedenceFindings(src.html, req));
-    }
-
-    let outsideRoot: RefusedRef[] = [];
-    const relative = hasRelativeAssets(src.html ?? '');
-    // The fast path hands Chromium the source through setDocumentContent, which
-    // takes the rewrite as readily as the original, so an override costs it
-    // nothing: no temp directory, no static file server. A rewrite that forced
-    // the slow path would have been a real price for an exact sheet.
-    //
-    // Remote sources carry `html: ''` as a sentinel, which reads exactly like "a
-    // document that declares no page" and would be rewritten into an @page rule
-    // for markup that is never loaded -- the document is navigated to, not
-    // served. So the decision is made here, where being remote is knowable.
-    const override = isRemote ? null : pageOverride(src.html, req);
-    const fastPath =
-      !isRemote &&
-      src.html != null &&
-      req.preferFastPath !== false &&
-      !relative &&
-      !req.maxImagePpi;
-
-    if (!isRemote && !fastPath) {
-      outsideRoot = await stageAssets(src.html, src.source, dir, req.root);
-      server = await serveWorkDir(dir);
-    }
-
-    let srcUrl: string;
-    if (fastPath) srcUrl = 'about:blank';
-    else srcUrl = isRemote ? src.url : `${server!.origin}/input.html`;
-    if (override && !fastPath) {
-      await Bun.write(join(dir, OVERRIDE_DOCUMENT), override);
-      srcUrl = `${server!.origin}/override.html`;
-    }
+    const prepared = await prepareSource(req, dir, isRemote, findings);
+    const { src, srcUrl, fastPath, override } = prepared;
+    const outsideRoot = prepared.outsideRoot;
+    server = prepared.server;
 
     tab = await browser.newTab();
-    let timedOut = false;
+    // A box, not a boolean: the print call that needs to know whether the
+    // deadline passed lives in another function now, and a value copied into it
+    // would always be the false it was when it was passed.
+    const timedOutRef = { timedOut: false };
     const deadline = setTimeout(() => {
-      timedOut = true;
+      timedOutRef.timedOut = true;
 
       void browser.closeTab(tab!).catch(() => {});
     }, timeoutMs);
@@ -714,459 +734,44 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       await tab.send('Page.enable');
       await tab.send('Runtime.enable');
       await tab.send('Network.enable');
-
-      const loopback = server
-        ? new RegExp(`^${server.origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`, 'i')
-        : /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$)/i;
-      await tab.send('Fetch.enable', {
-        patterns: [{ urlPattern: 'http://*' }, { urlPattern: 'https://*' }],
-      });
-      tab.on('Fetch.requestPaused', (p) => {
-        const url = String(p.request?.url ?? '');
-        if (loopback.test(url)) {
-          void tab!.send('Fetch.continueRequest', { requestId: p.requestId }).catch(() => {});
-          return;
-        }
-        const proceed = req.allowNetwork
-          ? tab!.send('Fetch.continueRequest', { requestId: p.requestId })
-          : (blocked.length < MAX_BLOCKED_REPORTED && blocked.push(url),
-            tab!.send('Fetch.failRequest', {
-              requestId: p.requestId,
-              errorReason: 'BlockedByClient',
-            }));
-        void proceed.catch(() => {});
+      const net = await watchNetwork(tab, {
+        loopback: loopbackPattern(server),
+        allowNetwork: req.allowNetwork === true,
+        isRemote,
+        srcUrl,
+        blocked,
+        failedSubresources,
       });
 
-      let mainStatus: number | undefined;
-      let netError: string | undefined;
-      if (isRemote) {
-        tab.on('Network.responseReceived', (p) => {
-          if (p.type === 'Document' && !mainStatus) mainStatus = p.response?.status;
-        });
-      }
-
-      tab.on('Network.responseReceived', (p) => {
-        const status = p.response?.status ?? 0;
-
-        const isFavicon = /\/favicon\.ico(\?|$)/.test(p.response?.url ?? '');
-        if (status >= 400 && p.type && p.type !== 'Document' && !isFavicon) {
-          failedSubresources.push({ kind: p.type, url: `${status} ${p.response?.url ?? ''}` });
-        }
-      });
-
-      const requestUrls = new Map<string, string>();
-      tab.on('Network.requestWillBeSent', (p) => {
-        if (p.requestId && p.request?.url) requestUrls.set(p.requestId, p.request.url);
-      });
-      tab.on('Network.loadingFailed', (p) => {
-        const url = p.requestId ? requestUrls.get(p.requestId) : undefined;
-        const isMainDocument = p.type === 'Document' && url !== undefined && url === srcUrl;
-        if (isMainDocument && !netError && !p.blockedReason) netError = p.errorText;
-        else if (p.type === 'Document' && !p.blockedReason) {
-          failedSubresources.push({ kind: 'Subframe', url: url ?? p.errorText ?? '' });
-        } else if (!p.blockedReason && !isTeardownAbort(p.errorText)) {
-          failedSubresources.push({ kind: p.type ?? 'unknown', url: p.errorText ?? '' });
-        }
-      });
-
-      const loaded = tab.once('Page.loadEventFired');
-      if (fastPath) {
-        const frameId = (await tab.send('Page.getFrameTree')).frameTree.frame.id;
-        await tab.send('Page.setDocumentContent', { frameId, html: override ?? src.html! });
-      } else {
-        await tab.send('Page.navigate', { url: srcUrl }).catch((e: Error) => {
-          if (/ERR_/.test(e.message)) netError ??= e.message;
-        });
-        await Promise.race([
-          loaded.promise,
-          Bun.sleep(timeoutMs).then(() => {
-            throw new Error(`__deadline__`);
-          }),
-        ]).catch((e: Error) => {
-          throw new Error(
-            e.message === '__deadline__' && timedOut
-              ? `navigation did not finish within ${timeoutMs}ms`
-              : e.message,
-          );
-        });
-        loaded.cancel();
-      }
-
-      if (netError) {
-        throw new Error(`could not load ${src.source}: ${netError}`);
-      }
-      if (mainStatus !== undefined && (mainStatus < 200 || mainStatus >= 300)) {
-        throw new Error(
-          `${src.source} returned HTTP ${mainStatus}; refusing to print the error page`,
-        );
-      }
-
-      await tab.send(
-        'Runtime.evaluate',
-        {
-          expression: 'document.fonts.ready.then(() => true)',
-          awaitPromise: true,
-          returnByValue: true,
-        },
+      await loadDocument({
+        tab,
+        net,
+        fastPath,
+        override,
+        html: src.html,
+        srcUrl,
+        source: src.source,
         timeoutMs,
-      );
-      if (req.settleMs) await Bun.sleep(req.settleMs);
-      if (req.beforePrint) {
-        await tab.send(
-          'Runtime.evaluate',
-          {
-            expression: req.beforePrint,
-            awaitPromise: true,
-            returnByValue: true,
-          },
-          timeoutMs,
-        );
-      }
+        timedOutRef,
+      });
 
-      // A probe runs after the document is settled and before the print, so it sees the same
-      // layout the PDF is made from. Its result is handed back untouched; if it throws in
-      // the page, that is the caller's problem to notice rather than a silent empty result,
-      // which is what an expression string returned last time.
-      let probe: unknown;
-      if (req.pageProbe) {
-        const answer = await tab
-          .send(
-            'Runtime.evaluate',
-            { expression: `(${req.pageProbe})()`, returnByValue: true },
-            timeoutMs,
-          )
-          .catch((e: unknown) => ({ exceptionDetails: { text: String(e) } }));
-        // Reported, never swallowed. The first version of this returned `undefined` on
-        // failure, which is indistinguishable from a probe that legitimately found nothing:
-        // `wideGaps` called a helper that does not exist in the page, the probe came back
-        // empty, and the tool printed its old sentence as though the document had no wide
-        // gaps. It had eight. A probe that cannot run must say so.
-        const thrown = (
-          answer as {
-            exceptionDetails?: { text?: string; exception?: { description?: string } };
-          } | null
-        )?.exceptionDetails;
-        if (thrown) {
-          // `exceptionDetails.text` is the word "Uncaught". The message that says which
-          // name was missing is on the exception itself, and that is the whole diagnosis.
-          const detail =
-            thrown.exception?.description?.split('\n')[0]?.trim() || thrown.text || 'no detail';
-          findings.push({
-            code: 'page-probe-failed',
-            severity: 'warn',
-            message:
-              `the page probe threw in the browser: ${detail}. it returned nothing, so ` +
-              `nothing downstream can tell a probe that failed from a probe that found ` +
-              `nothing. this is a gap in the tool, not a finding about the document.`,
-          });
-        } else {
-          probe = (answer as { result?: { value?: unknown } } | null)?.result?.value;
-        }
-      }
+      const page = await readPage(tab, req, timeoutMs, findings);
+      const { probe, docMeta, linkDescs } = page;
 
-      const stated = await tab.send(
-        'Runtime.evaluate',
-        {
-          expression: `(() => {
-          const pick = (names) => {
-            for (const name of names) {
-              const el = document.querySelector('meta[name="' + name + '"]') ||
-                document.querySelector('meta[property="' + name + '"]');
-              const value = el && (el.getAttribute("content") || "").trim();
-              if (value) return value;
-            }
-            return "";
-          };
-          return JSON.stringify({
-            author: pick(["author", "DC.creator", "dc.creator", "article:author", "biblio_author"]),
-            subject: pick(["subject", "DC.subject", "dc.subject", "description", "DC.description"]),
-            keywords: pick(["keywords", "DC.subject", "citation_keywords"]),
-          });
-        })()`,
-          returnByValue: true,
-        },
-        timeoutMs,
-      );
-      let docMeta: { author?: string; subject?: string; keywords?: string } = {};
-      try {
-        docMeta = JSON.parse((stated as { result?: { value?: string } }).result?.value ?? '{}');
-      } catch {}
+      const declaresPaper = await probeDeclaresPaper(tab, src.html, req, timeoutMs);
 
-      const author = req.author?.trim() || docMeta.author || '';
+      const { raw } = await printPdf(tab, req, override, declaresPaper, timeoutMs, timedOutRef);
 
-      const capped = req.maxImagePpi
-        ? await capImageResolution(tab, req.maxImagePpi, timeoutMs)
-        : [];
-      for (const c of capped) {
-        findings.push({
-          code: 'image-downsampled',
-          severity: 'info',
-          message: `image downsampled from ${c.from}px to ${c.to}px wide, ${c.ppi}ppi down to ${req.maxImagePpi}ppi, to keep the PDF a reasonable size.`,
-        });
-      }
+      const pdfTitle = pdfTitleFor(req);
 
-      findings.push(...(await audit(tab, timeoutMs)));
-
-      const linkDescRaw = await tab
-        .send(
-          'Runtime.evaluate',
-          {
-            expression: LINK_DESC_JS,
-            returnByValue: true,
-            awaitPromise: false,
-          },
-          timeoutMs,
-        )
-        .then((r: { result?: { value?: unknown } }) => r.result?.value)
-        .catch(() => undefined);
-      const linkDescs = parseLinkDescs(linkDescRaw);
-
-      let declaresPaper = src.html ? declaredPageSize(src.html) !== null : false;
-      if (!req.format && !declaresPaper && req.url) {
-        const probe = await tab
-          .send('Runtime.evaluate', {
-            expression: `(() => {
-            for (const sheet of document.styleSheets) {
-              let rules; try { rules = sheet.cssRules } catch { continue }
-              for (const r of rules || []) if (/@page/i.test(r.cssText || "") && /\\bsize\\s*:/i.test(r.cssText || "")) return true;
-            }
-            return false;
-          })()`,
-            returnByValue: true,
-          })
-          .catch(() => null);
-        declaresPaper = probe?.result?.value === true;
-      }
-
-      const docOverridesPaper = declaresPaper;
-      // The paper is in CSS whenever the engine wrote a rule for it, and
-      // otherwise whenever the document declares one. Everything else -- a
-      // remote document, which is navigated to rather than rewritten -- still
-      // goes through the inch parameters, the one path left that Chromium
-      // quantizes.
-      const preferCss = override !== null || (docOverridesPaper && !req.format);
-      const margin = req.margin ? toInches(req.margin) : undefined;
-      if (margin !== undefined && margin < 0) {
-        throw new Error(
-          `margin ${req.margin} is negative, and printToPDF refuses a negative page margin on all ` +
-            `four sides. a negative margin bleeds content off the sheet, which is what @page margin does ` +
-            `in a stylesheet if you need it.`,
-        );
-      }
-      // Remote fallback only. Transposing by hand is what Chromium's own
-      // `landscape` parameter would have done, and that parameter is not sent:
-      // it is discarded whenever preferCSSPageSize is set, and combining it
-      // with explicit dimensions asks for a rotation twice.
-      const paper = req.format ? FORMATS[req.format] : FORMATS.a4;
-      const transposed = !!req.landscape && !preferCss;
-      const paperWidth = preferCss ? undefined : transposed ? paper[1] : paper[0];
-      const paperHeight = preferCss ? undefined : transposed ? paper[0] : paper[1];
-
-      let res: any;
-      const useStream = req.transfer === 'stream';
-      try {
-        res = await tab.send(
-          'Page.printToPDF',
-          {
-            printBackground: req.printBackground ?? true,
-            preferCSSPageSize: preferCss,
-            ...(paperWidth !== undefined
-              ? {
-                  paperWidth,
-                  paperHeight,
-                  scale: 1,
-                  marginTop: margin ?? 0,
-                  marginBottom: margin ?? 0,
-                  marginLeft: margin ?? 0,
-                  marginRight: margin ?? 0,
-                }
-              : {}),
-            displayHeaderFooter: false,
-            generateDocumentOutline: true,
-            generateTaggedPDF: true,
-            ...(req.pageRanges ? { pageRanges: req.pageRanges } : {}),
-            transferMode: useStream ? 'ReturnAsStream' : 'ReturnAsBase64',
-          },
-          timeoutMs,
-        );
-      } catch (e) {
-        if (timedOut) {
-          throw new Error(
-            `printing exceeded the ${timeoutMs}ms deadline. A very large document needs a higher --timeout; if it dies at a few thousand pages the browser ran out of memory.`,
-          );
-        }
-        throw e;
-      }
-
-      const raw =
-        useStream && res.stream
-          ? await drainStream(tab, res.stream, { timeoutMs })
-          : new Uint8Array(Buffer.from(res.data, 'base64'));
-
-      const pdfTitle = req.path
-        ? basename(req.path)
-        : req.url
-          ? new URL(req.url).hostname
-          : 'document';
-
-      const rejected = new Set<string>();
-      const gated = (
-        input: Uint8Array,
-        label: string,
-        repair: (pdf: Uint8Array) => Uint8Array,
-      ): Uint8Array => {
-        const attempt = repairOrKeep(input, repair);
-        if (attempt.failures.length) {
-          rejected.add(label);
-          findings.push({
-            code: 'repair-rejected',
-            severity: 'warn',
-            message:
-              `the ${label} fix was discarded because it did not leave a valid pdf: ` +
-              `${attempt.failures.join('; ')}. the file is what the previous stage ` +
-              `produced, with this fix not applied.`,
-          });
-        }
-        return attempt.pdf;
-      };
-
-      let described = gated(raw, 'ToUnicode', fixToUnicode);
-      described = gated(described, 'font descriptor', fixFontDescriptors);
-      if (linkDescs) {
-        described = gated(described, 'link description', (p) => fixLinkDescs(p, linkDescs!));
-      }
-
-      const redundant = redundantFigureCount(described);
-      if (redundant > 0) {
-        const attempt = repairOrKeep(described, fixRedundantFigures);
-        if (attempt.failures.length) {
-          // Recorded like every other rejection. Nothing reads `figure-role` out of the set
-          // today, but the set reads as a complete record of what was discarded and a reader
-          // would otherwise assume a rejected fix was an accepted one.
-          rejected.add('figure-role');
-          findings.push({
-            code: 'repair-rejected',
-            severity: 'warn',
-            message:
-              `the figure-role fix was discarded because it did not leave a valid pdf: ` +
-              `${attempt.failures.join('; ')}. the file is what the previous stage ` +
-              `produced, with this fix not applied.`,
-          });
-        } else {
-          described = attempt.pdf;
-          findings.push({
-            code: 'figure-role-corrected',
-            severity: 'info',
-            message:
-              `${redundant} figure ${redundant === 1 ? 'element' : 'elements'} ` +
-              `tagged as a grouping rather than a figure, because chromium tags both the ` +
-              `figure element and the image inside it as a figure and describes only the ` +
-              `image. each image keeps its own description.`,
-          });
-        }
-      }
-
-      const currentTitle = readDocInfo(described).title ?? '';
-      if (currentTitle && isVolatileTitle(currentTitle) && currentTitle !== pdfTitle) {
-        described = gated(described, 'document title', (p) => setDocTitle(p, pdfTitle));
-      }
-
-      described = gated(described, 'metadata', (p) =>
-        addMetadata(p, {
-          author,
-
-          subject: req.subject?.trim() || docMeta.subject || '',
-          keywords: req.keywords?.trim() || docMeta.keywords || '',
-        }),
-      );
-      // The only stage that rewrites a content stream, and the only one outside the gate.
-      // It proves itself by replaying the original and the rewritten stream and comparing
-      // every glyph position; if any glyph moves, or a block is not the simple shape it
-      // handles, the input is returned untouched.
-      const { pdf: merged, stats: runs } = mergeTextRuns(described);
-      if (runs.blocks > 0) {
-        // Reported even when nothing merged. A document whose text Chromium writes in a
-        // shape this does not handle is a fact about the output, and staying quiet about
-        // it is how a transform looks like it works.
-        findings.push({
-          code: 'text-runs-merged',
-          severity: 'info',
-          message:
-            runs.merged > 0
-              ? `folded ${runs.merged} of ${runs.blocks} text blocks into TJ arrays, ` +
-                `${described.byteLength - merged.byteLength} bytes smaller, glyph positions verified unchanged` +
-                `${runs.refused ? `; ${runs.refused} left alone as not simple enough to rewrite` : ''}.`
-              : `left all ${runs.blocks} text blocks alone: none is the shape this rewrites.`,
-        });
-      }
-      described = merged;
-
-      // Chromium wraps every ligature in a marked-content span carrying /ActualText, and a
-      // reader ends a text item at each one whatever the spacing says. One page of ordinary
-      // prose comes back as sixty text items where the geometry alone gives seven, and
-      // dragging a selection across it draws sixty highlight boxes, seventeen of them for
-      // gaps that are not there.
-      //
-      // Only spans whose text the font's /ToUnicode already resolves to are removed, so
-      // nothing is lost: where the two disagree the span is the only copy and it stays.
-      // Measured in Firefox: sixty items and seventeen whitespace items as rendered, seven
-      // and none after. Extracted text is unchanged character for character.
-      if (req.keepLigatureSpans !== true) {
-        const stripped = stripRedundantSpans(described);
-        const spans = stripped.stats;
-        // Whether the repair actually changed the file, asked of the bytes rather than of
-        // the repair's own count of what it did. The first version routed this through
-        // `repairOrKeep`, which refuses any repair that rewrites a content stream -- correct
-        // for a metadata repair, and exactly wrong here, because removing a span is a content
-        // stream rewrite by definition. The gate returned the input, the bytes never changed,
-        // and the finding said "removed 36 of 36" anyway: a confident claim about a repair
-        // that had been refused, with no `repair-rejected` to say so, because the finding was
-        // pushed from the stats before anyone asked whether the output was used.
-        //
-        // The final `verify()` below covers the result. This repair does what mergeTextRuns
-        // does and for the same reason is not gated against Chromium's own bytes.
-        const changed =
-          spans.stripped > 0 &&
-          (stripped.pdf.length !== described.length ||
-            !stripped.pdf.every((v, i) => v === described[i]));
-        if (changed) described = stripped.pdf;
-
-        if (spans.seen > 0) {
-          findings.push({
-            code: 'ligature-spans',
-            severity: 'info',
-            message: changed
-              ? `removed ${spans.stripped} of ${spans.seen} marked-content spans carrying ` +
-                `/ActualText, each of which ended a text item at every ligature. each was ` +
-                `removed only because /ToUnicode already gave the same characters, so the ` +
-                `extracted text is unchanged.${spans.kept ? ` ${spans.kept} kept, being the only place their text appears.` : ''}`
-              : spans.stripped > 0
-                ? `found ${spans.stripped} removable /ActualText spans and the file came back ` +
-                  `unchanged, so nothing was removed. this is a bug in letterpress, not a ` +
-                  `finding about the document.`
-                : `left all ${spans.seen} /ActualText spans in place: /ToUnicode does not ` +
-                  `resolve them to the same text, so each is the only copy of it.`,
-          });
-        }
-      }
-
-      // The title stamp is a byte-for-byte rewrite of the file rather than a change to one
-      // object, and it was the only stage after the merge that nothing checked. It goes
-      // through the same gate as the others so that a bad rewrite is a finding rather than
-      // the caller's problem.
-      const stamped = repairOrKeep(described, stampPdf);
-      if (stamped.failures.length) {
-        rejected.add('stamp');
-        findings.push({
-          code: 'repair-rejected',
-          severity: 'warn',
-          message:
-            `the title stamp was discarded because it did not leave a valid pdf: ` +
-            `${stamped.failures.join('; ')}. the file is what the previous stage produced, ` +
-            `with this fix not applied.`,
-        });
-      }
-      const pdf = stamped.pdf;
+      const { pdf, rejected } = repairDocument({
+        raw,
+        linkDescs,
+        pdfTitle,
+        meta: pdfMeta(req, docMeta),
+        keepLigatureSpans: req.keepLigatureSpans === true,
+        findings,
+      });
 
       // The last structural check, on the bytes actually being returned.
       //
@@ -1181,192 +786,17 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       const failedFinal = finalCheckFinding(pdf);
       if (failedFinal) findings.push(failedFinal);
 
-      // What a browser will do with a selection over this page. Firefox's PDF.js keeps a
-      // word gap inside the current text item only between 0.102 and 0.6 em; outside that
-      // it ends the item and the gap becomes a highlight of its own, which is why a
-      // justified paragraph selects as a row of separate boxes. Nothing in the file can
-      // change the gap, so it is reported rather than repaired.
-      const flow = textFlow(pdf);
-      if (
-        flow &&
-        ((flow.breaks > 0 &&
-          (flow.tooWide > 0 || flow.jump > 0 || flow.tooThin > 0 || flow.backwards > 0)) ||
-          flow.spans > 0 ||
-          flow.unreadable > 0)
-      ) {
-        // A gap past 0.6 em ends a text item, but a stretched word space and a jump to the
-        // next column have nothing to do with each other and are fixed by different CSS.
-        const why: string[] = [];
-        if (flow.tooWide > 0) {
-          why.push(
-            `${flow.tooWide} word spaces stretched past it, the widest to ` +
-              `${flow.widest.toFixed(2)} em -- text-align:justify on a short measure is the usual cause`,
-          );
-        }
-        if (flow.jump > 0) {
-          why.push(
-            `${flow.jump} gaps of more than ${3} em, which are jumps between blocks, ` +
-              `columns or cells rather than between words -- table cell padding and column gaps cause these`,
-          );
-        }
-        if (flow.tooThin > 0) {
-          why.push(`${flow.tooThin} word spaces squeezed below it, which letter-spacing causes`);
-        }
-        if (flow.backwards > 0) {
-          why.push(
-            `${flow.backwards} moves back inside a line, which ends a text item -- ` +
-              `right-to-left text does this by design`,
-          );
-        }
-        if (flow.unreadable > 0) {
-          // Type 3 subsets and simple fonts carry their advances in /Widths, not /W. Their
-          // glyphs are counted and skipped rather than guessed, and no gap is measured to or
-          // from one, so the numbers above are the readable part of the document.
-          why.push(
-            `${flow.unreadable} glyphs in fonts with no readable advance, so no gap around them was measured`,
-          );
-        }
-        if (flow.spans > 0) {
-          // A reader ends a text item at every marked-content span whatever the geometry
-          // says, so each one is a highlight box the geometry cannot account for. On a page
-          // of ordinary prose that is eighteen of them.
-          //
-          // Not all of them are ligatures. Chromium emits these around ligatures, and the
-          // first version of this message said "ligature spans" about every one of them,
-          // which is wrong on a real document: a resume whose punctuation glyphs have no
-          // /ToUnicode mapping carries eighteen spans wrapping `+`, `-`, `(` and `:`, and
-          // those are exactly the ones that have to be kept, because the span is the only
-          // place the character appears. The count is of spans. It is named that way.
-          why.push(
-            `${flow.spans} marked-content spans carrying /ActualText, each a place a ` +
-              `browser may end a text item regardless of spacing. chromium emits them ` +
-              `around ligatures, but not every span is one`,
-          );
-        }
-        // A stream this could not read takes its glyphs out of every count above while the
-        // counts still read as a document total, so say how much of the document the numbers
-        // come from rather than letting "at least" go unsaid.
-        const from =
-          flow.read < flow.streams
-            ? ` Measured on ${flow.read} of ${flow.streams} text streams; the rest were not readable.`
-            : '';
-        findings.push({
-          code: 'selection-fragmented',
-          severity: 'warn',
-          message:
-            `a browser ends a text item at any gap over 0.6 em and draws one highlight ` +
-            `box per item, so selection breaks here: ${why.join('; ')}.${from}`,
-        });
-      }
+      const fragmented = selectionFinding(pdf);
+      if (fragmented) findings.push(fragmented);
 
-      if (docMeta.author && !req.author?.trim() && !rejected.has('metadata')) {
-        findings.push({
-          code: 'metadata-authored',
-          severity: 'info',
-          message: `wrote "${docMeta.author}" as the pdf author, from the document's own meta tag. pass --author to override it.`,
-        });
-      }
-      // Guarded the way the author branch above is. `--subject "Q3 report"` beats the
-      // document's own meta tag, and the gate may have rejected the whole metadata repair,
-      // so without this the finding names a value that is not in the file.
-      if (docMeta.subject?.trim() && !req.subject?.trim() && !rejected.has('metadata')) {
-        findings.push({
-          code: 'metadata-subject',
-          severity: 'info',
-          message: `wrote "${docMeta.subject}" as the pdf subject, from the document's own meta tag.`,
-        });
-      }
       const info = inspect(pdf);
 
-      for (const url of blocked) {
-        findings.push({
-          code: 'network-blocked',
-          severity: 'warn',
-          url,
-          message: `blocked a remote request to ${url}. Pass --allow-network to permit it, or inline the asset.`,
-        });
-      }
-      const outside = outsideRoot.filter((o) => o.why === 'outside-root');
-      const overDocument = outsideRoot.filter((o) => o.why === 'document');
-      if (overDocument.length) {
-        findings.push({
-          code: 'asset-overwrites-document',
-          severity: 'warn',
-          url: overDocument[0]!.abs,
-          message:
-            `${overDocument.length} referenced ${overDocument.length === 1 ? 'path is' : 'paths are'} ` +
-            `named after the document itself and ${overDocument.length === 1 ? 'was' : 'were'} not staged: ` +
-            `${overDocument.map((o) => o.ref).join(', ')}.\n` +
-            `staging one would replace the page being printed with a different one, so the ` +
-            `render would show a document nobody asked for. rename the file it points at.`,
-        });
-      }
-      if (outside.length) {
-        const listed = outside.map((o) => `  ${o.ref} -> ${o.abs}`).join('\n');
-        findings.push({
-          code: 'asset-outside-root',
-          severity: 'warn',
-          url: outside[0]!.abs,
-          message:
-            `${outside.length} referenced ${outside.length === 1 ? 'path is' : 'paths are'} outside ` +
-            `${req.root ? `the root you named (${absRoot(req.root)})` : "the document's own directory"}, ` +
-            `so ${outside.length === 1 ? 'it was' : 'they were'} not read:\n${listed}\n` +
-            `pass --root naming a directory that contains ` +
-            `${outside.length === 1 ? 'it' : 'them'} to allow it.`,
-        });
-      }
-      if (failedSubresources.length) {
-        const kinds = [...new Set(failedSubresources.map((f) => f.kind))];
-        const images = failedSubresources.filter((f) => f.kind === 'Image').length;
-
-        const listed = [...new Set(failedSubresources.map((f) => f.url))]
-          .slice(0, 5)
-          .map((u) => `  ${u}`)
-          .join('\n');
-        findings.push({
-          code: 'subresource-failed',
-          severity: 'warn',
-          url: failedSubresources[0]?.url,
-          message:
-            `${failedSubresources.length} ${failedSubresources.length === 1 ? 'subresource' : 'subresources'} (${kinds.join(', ')}) failed to load, so the document is missing ${failedSubresources.length === 1 ? 'it' : 'them'}.\n${listed}` +
-            (images
-              ? `\n${images} ${images === 1 ? 'is an image' : 'are images'}: where a picture should be, the pdf carries chromium's broken-image placeholder.`
-              : '') +
-            `\nthe pdf was still produced, but it will not look like the source. url(), @import and @font-face src are staged from disk only when the document is a file.`,
-        });
-      }
-      if (req.url && !req.allowNetwork) {
-        findings.push({
-          code: 'url-render-blocked',
-          severity: 'error',
-          message: `rendering a remote URL blocks its own subresources and usually the document itself. Set allowNetwork to render ${req.url}.`,
-        });
-      }
-
-      const unresolved = unresolvedFontMetrics(pdf);
-      if (unresolved.length) {
-        // The cause is named per face from what unresolvedFontMetrics measured, not from
-        // what this path usually is. A Type 3's glyphs are drawing procedures with no
-        // embedded font to read the metric from, so the value cannot be derived; a face
-        // of any other subtype with no embedded program is one Chromium did not embed,
-        // for which the same holds. Saying "Type 3" for both would be a confident claim
-        // about something nobody checked.
-        const named = unresolved.map((u) =>
-          u.subtype === 'Type3'
-            ? `${u.fontName} ${u.capHeight} (Type 3, whose glyphs are drawing procedures with no embedded font to read the metric from)`
-            : `${u.fontName} ${u.capHeight} (${u.subtype}, emitted without an embedded font program)`,
-        );
-        findings.push({
-          code: 'font-metrics',
-          severity: 'warn',
-          message:
-            `${unresolved.length} font descriptor${unresolved.length === 1 ? ' still carries' : 's still carry'} a negative cap height ` +
-            `(${named.slice(0, 3).join(', ')}). ` +
-            `The PDF specification calls a negative CapHeight an error a viewer may refuse to render text over. ` +
-            `There is nothing to derive the metric from, so the value was left as produced. ` +
-            `Embedding the font as a file rather than relying on a system face usually removes it.`,
-        });
-      }
+      findings.push(
+        ...metadataFindings(docMeta, req, rejected),
+        ...assetFindings(outsideRoot, req),
+        ...networkFindings(blocked, failedSubresources, req),
+        ...fontMetricFindings(pdf),
+      );
 
       return {
         pdf,
@@ -1385,4 +815,1147 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
     server?.stop();
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+/**
+ * The findings that describe what the document asked for rather than what the
+ * file ended up containing: its own meta tags, the assets it referenced, the
+ * requests that were cut, and the faces that came back unreadable.
+ *
+ * Each is a function of bytes or of a list gathered earlier, with no browser in
+ * reach. They were inline in `render`, which made the one function that owns a
+ * tab, a clock and a temp directory also the place where prose about refused
+ * paths was written.
+ */
+/**
+ * Every repair the finished file gets, in order, and the findings describing what
+ * each one did.
+ *
+ * These were inline in `render`, which made the function that owns a tab, a clock
+ * and a temp directory also the place where prose about glyph shapes lived. The
+ * pipeline itself has a shape worth reading on its own: most stages go through
+ * `repairOrKeep`, which refuses any rewrite that does not leave a valid file and
+ * records the refusal, and the two that rewrite content streams on purpose --
+ * `mergeTextRuns` and `stripRedundantSpans` -- prove themselves against the
+ * geometry instead, because comparing them to Chromium's own bytes would be
+ * comparing a file to itself.
+ *
+ * `findings` and the returned `rejected` set travel together because a later
+ * stage asks whether an earlier one was refused.
+ */
+type RepairInput = {
+  raw: Uint8Array;
+  linkDescs: ReturnType<typeof parseLinkDescs>;
+  pdfTitle: string;
+  meta: { author: string; subject: string; keywords: string };
+  keepLigatureSpans: boolean;
+  findings: Finding[];
+};
+
+type RepairResult = { pdf: Uint8Array; rejected: Set<string> };
+
+function repairDocument(input: RepairInput): RepairResult {
+  const { raw, linkDescs, pdfTitle, meta, keepLigatureSpans, findings } = input;
+  const rejected = new Set<string>();
+
+  let described = gated(raw, 'ToUnicode', fixToUnicode, rejected, findings);
+  described = gated(described, 'font descriptor', fixFontDescriptors, rejected, findings);
+  if (linkDescs) {
+    described = gated(
+      described,
+      'link description',
+      (p) => fixLinkDescs(p, linkDescs),
+      rejected,
+      findings,
+    );
+  }
+
+  described = repairFigures(described, rejected, findings);
+  described = repairTitle(described, pdfTitle, rejected, findings);
+  described = gated(described, 'metadata', (p) => addMetadata(p, meta), rejected, findings);
+
+  // The only stage that rewrites a content stream, and the only one outside the gate.
+  // It proves itself by replaying the original and the rewritten stream and comparing
+  // every glyph position; if any glyph moves, or a block is not the simple shape it
+  // handles, the input is returned untouched.
+  const { pdf: merged, stats: runs } = mergeTextRuns(described);
+  if (runs.blocks > 0) {
+    // Reported even when nothing merged. A document whose text Chromium writes in a
+    // shape this does not handle is a fact about the output, and staying quiet about
+    // it is how a transform looks like it works.
+    findings.push({
+      code: 'text-runs-merged',
+      severity: 'info',
+      message:
+        runs.merged > 0
+          ? `folded ${runs.merged} of ${runs.blocks} text blocks into TJ arrays, ` +
+            `${described.byteLength - merged.byteLength} bytes smaller, glyph positions verified unchanged` +
+            `${refusedRuns(runs.refused)}.`
+          : `left all ${runs.blocks} text blocks alone: none is the shape this rewrites.`,
+    });
+  }
+  described = merged;
+
+  if (!keepLigatureSpans) {
+    // Chromium wraps every ligature in a marked-content span carrying /ActualText, and a
+    // reader ends a text item at each one whatever the spacing says. One page of ordinary
+    // prose comes back as sixty text items where the geometry alone gives seven, and
+    // dragging a selection across it draws sixty highlight boxes, seventeen of them for
+    // gaps that are not there.
+    //
+    // Only spans whose text the font's /ToUnicode already resolves to are removed, so
+    // nothing is lost: where the two disagree the span is the only copy and it stays.
+    // Measured in Firefox: sixty items and seventeen whitespace items as rendered, seven
+    // and none after. Extracted text is unchanged character for character.
+    const stripped = stripRedundantSpans(described);
+    const spans = stripped.stats;
+    // Whether the repair actually changed the file, asked of the bytes rather than of
+    // the repair's own count of what it did. The first version routed this through
+    // `repairOrKeep`, which refuses any repair that rewrites a content stream -- correct
+    // for a metadata repair, and exactly wrong here, because removing a span is a content
+    // stream rewrite by definition. The gate returned the input, the bytes never changed,
+    // and the finding said "removed 36 of 36" anyway: a confident claim about a repair
+    // that had been refused, with no `repair-rejected` to say so, because the finding was
+    // pushed from the stats before anyone asked whether the output was used.
+    //
+    // The final `verify()` covers the result. This repair does what mergeTextRuns does
+    // and for the same reason is not gated against Chromium's own bytes.
+    const changed =
+      spans.stripped > 0 &&
+      (stripped.pdf.length !== described.length ||
+        !stripped.pdf.every((v, i) => v === described[i]));
+    if (changed) described = stripped.pdf;
+    if (spans.seen > 0) findings.push(ligatureSpanFinding(spans, changed));
+  }
+
+  // The title stamp is a byte-for-byte rewrite of the file rather than a change to one
+  // object, and it was the only stage after the merge that nothing checked. It goes
+  // through the same gate as the others so that a bad rewrite is a finding rather than
+  // the caller's problem.
+  const stamped = repairOrKeep(described, stampPdf);
+  if (stamped.failures.length) {
+    rejected.add('stamp');
+    findings.push(rejectedRepair('title stamp', stamped.failures));
+  }
+
+  return { pdf: stamped.pdf, rejected };
+}
+
+/**
+ * The paper decision and the print call, together.
+ *
+ * They belong together because the decision is only ever expressed through the
+ * call: whether the sheet arrives as CSS or as inches decides the whole shape of
+ * the parameters. Splitting them put a block of `const`s in one function and
+ * their only use in another.
+ *
+ * `timedOutRef` is a box rather than a value because the deadline is set by the
+ * caller and this function can only observe it.
+ */
+async function printPdf(
+  tab: Tab,
+  req: RenderRequest,
+  override: string | null,
+  declaresPaper: boolean,
+  timeoutMs: number,
+  timedOutRef: { timedOut: boolean },
+): Promise<{ raw: Uint8Array; useStream: boolean }> {
+  const { preferCss, paperWidth, paperHeight, margin } = paperParams(req, override, declaresPaper);
+
+  let res: any;
+  const useStream = req.transfer === 'stream';
+  try {
+    res = await tab.send(
+      'Page.printToPDF',
+      {
+        printBackground: req.printBackground ?? true,
+        preferCSSPageSize: preferCss,
+        ...(paperWidth !== undefined
+          ? {
+              paperWidth,
+              paperHeight,
+              scale: 1,
+              marginTop: margin ?? 0,
+              marginBottom: margin ?? 0,
+              marginLeft: margin ?? 0,
+              marginRight: margin ?? 0,
+            }
+          : {}),
+        displayHeaderFooter: false,
+        generateDocumentOutline: true,
+        generateTaggedPDF: true,
+        ...(req.pageRanges ? { pageRanges: req.pageRanges } : {}),
+        transferMode: useStream ? 'ReturnAsStream' : 'ReturnAsBase64',
+      },
+      timeoutMs,
+    );
+  } catch (e) {
+    if (timedOutRef.timedOut) {
+      throw new Error(
+        `printing exceeded the ${timeoutMs}ms deadline. A very large document needs a higher --timeout; if it dies at a few thousand pages the browser ran out of memory.`,
+      );
+    }
+    throw e;
+  }
+
+  const raw =
+    useStream && res.stream
+      ? await drainStream(tab, res.stream, { timeoutMs })
+      : new Uint8Array(Buffer.from(res.data, 'base64'));
+  return { raw, useStream };
+}
+
+/**
+ * The sheet, as printToPDF is finally told about it.
+ *
+ * The paper is in CSS whenever the engine wrote a rule for it, and otherwise
+ * whenever the document declares one. Everything else -- a remote document,
+ * which is navigated to rather than rewritten -- still goes through the inch
+ * parameters, the one path left that Chromium quantizes.
+ *
+ * The negative margin is refused here rather than passed on: printToPDF rejects
+ * it on all four sides, and the message belongs with the arithmetic that read
+ * the value.
+ */
+function paperParams(
+  req: RenderRequest,
+  override: string | null,
+  declaresPaper: boolean,
+): { preferCss: boolean; paperWidth?: number; paperHeight?: number; margin?: number } {
+  const preferCss = override !== null || (declaresPaper && !req.format);
+  const margin = req.margin ? toInches(req.margin) : undefined;
+  if (margin !== undefined && margin < 0) {
+    throw new Error(
+      `margin ${req.margin} is negative, and printToPDF refuses a negative page margin on all ` +
+        `four sides. a negative margin bleeds content off the sheet, which is what @page margin does ` +
+        `in a stylesheet if you need it.`,
+    );
+  }
+  if (preferCss) return { preferCss, margin };
+
+  // Remote fallback only. Transposing by hand is what Chromium's own `landscape`
+  // parameter would have done, and that parameter is not sent: it is discarded
+  // whenever preferCSSPageSize is set, and combining it with explicit dimensions
+  // asks for a rotation twice.
+  const paper = req.format ? FORMATS[req.format] : FORMATS.a4;
+  const transposed = !!req.landscape;
+  return {
+    preferCss,
+    margin,
+    paperWidth: transposed ? paper[1] : paper[0],
+    paperHeight: transposed ? paper[0] : paper[1],
+  };
+}
+
+/** Loopback is always allowed: the engine's own work server answers on it. */
+const LOOPBACK_ONLY = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$)/i;
+
+/**
+ * The origin the engine may talk to without it counting as the document asking
+ * the network for something. The work server when there is one, loopback
+ * otherwise: the fast path has no server of its own and still serves assets
+ * from the document's own directory.
+ */
+function loopbackPattern(server: { origin: string } | undefined): RegExp {
+  if (!server) return LOOPBACK_ONLY;
+  return new RegExp(`^${server.origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`, 'i');
+}
+
+/**
+ * Whether the source can go to the frame as markup.
+ *
+ * Four things rule it out, and each rules out a different optimization: a
+ * remote page has no markup to send, an image cap needs the page-side probe to
+ * run against a real origin, relative assets need the work server to resolve
+ * them, and `preferFastPath: false` is the caller asking for the other route.
+ */
+function canUseFastPath(
+  req: RenderRequest,
+  html: string | undefined,
+  isRemote: boolean,
+  relative: boolean,
+): boolean {
+  if (isRemote || html == null) return false;
+  if (req.preferFastPath === false) return false;
+  if (relative || req.maxImagePpi) return false;
+  return true;
+}
+
+/**
+ * What the pdf's document information will say.
+ *
+ * A flag beats the document's own meta tag, and an absent one falls through to
+ * it. Read once here so the author, the subject and the keywords cannot end up
+ * disagreeing about which source won.
+ */
+function pdfMeta(
+  req: RenderRequest,
+  docMeta: { author?: string; subject?: string; keywords?: string },
+): { author: string; subject: string; keywords: string } {
+  return {
+    author: req.author?.trim() || docMeta.author || '',
+    subject: req.subject?.trim() || docMeta.subject || '',
+    keywords: req.keywords?.trim() || docMeta.keywords || '',
+  };
+}
+
+/**
+ * Function types get names for a second reason beyond readability: lizard's
+ * TypeScript reader mis-measures a signature written across several lines, so a
+ * parameter list split over five lines made `stageOne` measure as five lines
+ * long and the gate stopped seeing it. One line, named types.
+ */
+type Repair = (pdf: Uint8Array) => Uint8Array;
+type InsideRoot = (p: string) => boolean;
+
+type LoadRequest = {
+  tab: Tab;
+  net: NetworkWatch;
+  fastPath: boolean;
+  override: string | null;
+  html: string | undefined;
+  srcUrl: string;
+  source: string;
+  timeoutMs: number;
+  timedOutRef: { timedOut: boolean };
+};
+
+type NetworkWatch = {
+  /** The status of the main document, once one has answered. */
+  mainStatus(): number | undefined;
+  /** Why the main document failed to load, if it did. */
+  netError(): string | undefined;
+  /** Record a failure the navigation itself reported, before any event fired. */
+  noteNavigationError(message: string): void;
+};
+
+/**
+ * Watch what the page asks the network for, and decide what it is allowed.
+ *
+ * Four subscriptions and a policy, which is more branching than belongs in the
+ * middle of a function that is also holding a clock and a temp directory. The
+ * main document is the only request whose failure matters enough to stop the
+ * render; everything else is collected and reported afterwards, because a
+ * missing image is a finding and a missing document is an error.
+ *
+ * Loopback is never blocked. Remote requests are, unless the caller allowed
+ * them, and the first few are named so the reader knows which.
+ */
+async function watchNetwork(
+  tab: Tab,
+  opts: {
+    loopback: RegExp;
+    allowNetwork: boolean;
+    isRemote: boolean;
+    srcUrl: string;
+    blocked: string[];
+    failedSubresources: { kind: string; url: string }[];
+  },
+): Promise<NetworkWatch> {
+  const { loopback, allowNetwork, isRemote, srcUrl, blocked, failedSubresources } = opts;
+  let mainStatus: number | undefined;
+  let netError: string | undefined;
+
+  await tab.send('Fetch.enable', {
+    patterns: [{ urlPattern: 'http://*' }, { urlPattern: 'https://*' }],
+  });
+  tab.on('Fetch.requestPaused', (p) => {
+    const url = String(p.request?.url ?? '');
+    if (loopback.test(url)) {
+      void tab.send('Fetch.continueRequest', { requestId: p.requestId }).catch(() => {});
+      return;
+    }
+    const proceed = allowNetwork
+      ? tab.send('Fetch.continueRequest', { requestId: p.requestId })
+      : (blocked.length < MAX_BLOCKED_REPORTED && blocked.push(url),
+        tab.send('Fetch.failRequest', {
+          requestId: p.requestId,
+          errorReason: 'BlockedByClient',
+        }));
+    void proceed.catch(() => {});
+  });
+
+  if (isRemote) {
+    tab.on('Network.responseReceived', (p) => {
+      if (p.type === 'Document' && !mainStatus) mainStatus = p.response?.status;
+    });
+  }
+  tab.on('Network.responseReceived', (p) => {
+    const status = p.response?.status ?? 0;
+    const isFavicon = /\/favicon\.ico(\?|$)/.test(p.response?.url ?? '');
+    if (status >= 400 && p.type && p.type !== 'Document' && !isFavicon) {
+      failedSubresources.push({ kind: p.type, url: `${status} ${p.response?.url ?? ''}` });
+    }
+  });
+
+  // The failure event carries no URL, only the request id, so the mapping has
+  // to come from the request that started it.
+  const requestUrls = new Map<string, string>();
+  tab.on('Network.requestWillBeSent', (p) => {
+    if (p.requestId && p.request?.url) requestUrls.set(p.requestId, p.request.url);
+  });
+  // A named function rather than an inline arrow: this is the branch that decides
+  // whether a failed request stops the render or becomes a finding, and the
+  // complexity gate counted the inline version as a breach of its own.
+  // Early returns rather than a chain of `else if`, because the chain needed
+  // three overlapping conditions to express and measured as a complexity
+  // breach. Same four outcomes, in the order they are decided:
+  //
+  //   blocked by us      -> nothing; the finding says so already
+  //   the main document  -> the render stops, once
+  //   another document   -> a subframe that did not load
+  //   anything else      -> a subresource, unless the tab was closing
+  const recordFailure = (p: {
+    requestId?: string;
+    type?: string;
+    blockedReason?: string;
+    errorText?: string;
+  }) => {
+    if (p.blockedReason) return;
+    const url = p.requestId ? requestUrls.get(p.requestId) : undefined;
+    if (p.type === 'Document') {
+      // `url === srcUrl` alone: srcUrl is always a string, so a missing url can
+      // never equal it, and the original spelled out both halves of that.
+      if (url === srcUrl && !netError) {
+        netError = p.errorText;
+        return;
+      }
+      failedSubresources.push({ kind: 'Subframe', url: url ?? p.errorText ?? '' });
+      return;
+    }
+    if (isTeardownAbort(p.errorText)) return;
+    failedSubresources.push({ kind: p.type ?? 'unknown', url: p.errorText ?? '' });
+  };
+  tab.on('Network.loadingFailed', recordFailure);
+
+  return {
+    mainStatus: () => mainStatus,
+    netError: () => netError,
+    // `Page.navigate` can fail before the failure event arrives, and its message
+    // is the better one: it names the protocol error rather than a resource type.
+    noteNavigationError: (message: string) => {
+      netError ??= message;
+    },
+  };
+}
+
+/**
+ * Everything read out of the page before it is printed: settle the fonts, run
+ * the caller's own script, take the probe's answer, read the document's own meta
+ * tags, cap the images and collect the findings.
+ *
+ * It is one function because the order is the contract. Fonts settle first so a
+ * probe measures the layout the PDF is made from; the probe runs before the
+ * image cap so it sees the same layout again; the meta tags are read before the
+ * repairs that write them, so `--author` can be compared against what the
+ * document said.
+ *
+ * `findings` is passed in rather than returned because these are diagnostics
+ * about the render, not about the page: they belong in the one ordered list the
+ * caller is building.
+ */
+async function readPage(
+  tab: Tab,
+  req: RenderRequest,
+  timeoutMs: number,
+  findings: Finding[],
+): Promise<{
+  probe: unknown;
+  docMeta: { author?: string; subject?: string; keywords?: string };
+  linkDescs: ReturnType<typeof parseLinkDescs>;
+}> {
+  await tab.send(
+    'Runtime.evaluate',
+    {
+      expression: 'document.fonts.ready.then(() => true)',
+      awaitPromise: true,
+      returnByValue: true,
+    },
+    timeoutMs,
+  );
+  if (req.settleMs) await Bun.sleep(req.settleMs);
+  if (req.beforePrint) {
+    await tab.send(
+      'Runtime.evaluate',
+      { expression: req.beforePrint, awaitPromise: true, returnByValue: true },
+      timeoutMs,
+    );
+  }
+
+  const probe = await runPageProbe(tab, req, timeoutMs, findings);
+  const docMeta = await readDocMeta(tab, timeoutMs);
+
+  const capped = req.maxImagePpi ? await capImageResolution(tab, req.maxImagePpi, timeoutMs) : [];
+  for (const c of capped) {
+    findings.push({
+      code: 'image-downsampled',
+      severity: 'info',
+      message: `image downsampled from ${c.from}px to ${c.to}px wide, ${c.ppi}ppi down to ${req.maxImagePpi}ppi, to keep the PDF a reasonable size.`,
+    });
+  }
+
+  findings.push(...(await audit(tab, timeoutMs)));
+
+  const linkDescRaw = await tab
+    .send(
+      'Runtime.evaluate',
+      { expression: LINK_DESC_JS, returnByValue: true, awaitPromise: false },
+      timeoutMs,
+    )
+    .then((r: { result?: { value?: unknown } }) => r.result?.value)
+    .catch(() => undefined);
+
+  return { probe, docMeta, linkDescs: parseLinkDescs(linkDescRaw) };
+}
+
+/**
+ * A probe runs after the document is settled and before the print, so it sees
+ * the same layout the PDF is made from. Its result is handed back untouched; if
+ * it throws in the page, that is the caller's problem to notice rather than a
+ * silent empty result, which is what an expression string returned last time.
+ *
+ * Reported, never swallowed. The first version returned `undefined` on failure,
+ * which is indistinguishable from a probe that legitimately found nothing:
+ * `wideGaps` called a helper that does not exist in the page, the probe came
+ * back empty, and the tool printed its old sentence as though the document had
+ * no wide gaps. It had eight. A probe that cannot run must say so.
+ */
+async function runPageProbe(
+  tab: Tab,
+  req: RenderRequest,
+  timeoutMs: number,
+  findings: Finding[],
+): Promise<unknown> {
+  if (!req.pageProbe) return undefined;
+  const answer = await tab
+    .send(
+      'Runtime.evaluate',
+      { expression: `(${req.pageProbe})()`, returnByValue: true },
+      timeoutMs,
+    )
+    .catch((e: unknown) => ({ exceptionDetails: { text: String(e) } }));
+  const thrown = (
+    answer as {
+      exceptionDetails?: { text?: string; exception?: { description?: string } };
+    } | null
+  )?.exceptionDetails;
+  if (!thrown) return (answer as { result?: { value?: unknown } } | null)?.result?.value;
+
+  // `exceptionDetails.text` is the word "Uncaught". The message that says which
+  // name was missing is on the exception itself, and that is the whole diagnosis.
+  const detail =
+    thrown.exception?.description?.split('\n')[0]?.trim() || thrown.text || 'no detail';
+  findings.push({
+    code: 'page-probe-failed',
+    severity: 'warn',
+    message:
+      `the page probe threw in the browser: ${detail}. it returned nothing, so ` +
+      `nothing downstream can tell a probe that failed from a probe that found ` +
+      `nothing. this is a gap in the tool, not a finding about the document.`,
+  });
+  return undefined;
+}
+
+/**
+ * The document's own meta tags, which are the default values for the pdf's.
+ *
+ * Read in the page because a `<meta name=...>` can be written by a script, and
+ * a document that fills one in at load time means it. A malformed answer is
+ * treated as no answer: the caller supplies the fallback either way.
+ */
+async function readDocMeta(
+  tab: Tab,
+  timeoutMs: number,
+): Promise<{ author?: string; subject?: string; keywords?: string }> {
+  const stated = await tab.send(
+    'Runtime.evaluate',
+    {
+      expression: `(() => {
+          const pick = (names) => {
+            for (const name of names) {
+              const el = document.querySelector('meta[name="' + name + '"]') ||
+                document.querySelector('meta[property="' + name + '"]');
+              const value = el && (el.getAttribute("content") || "").trim();
+              if (value) return value;
+            }
+            return "";
+          };
+          return JSON.stringify({
+            author: pick(["author", "DC.creator", "dc.creator", "article:author", "biblio_author"]),
+            subject: pick(["subject", "DC.subject", "dc.subject", "description", "DC.description"]),
+            keywords: pick(["keywords", "DC.subject", "citation_keywords"]),
+          });
+        })()`,
+      returnByValue: true,
+    },
+    timeoutMs,
+  );
+  try {
+    return JSON.parse((stated as { result?: { value?: string } }).result?.value ?? '{}');
+  } catch {
+    return {};
+  }
+}
+
+type PreparedSource = {
+  src: Awaited<ReturnType<typeof resolveSource>>;
+  srcUrl: string;
+  fastPath: boolean;
+  override: string | null;
+  outsideRoot: RefusedRef[];
+  server?: { origin: string; stop: () => void };
+};
+
+/**
+ * Read the input, refuse what cannot be printed, decide how the browser will see
+ * it, and start the work server if it needs one.
+ *
+ * The three decisions here are the ones that shape everything after: whether
+ * there is markup to rewrite, whether the fast path can carry it, and where the
+ * page will come from. They belong together because each one constrains the
+ * next -- an override forces the slow path only if the rewrite cannot travel in
+ * the document itself, and it cannot travel at all for a remote page.
+ */
+async function prepareSource(
+  req: RenderRequest,
+  dir: string,
+  isRemote: boolean,
+  findings: Finding[],
+): Promise<PreparedSource> {
+  const src = await resolveSource(req, dir);
+
+  if (src.html != null) {
+    const binary = looksBinary(src.html);
+    if (binary) {
+      throw new Error(
+        `this input is not HTML: ${binary}. letterpress prints html, so a document with the wrong ` +
+          `file extension produces a page of binary noise rather than an error. check the path.`,
+      );
+    }
+    if (!req.url && !src.html.trim()) {
+      throw new Error(EMPTY_INPUT_MESSAGE);
+    }
+    findings.push(...precedenceFindings(src.html, req));
+  }
+
+  const relative = hasRelativeAssets(src.html ?? '');
+  // The fast path hands Chromium the source through setDocumentContent, which
+  // takes the rewrite as readily as the original, so an override costs it
+  // nothing: no temp directory, no static file server. A rewrite that forced
+  // the slow path would have been a real price for an exact sheet.
+  //
+  // Remote sources carry `html: ''` as a sentinel, which reads exactly like "a
+  // document that declares no page" and would be rewritten into an @page rule
+  // for markup that is never loaded -- the document is navigated to, not
+  // served. So the decision is made here, where being remote is knowable.
+  const override = isRemote ? null : pageOverride(src.html, req);
+  const fastPath = canUseFastPath(req, src.html, isRemote, relative);
+
+  let outsideRoot: RefusedRef[] = [];
+  let server: { origin: string; stop: () => void } | undefined;
+  if (!isRemote && !fastPath) {
+    outsideRoot = await stageAssets(src.html, src.source, dir, req.root);
+    server = await serveWorkDir(dir);
+  }
+
+  let srcUrl: string;
+  if (fastPath) srcUrl = 'about:blank';
+  else srcUrl = isRemote ? src.url : `${server!.origin}/input.html`;
+  if (override && !fastPath) {
+    await Bun.write(join(dir, OVERRIDE_DOCUMENT), override);
+    srcUrl = `${server!.origin}/override.html`;
+  }
+
+  return { src, srcUrl, fastPath, override, outsideRoot, server };
+}
+
+/**
+ * What a browser will do with a selection over this page, as one finding or none.
+ *
+ * Firefox's PDF.js keeps a word gap inside the current text item only between
+ * 0.102 and 0.6 em; outside that it ends the item and the gap becomes a
+ * highlight of its own, which is why a justified paragraph selects as a row of
+ * separate boxes. Nothing in the file can change the gap, so it is reported
+ * rather than repaired.
+ *
+ * The reasons are collected in one place and joined, because they have
+ * different causes and different fixes: a gap past 0.6 em, a stretched word
+ * space and a jump to the next column are three problems that happen to share a
+ * symptom, and a reader who is told only that selection breaks will look in the
+ * wrong place.
+ */
+function selectionFinding(pdf: Uint8Array): Finding | null {
+  // What a browser will do with a selection over this page. Firefox's PDF.js keeps a
+  // word gap inside the current text item only between 0.102 and 0.6 em; outside that
+  // it ends the item and the gap becomes a highlight of its own, which is why a
+  // justified paragraph selects as a row of separate boxes. Nothing in the file can
+  // change the gap, so it is reported rather than repaired.
+  const flow = textFlow(pdf);
+  if (
+    flow &&
+    ((flow.breaks > 0 &&
+      (flow.tooWide > 0 || flow.jump > 0 || flow.tooThin > 0 || flow.backwards > 0)) ||
+      flow.spans > 0 ||
+      flow.unreadable > 0)
+  ) {
+    // A gap past 0.6 em ends a text item, but a stretched word space and a jump to the
+    // next column have nothing to do with each other and are fixed by different CSS.
+    const why = selectionReasons(flow);
+    // A stream this could not read takes its glyphs out of every count above while the
+    // counts still read as a document total, so say how much of the document the numbers
+    // come from rather than letting "at least" go unsaid.
+    const from =
+      flow.read < flow.streams
+        ? ` Measured on ${flow.read} of ${flow.streams} text streams; the rest were not readable.`
+        : '';
+    return {
+      code: 'selection-fragmented',
+      severity: 'warn',
+      message:
+        `a browser ends a text item at any gap over 0.6 em and draws one highlight ` +
+        `box per item, so selection breaks here: ${why.join('; ')}.${from}`,
+    };
+  }
+  return null;
+}
+
+/**
+ * Put the document in front of the browser and refuse to print it if it did not
+ * arrive.
+ *
+ * Two ways in, because there are two ways to have a document. The fast path
+ * hands the markup straight to the frame, which needs no origin and no server;
+ * everything else navigates to a URL and waits for the load event, because a
+ * page with remote assets will not finish without them.
+ *
+ * The refusals live here rather than at the call site because they are about
+ * this step: a navigation that failed, and a server that answered with an error
+ * page. Printing either would produce a PDF of a Chromium error message and
+ * report it as a clean render.
+ */
+async function loadDocument(opts: LoadRequest): Promise<void> {
+  const { fastPath } = opts;
+  if (fastPath) await loadIntoFrame(opts);
+  else await loadByNavigation(opts);
+  refuseUnloaded(opts);
+}
+
+/**
+ * The fast path: hand the markup straight to the frame.
+ *
+ * No origin and no server, which is why it exists -- but only documents with no
+ * remote assets and no image cap qualify, and `canUseFastPath` is what decides
+ * that.
+ */
+async function loadIntoFrame(opts: LoadRequest): Promise<void> {
+  const { tab, override, html } = opts;
+  const frameId = (await tab.send('Page.getFrameTree')).frameTree.frame.id;
+  await tab.send('Page.setDocumentContent', { frameId, html: override ?? html! });
+}
+
+/**
+ * Everything else: navigate to a URL and wait for the load event.
+ *
+ * The wait is a race against the caller's deadline, and the deadline's own
+ * message is the one worth giving -- "navigation did not finish within 30000ms"
+ * says more than whatever Chromium threw on the way out.
+ */
+async function loadByNavigation(opts: LoadRequest): Promise<void> {
+  const { tab, net, srcUrl, timeoutMs, timedOutRef } = opts;
+  const loaded = tab.once('Page.loadEventFired');
+  await tab.send('Page.navigate', { url: srcUrl }).catch((e: Error) => {
+    if (/ERR_/.test(e.message)) net.noteNavigationError(e.message);
+  });
+  await Promise.race([
+    loaded.promise,
+    Bun.sleep(timeoutMs).then(() => {
+      throw new Error(`__deadline__`);
+    }),
+  ]).catch((e: Error) => {
+    throw new Error(
+      e.message === '__deadline__' && timedOutRef.timedOut
+        ? `navigation did not finish within ${timeoutMs}ms`
+        : e.message,
+    );
+  });
+  loaded.cancel();
+}
+
+/**
+ * Refuse to print a document that did not arrive.
+ *
+ * Both cases are about this step rather than the page's content: a navigation
+ * that failed, and a server that answered with an error page. Printing either
+ * would produce a PDF of a Chromium error message and report it as a clean
+ * render.
+ */
+function refuseUnloaded(opts: LoadRequest): void {
+  const { net, source } = opts;
+  const netErr = net.netError();
+  if (netErr) {
+    throw new Error(`could not load ${source}: ${netErr}`);
+  }
+  const status = net.mainStatus();
+  if (status !== undefined && (status < 200 || status >= 300)) {
+    throw new Error(`${source} returned HTTP ${status}; refusing to print the error page`);
+  }
+}
+
+/**
+ * Whether the loaded document declares a page size of its own.
+ *
+ * The static read of the markup is the answer whenever there is markup. It is
+ * not the answer for a remote document, or for one that writes its `@page` rule
+ * from a script, so the live document is asked as well -- and only when the
+ * request has not already said what the paper is, because a flag settles it
+ * without asking anyone.
+ */
+async function probeDeclaresPaper(
+  tab: Tab,
+  html: string | undefined,
+  req: RenderRequest,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (html) return declaredPageSize(html) !== null;
+  if (req.format || !req.url) return false;
+  const probe = await tab
+    .send('Runtime.evaluate', { expression: PAGE_SIZE_PROBE, returnByValue: true }, timeoutMs)
+    .catch(() => null);
+  return probe?.result?.value === true;
+}
+
+/** Walks the live stylesheets for an `@page` rule that carries a size. */
+const PAGE_SIZE_PROBE = `(() => {
+  for (const sheet of document.styleSheets) {
+    let rules; try { rules = sheet.cssRules } catch { continue }
+    for (const r of rules || []) if (/@page/i.test(r.cssText || "") && /\\bsize\\s*:/i.test(r.cssText || "")) return true;
+  }
+  return false;
+})()`;
+
+/** The name the pdf will carry: the file it came from, else its host. */
+function pdfTitleFor(req: RenderRequest): string {
+  if (req.path) return basename(req.path);
+  if (req.url) return new URL(req.url).hostname;
+  return 'document';
+}
+
+/**
+ * Why selection fragments on this page, in the order a reader would look for
+ * them.
+ *
+ * A gap past 0.6 em ends a text item, but a stretched word space and a jump to
+ * the next column have nothing to do with each other and are fixed by different
+ * CSS. Told only that "selection breaks", a reader checks the wrong one first.
+ */
+function selectionReasons(flow: NonNullable<ReturnType<typeof textFlow>>): string[] {
+  const why: string[] = [];
+  if (flow.tooWide > 0) {
+    why.push(
+      `${flow.tooWide} word spaces stretched past it, the widest to ` +
+        `${flow.widest.toFixed(2)} em -- text-align:justify on a short measure is the usual cause`,
+    );
+  }
+  if (flow.jump > 0) {
+    why.push(
+      `${flow.jump} gaps of more than ${3} em, which are jumps between blocks, ` +
+        `columns or cells rather than between words -- table cell padding and column gaps cause these`,
+    );
+  }
+  if (flow.tooThin > 0) {
+    why.push(`${flow.tooThin} word spaces squeezed below it, which letter-spacing causes`);
+  }
+  if (flow.backwards > 0) {
+    why.push(
+      `${flow.backwards} moves back inside a line, which ends a text item -- ` +
+        `right-to-left text does this by design`,
+    );
+  }
+  if (flow.unreadable > 0) {
+    // Type 3 subsets and simple fonts carry their advances in /Widths, not /W. Their
+    // glyphs are counted and skipped rather than guessed, and no gap is measured to or
+    // from one, so the numbers above are the readable part of the document.
+    why.push(
+      `${flow.unreadable} glyphs in fonts with no readable advance, so no gap around them was measured`,
+    );
+  }
+  if (flow.spans > 0) {
+    // A reader ends a text item at every marked-content span whatever the geometry
+    // says, so each one is a highlight box the geometry cannot account for. On a page
+    // of ordinary prose that is eighteen of them.
+    //
+    // Not all of them are ligatures. Chromium emits these around ligatures, and the
+    // first version of this message said "ligature spans" about every one of them,
+    // which is wrong on a real document: a resume whose punctuation glyphs have no
+    // /ToUnicode mapping carries eighteen spans wrapping `+`, `-`, `(` and `:`, and
+    // those are exactly the ones that have to be kept, because the span is the only
+    // place the character appears. The count is of spans. It is named that way.
+    why.push(
+      `${flow.spans} marked-content spans carrying /ActualText, each a place a ` +
+        `browser may end a text item regardless of spacing. chromium emits them ` +
+        `around ligatures, but not every span is one`,
+    );
+  }
+  return why;
+}
+
+/**
+ * Run one repair and record the refusal if it did not leave a valid file.
+ *
+ * Every stage of the pipeline goes through this except the two that rewrite
+ * content streams on purpose, which prove themselves against the geometry
+ * instead. A repair that breaks the file is discarded and named: a silent
+ * fallback is how a transform comes to look like it works when it does not.
+ */
+function gated(
+  bytes: Uint8Array,
+  label: string,
+  repair: Repair,
+  rejected: Set<string>,
+  findings: Finding[],
+): Uint8Array {
+  const attempt = repairOrKeep(bytes, repair);
+  if (attempt.failures.length) {
+    rejected.add(label);
+    findings.push(rejectedRepair(label, attempt.failures));
+  }
+  return attempt.pdf;
+}
+
+function rejectedRepair(label: string, failures: string[]): Finding {
+  const named = label === 'title stamp' ? 'title stamp' : `${label} fix`;
+  return {
+    code: 'repair-rejected',
+    severity: 'warn',
+    message:
+      `the ${named} was discarded because it did not leave a valid pdf: ` +
+      `${failures.join('; ')}. the file is what the previous stage produced, ` +
+      `with this fix not applied.`,
+  };
+}
+
+/**
+ * Chromium tags both a `figure` element and the image inside it as a figure and
+ * describes only the image, so a grouping is described as a picture of nothing.
+ * Each image keeps its own description.
+ */
+function repairFigures(
+  described: Uint8Array,
+  rejected: Set<string>,
+  findings: Finding[],
+): Uint8Array {
+  const redundant = redundantFigureCount(described);
+  if (redundant === 0) return described;
+  const attempt = repairOrKeep(described, fixRedundantFigures);
+  if (attempt.failures.length) {
+    // Recorded like every other rejection. Nothing reads `figure-role` out of the set
+    // today, but the set reads as a complete record of what was discarded and a reader
+    // would otherwise assume a rejected fix was an accepted one.
+    rejected.add('figure-role');
+    findings.push(rejectedRepair('figure-role', attempt.failures));
+    return described;
+  }
+  findings.push({
+    code: 'figure-role-corrected',
+    severity: 'info',
+    message:
+      `${redundant} figure ${redundant === 1 ? 'element' : 'elements'} ` +
+      `tagged as a grouping rather than a figure, because chromium tags both the ` +
+      `figure element and the image inside it as a figure and describes only the ` +
+      `image. each image keeps its own description.`,
+  });
+  return attempt.pdf;
+}
+
+/** A document titled after its own file gets the file's name stamped in. */
+function repairTitle(
+  described: Uint8Array,
+  pdfTitle: string,
+  rejected: Set<string>,
+  findings: Finding[],
+): Uint8Array {
+  const current = readDocInfo(described).title ?? '';
+  if (!current || !isVolatileTitle(current) || current === pdfTitle) return described;
+  const attempt = repairOrKeep(described, (p) => setDocTitle(p, pdfTitle));
+  if (attempt.failures.length) {
+    rejected.add('document title');
+    findings.push(rejectedRepair('document title', attempt.failures));
+    return described;
+  }
+  return attempt.pdf;
+}
+
+function ligatureSpanFinding(
+  spans: { seen: number; stripped: number; kept: number },
+  changed: boolean,
+): Finding {
+  return {
+    code: 'ligature-spans',
+    severity: 'info',
+    message: changed
+      ? `removed ${spans.stripped} of ${spans.seen} marked-content spans carrying ` +
+        `/ActualText, each of which ended a text item at every ligature. each was ` +
+        `removed only because /ToUnicode already gave the same characters, so the ` +
+        `extracted text is unchanged.${keptSpans(spans.kept)}`
+      : spans.stripped > 0
+        ? `found ${spans.stripped} removable /ActualText spans and the file came back ` +
+          `unchanged, so nothing was removed. this is a bug in letterpress, not a ` +
+          `finding about the document.`
+        : `left all ${spans.seen} /ActualText spans in place: /ToUnicode does not ` +
+          `resolve them to the same text, so each is the only copy of it.`,
+  };
+}
+
+/**
+ * The tail of a message, kept out of the template that carries it.
+ *
+ * These were `${cond ? `nested template` : ''}` inside another template, which is
+ * valid TypeScript and unreadable besides: a parser counting braces by hand
+ * loses step at the inner backtick and reports the enclosing function as ending
+ * a hundred lines early. The complexity gate measured this file that way and
+ * called a 647-line function 504 lines, so the shape was worth changing for the
+ * gate as well as for the reader.
+ */
+function refusedRuns(refused: number): string {
+  return refused ? `; ${refused} left alone as not simple enough to rewrite` : '';
+}
+
+function keptSpans(kept: number): string {
+  return kept ? ` ${kept} kept, being the only place their text appears.` : '';
+}
+
+function namedRoot(root: string | undefined): string {
+  return root ? `the root you named (${absRoot(root)})` : "the document's own directory";
+}
+
+function metadataFindings(
+  docMeta: { author?: string; subject?: string },
+  req: RenderRequest,
+  rejected: Set<string>,
+): Finding[] {
+  const out: Finding[] = [];
+  if (docMeta.author && !req.author?.trim() && !rejected.has('metadata')) {
+    out.push({
+      code: 'metadata-authored',
+      severity: 'info',
+      message: `wrote "${docMeta.author}" as the pdf author, from the document's own meta tag. pass --author to override it.`,
+    });
+  }
+  // Guarded the way the author branch above is. `--subject "Q3 report"` beats the
+  // document's own meta tag, and the gate may have rejected the whole metadata repair,
+  // so without this the finding names a value that is not in the file.
+  if (docMeta.subject?.trim() && !req.subject?.trim() && !rejected.has('metadata')) {
+    out.push({
+      code: 'metadata-subject',
+      severity: 'info',
+      message: `wrote "${docMeta.subject}" as the pdf subject, from the document's own meta tag.`,
+    });
+  }
+  return out;
+}
+
+function assetFindings(outsideRoot: RefusedRef[], req: RenderRequest): Finding[] {
+  const out: Finding[] = [];
+  const outside = outsideRoot.filter((o) => o.why === 'outside-root');
+  const overDocument = outsideRoot.filter((o) => o.why === 'document');
+  if (overDocument.length) {
+    out.push({
+      code: 'asset-overwrites-document',
+      severity: 'warn',
+      url: overDocument[0]!.abs,
+      message:
+        `${overDocument.length} referenced ${overDocument.length === 1 ? 'path is' : 'paths are'} ` +
+        `named after the document itself and ${overDocument.length === 1 ? 'was' : 'were'} not staged: ` +
+        `${overDocument.map((o) => o.ref).join(', ')}.\n` +
+        `staging one would replace the page being printed with a different one, so the ` +
+        `render would show a document nobody asked for. rename the file it points at.`,
+    });
+  }
+  if (outside.length) {
+    const listed = outside.map((o) => `  ${o.ref} -> ${o.abs}`).join('\n');
+    out.push({
+      code: 'asset-outside-root',
+      severity: 'warn',
+      url: outside[0]!.abs,
+      message:
+        `${outside.length} referenced ${outside.length === 1 ? 'path is' : 'paths are'} outside ` +
+        `${namedRoot(req.root)}, ` +
+        `so ${outside.length === 1 ? 'it was' : 'they were'} not read:\n${listed}\n` +
+        `pass --root naming a directory that contains ` +
+        `${outside.length === 1 ? 'it' : 'them'} to allow it.`,
+    });
+  }
+  return out;
+}
+
+function networkFindings(
+  blocked: string[],
+  failedSubresources: { kind: string; url: string }[],
+  req: RenderRequest,
+): Finding[] {
+  const out: Finding[] = [];
+  for (const url of blocked) {
+    out.push({
+      code: 'network-blocked',
+      severity: 'warn',
+      url,
+      message: `blocked a remote request to ${url}. Pass --allow-network to permit it, or inline the asset.`,
+    });
+  }
+  if (failedSubresources.length) {
+    const kinds = [...new Set(failedSubresources.map((f) => f.kind))];
+    const images = failedSubresources.filter((f) => f.kind === 'Image').length;
+
+    const listed = [...new Set(failedSubresources.map((f) => f.url))]
+      .slice(0, 5)
+      .map((u) => `  ${u}`)
+      .join('\n');
+    out.push({
+      code: 'subresource-failed',
+      severity: 'warn',
+      url: failedSubresources[0]?.url,
+      message:
+        `${failedSubresources.length} ${failedSubresources.length === 1 ? 'subresource' : 'subresources'} (${kinds.join(', ')}) failed to load, so the document is missing ${failedSubresources.length === 1 ? 'it' : 'them'}.\n${listed}` +
+        (images
+          ? `\n${images} ${images === 1 ? 'is an image' : 'are images'}: where a picture should be, the pdf carries chromium's broken-image placeholder.`
+          : '') +
+        `\nthe pdf was still produced, but it will not look like the source. url(), @import and @font-face src are staged from disk only when the document is a file.`,
+    });
+  }
+  if (req.url && !req.allowNetwork) {
+    out.push({
+      code: 'url-render-blocked',
+      severity: 'error',
+      message: `rendering a remote URL blocks its own subresources and usually the document itself. Set allowNetwork to render ${req.url}.`,
+    });
+  }
+  return out;
+}
+
+function fontMetricFindings(pdf: Uint8Array): Finding[] {
+  const unresolved = unresolvedFontMetrics(pdf);
+  if (!unresolved.length) return [];
+  // The cause is named per face from what unresolvedFontMetrics measured, not from
+  // what this path usually is. A Type 3's glyphs are drawing procedures with no
+  // embedded font to read the metric from, so the value cannot be derived; a face
+  // of any other subtype with no embedded program is one Chromium did not embed,
+  // for which the same holds. Saying "Type 3" for both would be a confident claim
+  // about something nobody checked.
+  const named = unresolved.map((u) =>
+    u.subtype === 'Type3'
+      ? `${u.fontName} ${u.capHeight} (Type 3, whose glyphs are drawing procedures with no embedded font to read the metric from)`
+      : `${u.fontName} ${u.capHeight} (${u.subtype}, emitted without an embedded font program)`,
+  );
+  return [
+    {
+      code: 'font-metrics',
+      severity: 'warn',
+      message:
+        `${unresolved.length} font descriptor${unresolved.length === 1 ? ' still carries' : 's still carry'} a negative cap height ` +
+        `(${named.slice(0, 3).join(', ')}). ` +
+        `The PDF specification calls a negative CapHeight an error a viewer may refuse to render text over. ` +
+        `There is nothing to derive the metric from, so the value was left as produced. ` +
+        `Embedding the font as a file rather than relying on a system face usually removes it.`,
+    },
+  ];
 }

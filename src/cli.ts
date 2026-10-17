@@ -39,8 +39,10 @@ options
       --format <name>     a3 a4 a5 legal letter tabloid; default is whatever
                           the document's own @page declares, and a4 when the
                           document declares nothing
-      --landscape         ignored if the document declares @page size: pass
-                          --format, or write "size: a4 landscape" in the css
+      --landscape         transpose the paper; a document that declares its own
+                          @page keeps its size and margin and is turned, and is
+                          only refused when the declaration names no paper
+                          (size: auto), which has no portrait spelling to rotate
       --margin <length>   CSS length such as 15mm; needs --format, and is
                           ignored if the document declares @page margin
       --allow-network     permit remote http(s) requests instead of blocking

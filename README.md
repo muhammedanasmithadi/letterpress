@@ -140,10 +140,10 @@ of the summary.
 
 | code                        | meaning                                                                                                                               |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `orientation-ignored`       | `--landscape` was dropped: the document declares `@page size`                                                                         |
+| `orientation-ignored`       | `--landscape` was dropped: the declaration names no paper to transpose (`size: auto`)                                                 |
 | `margin-ignored`            | `--margin` was dropped: the document declares `@page margin`                                                                          |
 | `page-size-override`        | `--format` disagrees with the document's `@page`; the declaration is stripped and the request applied                                 |
-| `orientation-ignored`       | `--landscape` cannot apply: the document declares `@page size` and no `--format` was given                                            |
+| `orientation-ignored`       | `--landscape` cannot apply: the declaration names no paper to transpose, so there is nothing to turn                                  |
 | `rtl-digit-run`             | `2026-10-03` after Arabic prints as `03-10-2026`; wrap it in `<bdi dir="ltr">`                                                        |
 | `rtl-page-counter`          | a page counter in an `@page` margin box is laid out right-to-left, so page one of two prints `2 / 1`; set `direction: ltr` on the box |
 | `missing-glyph`             | a character no installed font covers, so it prints as a blank box                                                                     |
@@ -165,7 +165,7 @@ of the summary.
 | `ligature-spans`            | redundant `/ActualText` spans around ligatures were removed; extraction verified unchanged                                            |
 | `metadata-authored`         | the document's own `<meta name="author">` was written as the pdf author                                                               |
 | `metadata-subject`          | the document's own `<meta name="subject">` was written as the pdf subject                                                             |
-| `orientation-overridden`    | `--format` with `--landscape` transposed the paper despite the document's `@page size`                                                |
+| `orientation-overridden`    | the paper was transposed against the document's `@page size`, which keeps its own size and margin                                     |
 | `output-unverified`         | the finished file failed the structural check; an error, never a warning                                                              |
 | `page-probe-failed`         | a page-side probe threw, so its measurement is absent                                                                                 |
 | `repair-rejected`           | a repair was discarded because it did not leave a valid pdf; the file is unchanged                                                    |
@@ -210,7 +210,7 @@ JSON object:
 | ----------------- | ------- | --------------------------------------------------------------------------------------------- |
 | `html`            | string  | **required.** the document. A `path` key is refused: send the markup, not a filename          |
 | `format`          | string  | `a3` `a4` `a5` `legal` `letter` `tabloid`; default is the document's own `@page`, then A4     |
-| `landscape`       | boolean | ignored if the document declares `@page size`                                                 |
+| `landscape`       | boolean | transposes the paper; a document's own `@page` is turned, keeping its size and margin         |
 | `margin`          | string  | absolute CSS length (`15mm`); needs `format`; ignored if the document declares `@page margin` |
 | `pageRanges`      | string  | e.g. `"1-3"`; the response is marked `partial`                                                |
 | `printBackground` | boolean | background graphics (default on)                                                              |

@@ -1,5 +1,12 @@
 import { expect, test } from 'bun:test';
-import { declaredPageMargin, declaredPageSize, pageRules, stripPageSize } from '../src/pdf.ts';
+import {
+  declaredPageMargin,
+  declaredPageSize,
+  pageRules,
+  stripPageSize,
+  transposePageSize,
+} from '../src/pdf.ts';
+import { declaredPageOrientation } from '../src/render.ts';
 
 // `declaredPageSize` is what the pipeline asks before it decides whether the document has
 // chosen its own paper. When it says yes, no paper is sent to Chromium at all and the
@@ -131,4 +138,89 @@ test('stripPageSize keeps the rest of the document intact', () => {
   );
   // And what it stripped is what it claims to have stripped.
   expect(declaredPageSize(out)).toBeNull();
+});
+
+test('transposePageSize turns a portrait declaration landscape and keeps the margin', () => {
+  // The whole point is that the document keeps its own paper and its own margin. A rewrite
+  // that dropped the margin to buy an orientation would trade one silent wrong page for
+  // another, so the margin is asserted, not assumed.
+  expect(transposePageSize('<style>@page{size:A4;margin:15mm}</style>')).toBe(
+    '<style>@page{size: a4 landscape;margin:15mm}</style>',
+  );
+  // Two lengths swap edges rather than taking a keyword, so the paper stays the paper.
+  expect(transposePageSize('<style>@page{size:210mm 297mm}</style>')).toBe(
+    '<style>@page{size: 297mm 210mm}</style>',
+  );
+  // Mixed units are still two edges.
+  expect(transposePageSize('<style>@page{size:8.5in 11in}</style>')).toBe(
+    '<style>@page{size: 11in 8.5in}</style>',
+  );
+  // Named pages, so every rule is transposed and the rule after it is intact.
+  expect(transposePageSize('<style>@page cover{size:A3}@page{size:A4}</style>')).toBe(
+    '<style>@page cover{size: a3 landscape}@page{size: a4 landscape}</style>',
+  );
+  // The space before a brace survives: `size: letter }` must not become `size: letter }`
+  // with the brace welded to the keyword.
+  expect(transposePageSize('<style>@page :first { size: letter }</style>')).toBe(
+    '<style>@page :first { size: letter landscape }</style>',
+  );
+});
+
+test('transposePageSize never turns landscape back to portrait', () => {
+  // Swapping unconditionally turned `297mm 210mm` -- already landscape, and the one
+  // spelling that needs no change at all -- into portrait. A document that had it right
+  // would have been printed wrong by a request asking for what it already had.
+  expect(transposePageSize('<style>@page{size:297mm 210mm}</style>')).toBeNull();
+  expect(transposePageSize('<style>@page{size:A4 landscape}</style>')).toBeNull();
+  expect(declaredPageOrientation('<style>@page{size:297mm 210mm}</style>')).toBe('landscape');
+  expect(declaredPageOrientation('<style>@page{size:A4 landscape}</style>')).toBe('landscape');
+  expect(declaredPageOrientation('<style>@page{size:210mm 297mm}</style>')).toBe('portrait');
+  expect(declaredPageOrientation('<style>@page{size:A4}</style>')).toBe('portrait');
+  expect(declaredPageOrientation('<style>p{color:red}</style>')).toBeNull();
+});
+
+test('transposePageSize returns null rather than guessing a paper', () => {
+  // `auto` names no sheet, so there is no portrait spelling to rotate. Returning null is
+  // what keeps the finding honest: the engine reports that the request could not be
+  // honoured instead of printing a sheet the document never asked for.
+  expect(transposePageSize('<style>@page{size:auto;margin:10mm}</style>')).toBeNull();
+  expect(transposePageSize('<style>@page{size:whatever}</style>')).toBeNull();
+  // Nor is there anything to do when no page is declared at all.
+  expect(transposePageSize('<style>p{color:red}</style>')).toBeNull();
+  expect(transposePageSize('<p>no stylesheet</p>')).toBeNull();
+});
+
+test('transposePageSize does not reach into a comment, a string, or a script', () => {
+  // A commented-out page rule is itself a match for the rule pattern, so the rule has to
+  // be skipped in the same pass that finds it. The measured first version transposed the
+  // `size` inside the comment as readily as the live one: a page nobody had written gained
+  // a landscape declaration.
+  expect(transposePageSize('<style>/* @page{size:A5} */ @page{margin:10mm}</style>')).toBeNull();
+  // A live rule behind a comment is still transposed, and the comment is byte-identical.
+  expect(transposePageSize('<style>/* keep */ @page{size:A5}</style>')).toBe(
+    '<style>/* keep */ @page{size: a5 landscape}</style>',
+  );
+  // A string that reads like a declaration, inside a live rule.
+  expect(transposePageSize('<style>@page{content:"size:A5";size:legal}</style>')).toBe(
+    '<style>@page{content:"size:A5";size: legal landscape}</style>',
+  );
+  const script = `<script>const css = "@page{size:A4}";</script>`;
+  expect(transposePageSize(script + '<style>@page{size:A4}</style>')).toBe(
+    script + '<style>@page{size: a4 landscape}</style>',
+  );
+});
+
+test('transposePageSize keeps the rest of the document intact', () => {
+  const html =
+    '<!doctype html><html><head><style>@page{size:A4;margin:1in}</style></head>' +
+    '<body><h1>T</h1><!-- @page{size:A4} --></body></html>';
+  const out = transposePageSize(html)!;
+  expect(out).toBe(
+    '<!doctype html><html><head><style>@page{size: a4 landscape;margin:1in}</style></head>' +
+      '<body><h1>T</h1><!-- @page{size:A4} --></body></html>',
+  );
+  // And what it wrote is what it claims: a declaration the engine will read as landscape.
+  expect(declaredPageOrientation(out)).toBe('landscape');
+  expect(declaredPageSize(out)).toBe('a4 landscape');
+  expect(declaredPageMargin(out)).toBe('1in');
 });

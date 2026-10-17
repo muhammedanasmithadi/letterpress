@@ -120,6 +120,105 @@ export function declaredPageSize(html: string): string | null {
   return declaredPageProp(html, 'size');
 }
 
+/**
+ * The landscape spelling of a declared `size`, or null when there is none to
+ * give.
+ *
+ * A paper name takes the keyword (`a4` becomes `a4 landscape`) and two lengths
+ * swap edges (`210mm 297mm` becomes `297mm 210mm`). A value that names no paper
+ * -- `auto`, an unknown keyword -- returns null rather than a guess, because a
+ * wrong rewrite would change the sheet a document chose, which is worse than
+ * reporting that the request could not be honoured.
+ */
+function landscapeSizeValue(value: string): string | null {
+  const v = value.trim().replace(/\s+/g, ' ').toLowerCase();
+  if (!v || /\blandscape\b/.test(v)) return null;
+  const dims = /^([\d.]+)\s*(mm|cm|in|pt|pc|px|q)\s+([\d.]+)\s*(mm|cm|in|pt|pc|px|q)$/.exec(v);
+  if (dims) {
+    // Only ever portrait to landscape. Swapping unconditionally turned
+    // `297mm 210mm` -- already landscape, and the one spelling that needs no
+    // change -- into portrait. A transpose that can run backwards is not a
+    // transpose.
+    try {
+      if (toInches(`${dims[1]}${dims[2]}`) > toInches(`${dims[3]}${dims[4]}`)) return null;
+    } catch {
+      // Not a unit printToPDF can take; the declaration still has an order, so
+      // fall through and swap it.
+    }
+    return `${dims[3]}${dims[4]} ${dims[1]}${dims[2]}`;
+  }
+  if (/^(a3|a4|a5|b4|b5|jis-b[45]|letter|legal|tabloid|ledger)\b/.test(v)) {
+    return `${v} landscape`;
+  }
+  return null;
+}
+
+/**
+ * The same document with every declared `size` transposed to landscape, or null
+ * when there is nothing that can be transposed.
+ *
+ * This is how a landscape request reaches a document that declares its own
+ * paper. Chromium's `landscape` parameter is ignored whenever
+ * `preferCSSPageSize` is set, so asking it to rotate a page it is deferring to
+ * does nothing at all -- measured, the request left a portrait sheet and
+ * nothing in the output said so. Transposing the declaration keeps the
+ * document's own size and its own margin, which is what the flag must not
+ * touch, and changes the one thing that was asked for.
+ *
+ * Only `<style>` elements are walked, for the same reason `stripPageSize` walks
+ * only those: a `size` inside a script string is not a page declaration, and a
+ * print pipeline's contract is to change the paper and nothing else.
+ *
+ * Comments and strings *inside* a stylesheet are skipped too, for the reason
+ * `pageRules` skips them: a commented-out `@page{size:A5}` is a note about a
+ * page, not a page. Rewriting one would put a landscape declaration in the
+ * document's mouth that its author never wrote -- measured here, the first
+ * version transposed the `size` inside a commented-out page rule as readily as
+ * the live one.
+ */
+export function transposePageSize(html: string): string | null {
+  let rewritten = '';
+  const out = html.replace(
+    /(<style\b[^>]*>)([\s\S]*?)(<\/style\s*>|$)/gi,
+    (whole, tag, css, end) => {
+      if (!/@page/i.test(css)) return whole;
+      // Comments and strings are matched *before* the page rule in one pass, so
+      // a rule inside either is never treated as a rule at all. Matching the rule
+      // first is the trap: a commented-out `@page{size:A5}` is itself a match for
+      // the rule pattern, and the measured result was that a page nobody had
+      // written got a landscape declaration added to it.
+      const transposed = css.replace(PAGE_RULE_OR_LITERAL, (rule: string) => {
+        if (/^(\/\*|["'])/.test(rule)) return rule;
+        const next = rule.replace(DECLARATION_OR_LITERAL, (decl: string) => {
+          if (/^(\/\*|["'])/.test(decl)) return decl;
+          const value = decl.slice(decl.indexOf(':') + 1);
+          const landscape = landscapeSizeValue(value);
+          if (landscape === null) return decl;
+          // Whitespace that trailed the value is kept: `size: letter }` becomes
+          // `size: letter landscape }` rather than closing the brace onto the
+          // keyword.
+          const tail = /\s*$/.exec(value)?.[0] ?? '';
+          const head = decl.slice(0, decl.indexOf(':') + 1);
+          return `${head} ${landscape}${tail}`;
+        });
+        if (next === rule) return rule;
+        rewritten = 'yes';
+        return next;
+      });
+      return transposed === css ? whole : tag + transposed + end;
+    },
+  );
+  return rewritten === '' ? null : out;
+}
+
+const COMMENT_OR_STRING = String.raw`\/\*[\s\S]*?\*\/|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'`;
+
+/** An `@page` rule, or a comment or string that must survive untouched. */
+const PAGE_RULE_OR_LITERAL = new RegExp(`${COMMENT_OR_STRING}|@page[^{]*\\{[^}]*\\}`, 'gi');
+
+/** A `size` declaration, or a comment or string that must survive untouched. */
+const DECLARATION_OR_LITERAL = new RegExp(`${COMMENT_OR_STRING}|\\bsize\\s*:[^;}]+`, 'gi');
+
 export function declaredPageMargin(html: string): string | null {
   return declaredPageProp(html, 'margin');
 }
@@ -170,4 +269,88 @@ export function pageRules(html: string): string[] {
       .replace(/"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'/g, '""')
       .match(/@page[^{]*\{[^}]*\}/gi) ?? []
   );
+}
+
+const ABSOLUTE_UNITS: Record<string, number> = {
+  px: 96,
+  in: 1,
+  cm: 2.54,
+  mm: 25.4,
+  q: 101.6,
+  pt: 72,
+  pc: 6,
+};
+
+const RELATIVE_UNITS = [
+  'em',
+  'rem',
+  'ex',
+  'ch',
+  'vw',
+  'vh',
+  'vmin',
+  'vmax',
+  '%',
+  'lh',
+  'rlh',
+  'cap',
+  'ic',
+];
+
+/**
+ * The orientation a declared `size` asks for, or null when it names none.
+ *
+ * Two spellings mean landscape: the `landscape` keyword beside a paper name
+ * (`a4 landscape`), and two lengths whose first is the longer edge
+ * (`297mm 210mm`). Everything else is portrait, including a value too vague to
+ * rewrite (`auto`), because this reads what the document declared and not what
+ * a browser would eventually settle on.
+ */
+export function declaredPageOrientation(html: string): 'portrait' | 'landscape' | null {
+  const declared = declaredPageSize(html);
+  if (declared === null) return null;
+  if (/\blandscape\b/.test(declared)) return 'landscape';
+  const dims = declared.match(/([\d.]+)\s*(mm|cm|in|pt|pc|px|q)\b/gi) ?? [];
+  if (dims.length < 2) return 'portrait';
+  try {
+    return toInches(dims[0]!) > toInches(dims[1]!) ? 'landscape' : 'portrait';
+  } catch {
+    // A size written in a unit printToPDF cannot take. The declaration is
+    // still a declaration, and treating it as portrait is what the browser
+    // would do with it.
+    return 'portrait';
+  }
+}
+
+export function toInches(len: string): number {
+  const raw = len.trim();
+  const m = raw.match(/^(-?[\d.]+)\s*([a-z%]*)$/i);
+  if (!m)
+    throw new Error(
+      `margin "${len}" is not a css length: use a number with a unit, such as 15mm, 1in, 2cm, 40pt, or a bare 0.`,
+    );
+  const unit = (m[2] || 'px').toLowerCase();
+  if (RELATIVE_UNITS.includes(unit)) {
+    throw new Error(
+      `margin unit "${unit}" is relative, so its size is only known after layout: ` +
+        `"${unit}" resolves against a font size or a viewport, and printToPDF takes inches. ` +
+        `use an absolute unit: mm, cm, in, pt, pc, px, or a bare 0.`,
+    );
+  }
+  const factor = ABSOLUTE_UNITS[unit];
+  if (factor === undefined) {
+    throw new Error(`unsupported margin unit "${unit}". use mm, cm, in, pt, pc, px, or a bare 0.`);
+  }
+  const value = Number(m[1]);
+  if (!Number.isFinite(value)) {
+    throw new Error(`margin "${len}" is not a number.`);
+  }
+
+  if (!m[2] && value !== 0) {
+    throw new Error(
+      `margin "${len}" needs a unit: a bare number is not a css length, only a bare 0 is. ` +
+        `use px, pt, mm, cm or in.`,
+    );
+  }
+  return value / factor;
 }

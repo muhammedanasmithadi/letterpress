@@ -197,9 +197,13 @@ describe('numeric flags are validated', () => {
 });
 
 describe('an error finding is not success', () => {
-  test('an ignored --landscape exits non-zero', async () => {
+  test('an unrotatable --landscape exits non-zero', async () => {
+    // `auto` names no sheet, so there is no portrait spelling to transpose and no paper the
+    // engine could rotate without inventing one. This is the only case left where
+    // --landscape is reported as having had no effect: a document that names its own sheet
+    // has that sheet transposed now, and exits clean.
     const p = join(dir, 'psize.html');
-    await writeFile(p, `<!doctype html><style>@page{size:a5;margin:8mm}</style><p>x</p>`);
+    await writeFile(p, `<!doctype html><style>@page{size:auto;margin:8mm}</style><p>x</p>`);
 
     const r = await cli([p, '--landscape', '--json', '-o', join(dir, 'o.pdf')]);
     expect(r.code).toBe(1);
@@ -224,6 +228,33 @@ describe('an error finding is not success', () => {
     const r = await cli([p, '--format', 'a4', '--landscape', '-o', join(dir, 'o.pdf')]);
     expect(r.code).toBe(0);
     expect(r.err).not.toContain('error:');
+  }, 60_000);
+
+  test('--landscape under a declared page exits 0, and the paper is wide', async () => {
+    // Used to exit 1 with `--landscape had no effect`. Chromium ignores its landscape
+    // parameter whenever preferCSSPageSize is set, which is every document that declares
+    // its own page, so the flag was silently dropped. The declaration is transposed now.
+    const p = join(dir, 'declared.html');
+    const out = join(dir, 'declared.pdf');
+    await writeFile(p, `<!doctype html><style>@page{size:a5;margin:8mm}</style><p>x</p>`);
+
+    const r = await cli([p, '--landscape', '--json', '-o', out]);
+    expect(r.code).toBe(0);
+
+    const parsed = JSON.parse(r.out) as {
+      ok: boolean;
+      findings: Array<{ code: string; severity: string }>;
+    };
+    expect(parsed.ok).toBe(true);
+    const finding = parsed.findings.find((f) => f.code === 'orientation-overridden')!;
+    expect(finding.severity).toBe('info');
+
+    // A5 portrait is 148mm wide and 210mm high, so a transposed sheet is taller than wide
+    // turned the other way: read from the file itself, not from what the flag reported.
+    const bytes = new Uint8Array(await Bun.file(out).arrayBuffer());
+    const box = new TextDecoder('latin1').decode(bytes).match(/MediaBox\s*\[([^\]]*)\]/g)![0]!;
+    const [x0, y0, x1, y1] = [...box.matchAll(/[\d.]+/g)].map((m) => Number(m[0]));
+    expect(x1! - x0!).toBeGreaterThan(y1! - y0!);
   }, 60_000);
 
   test('a plain render with no findings exits 0', async () => {

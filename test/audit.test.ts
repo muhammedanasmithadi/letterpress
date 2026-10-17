@@ -103,16 +103,52 @@ test('--format a4 and @page size a4 agree to within a point', async () => {
   expect(Math.abs(a[1]! - b[1]!)).toBeLessThan(1.5);
 }, 30_000);
 
-test('--landscape under a portrait @page is an error, not silence', async () => {
+test('--landscape under a portrait @page transposes the document own declaration', async () => {
+  // This used to be an error finding and a portrait sheet. Chromium discards its
+  // `landscape` parameter whenever `preferCSSPageSize` is set, and a document that declares
+  // its own page is exactly that case, so the flag was sent, dropped, and reported as
+  // having had no effect. Measured before the fix: 595x842 with `--landscape had no
+  // effect`. Now the declaration is transposed and the paper comes back wide.
   const r = await render(browser, {
     html: '<!doctype html><style>@page{size:A4;margin:10mm}</style><p>x</p>',
     landscape: true,
   });
+  expect(codes(r.findings)).not.toContain('orientation-ignored');
+  expect(codes(r.findings)).toContain('orientation-overridden');
+  expect(r.findings.find((f) => f.code === 'orientation-overridden')!.severity).toBe('info');
+
+  const { w, h } = boxSize(r.info.mediaBoxes[0]!);
+  expect(w).toBeGreaterThan(h);
+  // The document's own A4, transposed -- 841.89pt high becomes the width. A format flag
+  // would have given 842.0 from FORMATS' decimal inches instead.
+  expect(w).toBeCloseTo(841.89, 1);
+});
+
+test('--landscape under a declaration with no paper to rotate is still an error', async () => {
+  // `auto` names no sheet, so there is no portrait spelling to transpose and no paper the
+  // engine could rotate without inventing one. Reported, not guessed at.
+  const r = await render(browser, {
+    html: '<!doctype html><style>@page{size:auto}</style><p>x</p>',
+    landscape: true,
+  });
   expect(codes(r.findings)).toContain('orientation-ignored');
   expect(r.findings.find((f) => f.code === 'orientation-ignored')!.severity).toBe('error');
-
-  expect(r.info.mediaBoxes[0]).toMatch(/594\.\d+ 841\.\d+/);
 }, 30_000);
+
+test('a declaration already in landscape is left alone', async () => {
+  // A transpose that swaps unconditionally turns `297mm 210mm` into portrait: a document
+  // that already had what was asked for would be printed wrong by the request asking for
+  // it.
+  for (const size of ['A4 landscape', '297mm 210mm']) {
+    const r = await render(browser, {
+      html: `<!doctype html><style>@page{size:${size}}</style><p>x</p>`,
+      landscape: true,
+    });
+    expect(codes(r.findings)).not.toContain('orientation-overridden');
+    const { w, h } = boxSize(r.info.mediaBoxes[0]!);
+    expect(w).toBeGreaterThan(h);
+  }
+}, 60_000);
 
 test('--margin under a declared @page margin is reported', async () => {
   const r = await render(browser, {
@@ -460,6 +496,9 @@ test('a commented-out @page is not treated as a declaration', async () => {
     landscape: true,
   });
   expect(codes(r.findings)).not.toContain('orientation-ignored');
+  // Nor is it transposed. A commented-out rule is a note about a page, and the rewrite
+  // that carries a landscape request into a document must not edit the note.
+  expect(codes(r.findings)).not.toContain('orientation-overridden');
   const { w, h } = boxSize(r.info.mediaBoxes[0]!);
   expect(w).toBeGreaterThan(h);
 }, 30_000);

@@ -73,6 +73,25 @@ describe('the toolbar controls reach the renderer', () => {
     expect(r.findings.map((f) => f.code)).toContain('orientation-overridden');
   }, 90_000);
 
+  test('landscape works with no format, which is what the toolbar sends', async () => {
+    // The toolbar's Format default is "document's own @page", so this is the request the
+    // Landscape button actually makes. It used to come back portrait with
+    // `orientation-ignored`, and the control snapped back to Portrait having done nothing.
+    const r = (await (await post({ html: DOC, landscape: true })).json()) as {
+      mediaBoxes: string[];
+      findings: Array<{ code: string; severity: string }>;
+    };
+    const box = /([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/.exec(r.mediaBoxes[0]!)!;
+    const w = Number(box[3]);
+    const h = Number(box[4]);
+    expect(w).toBeGreaterThan(h);
+
+    const codes = r.findings.map((f) => f.code);
+    expect(codes).not.toContain('orientation-ignored');
+    expect(codes).toContain('orientation-overridden');
+    expect(r.findings.find((f) => f.code === 'orientation-overridden')!.severity).toBe('info');
+  }, 90_000);
+
   test('printBackground false is accepted and defaults true', async () => {
     const off = await post({ html: DOC, printBackground: false });
     expect(off.status).toBe(200);
@@ -223,8 +242,11 @@ describe('the shell itself', () => {
     expect(js).toContain('landscape: isLandscape()');
     expect(js).not.toContain('el.landscape.checked');
     expect(js).toContain("setAttribute('aria-pressed'");
-    // A rejected orientation reverts the toggle to the effective state: the
-    // control must not display a request the engine refused.
+    // A refused orientation reverts the toggle to the effective state: the control must
+    // not display a request the engine could not honour. Refusal is now rare -- a
+    // document that declares its own sheet has it transposed -- but it is still reachable
+    // when the declaration names no paper (`size: auto`), so the branch is live code and
+    // stays.
     expect(js).toContain('orientation-ignored');
     expect(js).toContain('paintOrientation');
     // The pressed button is bold, laid side by side -- the only visual signal,

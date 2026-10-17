@@ -14,11 +14,19 @@ import { repairOrKeep, verify } from './verify.ts';
 import { audit } from './lint.ts';
 import {
   declaredPageMargin,
+  declaredPageOrientation,
   declaredPageSize,
   inspect,
   stripPageSize,
+  toInches,
+  transposePageSize,
   type PdfInfo,
 } from './pdf.ts';
+
+// Re-exported so the existing import path keeps working: the conversion and the
+// page-declaration readers live in pdf.ts now, where the PDF-side tests and the
+// HTML-side callers can share one copy.
+export { declaredPageOrientation, toInches } from './pdf.ts';
 
 export const FORMATS = {
   a3: [11.6929, 16.5354],
@@ -117,66 +125,27 @@ export type RenderResult = {
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_BLOCKED_REPORTED = 20;
 
-const ABSOLUTE_UNITS: Record<string, number> = {
-  px: 96,
-  in: 1,
-  cm: 2.54,
-  mm: 25.4,
-  q: 101.6,
-  pt: 72,
-  pc: 6,
-};
-
-const RELATIVE_UNITS = [
-  'em',
-  'rem',
-  'ex',
-  'ch',
-  'vw',
-  'vh',
-  'vmin',
-  'vmax',
-  '%',
-  'lh',
-  'rlh',
-  'cap',
-  'ic',
-];
-
-export function toInches(len: string): number {
-  const raw = len.trim();
-  const m = raw.match(/^(-?[\d.]+)\s*([a-z%]*)$/i);
-  if (!m)
-    throw new Error(
-      `margin "${len}" is not a css length: use a number with a unit, such as 15mm, 1in, 2cm, 40pt, or a bare 0.`,
-    );
-  const unit = (m[2] || 'px').toLowerCase();
-  if (RELATIVE_UNITS.includes(unit)) {
-    throw new Error(
-      `margin unit "${unit}" is relative, so its size is only known after layout: ` +
-        `"${unit}" resolves against a font size or a viewport, and printToPDF takes inches. ` +
-        `use an absolute unit: mm, cm, in, pt, pc, px, or a bare 0.`,
-    );
-  }
-  const factor = ABSOLUTE_UNITS[unit];
-  if (factor === undefined) {
-    throw new Error(`unsupported margin unit "${unit}". use mm, cm, in, pt, pc, px, or a bare 0.`);
-  }
-  const value = Number(m[1]);
-  if (!Number.isFinite(value)) {
-    throw new Error(`margin "${len}" is not a number.`);
-  }
-
-  if (!m[2] && value !== 0) {
-    throw new Error(
-      `margin "${len}" needs a unit: a bare number is not a css length, only a bare 0 is. ` +
-        `use px, pt, mm, cm or in.`,
-    );
-  }
-  return value / factor;
-}
-
 const close = (a: number, b: number) => Math.abs(a - b) < 0.05;
+
+/**
+ * The document as it must be rewritten before printing, or null for none.
+ *
+ * Two rewrites, chosen by what the request asked for. A format takes the paper
+ * outright, so the declaration is stripped and the flag's paper wins.
+ * Landscape without a format must keep the document's own paper and margin, so
+ * the declaration is transposed in place and only its orientation changes --
+ * Chromium discards its `landscape` parameter whenever `preferCSSPageSize` is
+ * set, so asking it to rotate a page it defers to does nothing at all.
+ *
+ * The transpose asks the same question the finding above asks, so the paper in
+ * the output and the finding beside it cannot disagree.
+ */
+function pageOverride(html: string | null | undefined, req: RenderRequest): string | null {
+  if (html == null || declaredPageSize(html) === null) return null;
+  if (req.format) return stripPageSize(html);
+  if (!req.landscape || declaredPageOrientation(html) !== 'portrait') return null;
+  return transposePageSize(html);
+}
 
 function precedenceFindings(html: string, req: RenderRequest): Finding[] {
   const findings: Finding[] = [];
@@ -204,27 +173,40 @@ function precedenceFindings(html: string, req: RenderRequest): Finding[] {
   }
 
   if (declared && req.landscape) {
-    const landscapeDeclared =
-      /\blandscape\b/.test(declared) ||
-      (() => {
-        const d = declared.match(/([\d.]+)\s*(mm|cm|in)/gi)?.map(toInches) ?? [];
-        const [e0 = NaN, e1 = NaN] = d;
-        return d.length >= 2 && e0 > e1;
-      })();
-    if (!landscapeDeclared) {
-      findings.push(
-        req.format
-          ? {
-              code: 'orientation-overridden',
-              severity: 'info',
-              message: `the document declares @page size: ${declared}, which is portrait. --format with --landscape takes precedence, so the paper has been transposed rather than the document's own page size used.`,
-            }
-          : {
-              code: 'orientation-ignored',
-              severity: 'error',
-              message: `--landscape had no effect: the document declares @page size: ${declared}, and a document's own @page wins, so the PDF is portrait. For landscape, either add --format a4 (which takes precedence and transposes the paper), or write "@page { size: a4 landscape }" in the stylesheet.`,
-            },
-      );
+    const orientation = declaredPageOrientation(html);
+    if (orientation === 'portrait') {
+      // A declared portrait page and a landscape request have to be settled
+      // one way or the other. The request wins, because a flag that reports
+      // itself ignored is a flag that silently does nothing: measured, this
+      // sent `landscape: true` to a printToPDF call that discards the
+      // parameter whenever preferCSSPageSize is set, so the sheet came back
+      // portrait with only this finding between the request and the paper.
+      //
+      // Which mechanism applies depends on whether a format was asked for.
+      // With one, the paper comes from the flag and the declaration is
+      // stripped. Without one, the declaration keeps the document's own size
+      // and margin and only its orientation is transposed -- the smallest
+      // change that satisfies the request.
+      const transposed = !req.format && transposePageSize(html) !== null;
+      if (transposed) {
+        findings.push({
+          code: 'orientation-overridden',
+          severity: 'info',
+          message: `the document declares @page size: ${declared}, which is portrait, so the declaration has been transposed to landscape. The paper and margin are the document's own. Write "@page { size: ${declared} landscape }" to make that permanent.`,
+        });
+      } else if (req.format) {
+        findings.push({
+          code: 'orientation-overridden',
+          severity: 'info',
+          message: `the document declares @page size: ${declared}, which is portrait. --format with --landscape takes precedence, so the paper has been transposed rather than the document's own page size used.`,
+        });
+      } else {
+        findings.push({
+          code: 'orientation-ignored',
+          severity: 'error',
+          message: `--landscape had no effect: the document declares @page size: ${declared}, and that declaration cannot be transposed into a landscape spelling, so the PDF is portrait. Name a paper the engine can rotate, either with --format a4 or by writing "@page { size: ${declared} landscape }" in the stylesheet.`,
+        });
+      }
     }
   }
 
@@ -662,20 +644,24 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
 
     let outsideRoot: RefusedRef[] = [];
     const relative = hasRelativeAssets(src.html ?? '');
+    // Computed before fastPath because that decision depends on it. The fast
+    // path hands Chromium the source as `about:blank`, so it has nowhere to
+    // put a rewritten document; a request that needs one and quietly does not
+    // get it renders the wrong paper with nothing said, which is the failure
+    // the rewrite exists to remove.
+    const override = pageOverride(src.html, req);
     const fastPath =
       !isRemote &&
       src.html != null &&
       req.preferFastPath !== false &&
       !relative &&
-      !req.maxImagePpi;
+      !req.maxImagePpi &&
+      override === null;
 
     if (!isRemote && !fastPath) {
       outsideRoot = await stageAssets(src.html, src.source, dir, req.root);
       server = await serveWorkDir(dir);
     }
-
-    const override =
-      req.format && src.html && declaredPageSize(src.html) ? stripPageSize(src.html) : null;
 
     let srcUrl: string;
     if (fastPath) srcUrl = 'about:blank';

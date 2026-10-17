@@ -271,10 +271,30 @@ describe('the shell itself', () => {
     expect(js).not.toContain('formatLabel()');
     expect(js).not.toContain('closeOutside');
     expect(js).toContain('el.sourceMeta.textContent = `HTML ·');
-    // File import repaints the highlight layer and gutter: programmatic value
-    // sets fire no input event, so without this the editor shows the previous
-    // document while value and preview are already new.
-    expect(js).toMatch(/el\.file\.addEventListener\('change'[\s\S]{0,400}renderHighlight\(\)/);
+    // File import repaints the highlight layer and gutter: a programmatic value
+    // set fires no input event, so without the repaint the editor shows the
+    // previous document while the value and preview are already the new one.
+    // Positioned with indexOf rather than a regex window: a `{0,400}` bound
+    // fails the moment an unrelated comment lands inside the handler, which is
+    // a false alarm about a real defect. Order is what matters, so order is
+    // what is asserted.
+    const handler = js.slice(js.indexOf("el.file.addEventListener('change'"));
+    expect(js).toContain("el.file.addEventListener('change'");
+    expect(handler).toContain('renderHighlight()');
+    // The input is released right after the file is captured. A file input only
+    // fires `change` when its value differs, so without the reset, re-picking
+    // the same file runs no handler at all: no import, no repaint, no status --
+    // a viewer that looks frozen. The captured File must outlive the reset,
+    // which is why the capture comes first, and the reset precedes the await so
+    // a failed read cannot leave the input stuck on a value that will never
+    // fire again.
+    expect(js).toContain("el.file.value = ''");
+    expect(handler.indexOf('const file = el.file.files?.[0]')).toBeLessThan(
+      handler.indexOf("el.file.value = ''"),
+    );
+    expect(handler.indexOf("el.file.value = ''")).toBeLessThan(
+      handler.indexOf('await file.text()'),
+    );
     // PPI honesty: the server clamps to 1200, so the box caps there natively
     // and the reader reflects the effective value instead of sending a number
     // the engine silently ignores.

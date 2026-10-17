@@ -520,6 +520,14 @@ el.render.addEventListener('click', () => void render());
 el.file.addEventListener('change', async () => {
   const file = el.file.files?.[0];
   if (!file) return;
+  // Release the input as soon as the file is captured. A file input only fires
+  // `change` when its value differs from the last pick, so without this,
+  // re-picking the same file runs no handler at all -- no import, no repaint,
+  // nothing said. A viewer that looks frozen is what that reads as. The
+  // captured File object outlives the reset, which is why the read above
+  // comes first, and the reset comes before the await so a failed read cannot
+  // leave the input stuck on a value that will never fire again.
+  el.file.value = '';
   el.source.value = await file.text();
   // Repaint the highlight layer and gutter: programmatic value sets fire no
   // input event, so without this the editor keeps showing the previous

@@ -1,4 +1,7 @@
+src/render.ts::(anonymous)
 src/render.ts::precedenceFindings
+src/render.ts::render
+src/render.ts::stageAssets
 src/selection.ts::glyphsOf
 src/selection.ts::textFlow
 src/server.ts::fetch

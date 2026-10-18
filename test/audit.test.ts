@@ -817,3 +817,108 @@ test('a crashed tab is reported rather than waited out', async () => {
   }
   expect(crashed).toBe(true);
 }, 30_000);
+
+describe('what the page said about itself', () => {
+  const PNG =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAACQd1PeAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const sheet = '<style>@page{size:A4;margin:15mm}</style>';
+  const codes = (r: { findings: Array<{ code: string }> }) => r.findings.map((f) => f.code);
+  const one = async (body: string) => {
+    const r = await render(browser, {
+      html: `<html lang="en">${sheet}<body>${body}</body></html>`,
+    });
+    return codes(r);
+  };
+
+  test('a clean document raises none of them', async () => {
+    // Every finding here is one that fires on ordinary documents if it is
+    // wrong, so the negative case is the one that matters most.
+    const found = await one('<p>plain text</p>');
+    for (const code of [
+      'missing-alt',
+      'empty-alt',
+      'figure-uncaptioned',
+      'content-overflows-page',
+      'lang-undeclared',
+      'js-error',
+    ]) {
+      expect(found, code).not.toContain(code);
+    }
+  }, 60_000);
+
+  test('an image with no alt is reported, an empty one separately', async () => {
+    expect(await one(`<img src="${PNG}">`)).toContain('missing-alt');
+    expect(await one(`<img src="${PNG}" alt="">`)).toContain('empty-alt');
+    expect(await one(`<img src="${PNG}" alt="a picture">`)).not.toContain('missing-alt');
+  }, 90_000);
+
+  test('a decorative image is not a missing one', async () => {
+    // alt="" plus role=presentation is the correct spelling of "this image is
+    // not content". Reporting it would teach authors to avoid the mechanism
+    // that makes decorative images correct.
+    expect(await one(`<img src="${PNG}" alt="" role="presentation">`)).not.toContain('empty-alt');
+    expect(await one(`<img src="${PNG}" alt="" role="presentation">`)).not.toContain('missing-alt');
+  }, 90_000);
+
+  test('a figure without a figcaption is reported', async () => {
+    // Measured across seven markup shapes: chromium emits a Figure role in the
+    // tagged pdf only when the figcaption is present, so alt text alone produces
+    // no structure for a screen reader to navigate by.
+    expect(await one(`<figure><img src="${PNG}" alt="x"></figure>`)).toContain(
+      'figure-uncaptioned',
+    );
+    expect(
+      await one(`<figure><img src="${PNG}" alt="x"><figcaption>c</figcaption></figure>`),
+    ).not.toContain('figure-uncaptioned');
+  }, 90_000);
+
+  test('content wider than the sheet is reported, and only that', async () => {
+    // A4 less 15mm margins is 642px of printable width. Measured on a 780px
+    // viewport: html, body and a plain paragraph all come back at 780px, and a
+    // figure at its default margins at 684px -- which prints as 584px and fits.
+    // Comparing every element against the printable width therefore reported
+    // ordinary documents as overflowing.
+    expect(await one('<p>filler text</p>')).not.toContain('content-overflows-page');
+    expect(await one(`<figure><figcaption>c</figcaption></figure>`)).not.toContain(
+      'content-overflows-page',
+    );
+    // A fixed pixel width survives into print, so 700px overflows 642px.
+    expect(await one('<div style="width:700px">wide</div>')).toContain('content-overflows-page');
+    expect(await one('<div style="width:400px">fits</div>')).not.toContain(
+      'content-overflows-page',
+    );
+    expect(await one('<table style="width:1400px"><tr><td>a</td></tr></table>')).toContain(
+      'content-overflows-page',
+    );
+  }, 120_000);
+
+  test('an undeclared language is reported, and a declared one is not', async () => {
+    const none = await render(browser, { html: `${sheet}<body><p>bonjour</p></body>` });
+    expect(codes(none)).toContain('lang-undeclared');
+    // The finding names what chromium stamped instead, read from the file.
+    expect(none.findings.find((f) => f.code === 'lang-undeclared')!.message).toContain('/Lang (');
+
+    const declared = await render(browser, {
+      html: `<html lang="fr">${sheet}<body><p>bonjour</p></body></html>`,
+    });
+    expect(codes(declared)).not.toContain('lang-undeclared');
+  }, 90_000);
+
+  test('a script that throws is reported, and a clean one is not', async () => {
+    // Before this existed the only finding was about text runs: nothing said the
+    // document had failed to run, so a caller could not tell the pdf apart from
+    // one produced by the document they wrote.
+    const threw = await one('<script>undefinedThing()</script><p>x</p>');
+    expect(threw).toContain('js-error');
+    expect(await one('<p>quiet</p>')).not.toContain('js-error');
+  }, 90_000);
+
+  test('the script error names the browser own wording', async () => {
+    const r = await render(browser, {
+      html: `<html lang="en">${sheet}<body><script>undefinedThing()</script></body></html>`,
+    });
+    const f = r.findings.find((x) => x.code === 'js-error')!;
+    expect(f.severity).toBe('warn');
+    expect(f.message).toContain('undefinedThing');
+  }, 60_000);
+});

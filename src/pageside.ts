@@ -282,3 +282,110 @@ export async function collectLinkedCss(): Promise<number> {
   (globalThis as Record<string, unknown>).__letterpressLinkedCss = out;
   return out.length;
 }
+
+/** What a document asked for that the printed sheet cannot honour. */
+export type PageSideReport = {
+  lang: string;
+  /** Images with no `alt` attribute at all, which no assistive technology sees. */
+  imagesWithoutAlt: number;
+  /** `alt` present but empty on an image that is not marked decorative. */
+  imagesEmptyAlt: number;
+  /** Images marked decorative, which are correctly absent from the structure. */
+  imagesDecorative: number;
+  /** `<figure>` elements with no `<figcaption>`. */
+  figuresWithoutCaption: number;
+  /** Elements wider than the printable width, narrowest offenders named. */
+  overflowing: Array<{ what: string; widthPx: number }>;
+};
+
+/**
+ * Read the document's own declarations, for findings about the sheet rather than
+ * about the file.
+ *
+ * One function rather than six CDP calls, for two reasons. The DOM domain
+ * caches a document, so a nodeId obtained before `setDocumentContent` is stale
+ * afterwards -- measured, and the source of several failed probes. And the page
+ * can answer these questions about itself with no round trip and no parsing.
+ *
+ * The accessible name is read from the `alt` attribute rather than from the
+ * accessibility tree, because that attribute is the ground truth: it is what the
+ * author wrote, and Chromium's computed name is derived from it. The one case
+ * that needs care is the decorative image -- `role="presentation"` or
+ * `role="none"` with an `alt` is correct, not missing, and is counted apart.
+ *
+ * Widths come from `getBoundingClientRect`, which is screen layout. That is
+ * enough for the failure worth catching -- an element wider than the printable
+ * area -- and it can also see an element that fits on a wide monitor and does
+ * not fit on paper. It cannot see the reverse: an element that print CSS
+ * widens beyond its screen width. That is stated rather than guessed at.
+ */
+export function pageSideReport(printableWidthPx: number): PageSideReport {
+  // Nested rather than module-scope: see the note at the top of this file, and
+  // the gate counts complexity per function -- the scan is the branching half
+  // of this one and reads as its own step.
+  const scanOverflow = (): Array<{ what: string; widthPx: number }> => {
+    const found: Array<{ what: string; widthPx: number }> = [];
+    if (printableWidthPx <= 0) return found;
+    // Two reference widths, because one rule cannot separate the two cases.
+    //
+    // An element sized in pixels keeps that size on paper: a 700px div is
+    // 700px against a 680px printable area and overflows. Anything fluid
+    // scales with its container, and the container on screen is wider than the
+    // one on paper -- a `<figure>` at its default margins measures 684px
+    // against a 780px body and prints as 584px, which fits. Measured both ways
+    // before choosing: comparing every element against the printable width
+    // reported ordinary documents as overflowing, and comparing everything
+    // against the page box missed the 700px div.
+    //
+    // The limit is an epsilon, not a threshold: an element exactly as wide as
+    // the limit is filling it and is not overflowing anything.
+    const pageBox = document.body.getBoundingClientRect().width;
+    const seen = new Set<string>();
+    for (const el of document.body.querySelectorAll<HTMLElement>('*')) {
+      const rect = el.getBoundingClientRect();
+      // Only an inline `width: <n>px` is known to survive into print. A width
+      // set by a stylesheet rule looks fluid here and is treated as such, so a
+      // class-sized fixed width is missed rather than guessed at.
+      const fixed = el.style.width.endsWith('px');
+      const limit = fixed ? printableWidthPx : pageBox;
+      if (rect.width <= limit) continue;
+      if (Math.abs(rect.width - limit) < 0.5) continue;
+      const what = el.tagName.toLowerCase() + (el.id ? `#${el.id}` : '');
+      // A wide table makes every one of its cells wide too; naming each is noise.
+      if (seen.has(el.tagName)) continue;
+      seen.add(el.tagName);
+      found.push({ what, widthPx: Math.round(rect.width * 10) / 10 });
+      if (found.length >= 5) break;
+    }
+    return found;
+  };
+
+  const lang = document.documentElement.getAttribute('lang') ?? '';
+  let imagesWithoutAlt = 0;
+  let imagesEmptyAlt = 0;
+  let imagesDecorative = 0;
+  for (const img of document.images) {
+    const role = img.getAttribute('role') ?? '';
+    if (role === 'presentation' || role === 'none') {
+      imagesDecorative++;
+    } else if (!img.hasAttribute('alt')) {
+      imagesWithoutAlt++;
+    } else if (!img.getAttribute('alt')!.trim()) {
+      imagesEmptyAlt++;
+    }
+  }
+
+  let figuresWithoutCaption = 0;
+  for (const fig of document.querySelectorAll('figure')) {
+    if (!fig.querySelector('figcaption')) figuresWithoutCaption++;
+  }
+
+  return {
+    lang,
+    imagesWithoutAlt,
+    imagesEmptyAlt,
+    imagesDecorative,
+    figuresWithoutCaption,
+    overflowing: scanOverflow(),
+  };
+}

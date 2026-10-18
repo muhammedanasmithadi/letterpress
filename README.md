@@ -138,6 +138,14 @@ asked.
 `--quiet` does not silence them, because they are diagnostics rather than part
 of the summary.
 
+Six of these read the loaded page before it is printed, so they cost nothing
+extra: the document is already there. `content-overflows-page` compares each
+element against either the printable width or the page box, depending on
+whether it is sized in pixels, because a fixed width survives into print while
+a fluid one scales with its container. Two shapes it cannot separate are stated
+in the finding itself rather than left as a surprise: a fixed width set by a
+stylesheet rule rather than inline, and an element that only print CSS widens.
+
 | code                        | meaning                                                                                                                               |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `orientation-ignored`       | `--landscape` was dropped: the declaration names no paper to transpose (`size: auto`)                                                 |
@@ -170,6 +178,11 @@ of the summary.
 | `page-probe-failed`         | a page-side probe threw, so its measurement is absent                                                                                 |
 | `repair-rejected`           | a repair was discarded because it did not leave a valid pdf; the file is unchanged                                                    |
 | `dialog-dismissed`          | the document opened an `alert`/`confirm`/`prompt` mid-render and it was refused, so a blocked script never finished                   |
+| `js-error`                  | the document threw an uncaught error while being printed, and the pdf was produced anyway                                             |
+| `missing-alt`               | an image has no `alt` at all, so nothing describes it; `empty-alt` covers `alt=""` on an image that is not marked decorative          |
+| `lang-undeclared`           | the document names no language, so Chromium stamped the pdf with the browser's locale instead                                         |
+| `figure-uncaptioned`        | a `<figure>` has no `<figcaption>`, which is what makes Chromium emit a Figure role in the tagged pdf                                 |
+| `content-overflows-page`    | an element is wider than the printable area, measured in screen layout                                                                |
 | `stylesheet-unreadable`     | a cross-origin stylesheet could not be read, so layout findings cover only this origin                                                |
 | `url-render-blocked`        | a remote URL needs `allowNetwork`; without it its subresource loads and usually the document itself is blocked                        |
 

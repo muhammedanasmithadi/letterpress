@@ -8,7 +8,12 @@ import { LINK_DESC_JS, fixLinkDescs, parseLinkDescs } from './linkdesc.ts';
 import { fixRedundantFigures, redundantFigureCount } from './figrole.ts';
 import { textFlow } from './selection.ts';
 import { mergeTextRuns } from './tjmerge.ts';
-import { applyImageReplacements, measureImages } from './pageside.ts';
+import {
+  applyImageReplacements,
+  measureImages,
+  pageSideReport,
+  type PageSideReport,
+} from './pageside.ts';
 import { stripRedundantSpans } from './spans.ts';
 import { repairOrKeep, verify } from './verify.ts';
 import { audit } from './lint.ts';
@@ -767,7 +772,27 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
 
       const declaresPaper = await probeDeclaresPaper(tab, src.html, req, timeoutMs);
 
+      // Read here, after the page has settled and before the print, and after
+      // the paper is known: the overflow check needs the printable width, and
+      // anything beforePrint did to the document should be visible to it.
+      const printableWidth = printableWidthPx(req, src.html);
+      const report = await tab
+        .send(
+          'Runtime.evaluate',
+          { expression: `(${pageSideReport})(${printableWidth})`, returnByValue: true },
+          timeoutMs,
+        )
+        .then((r: { result?: { value?: PageSideReport } }) => r.result?.value);
+      if (report) findings.push(...pageSideFindings(report, printableWidth));
+      findings.push(...scriptErrorFindings(alive.errors()));
+
       const { raw } = await printPdf(tab, req, override, declaresPaper, timeoutMs, timedOutRef);
+
+      // The language is read from the finished file rather than guessed at from
+      // the page: what matters is what the pdf claims, and that is only knowable
+      // now. Chromium stamps `/Lang` from the document's own attribute, or from
+      // the browser's locale when there is none.
+      findings.push(...langFinding(report, raw));
 
       const pdfTitle = pdfTitleFor(req);
 
@@ -1021,6 +1046,153 @@ async function printPdf(
 }
 
 /**
+ * Turn what the page said about itself into findings.
+ *
+ * Six checks, one page-side read, and every one of them closes a case where the
+ * PDF was produced and nothing said: a script that threw, an image no assistive
+ * technology can see, a document whose language the browser guessed, content
+ * wider than the sheet it lands on.
+ *
+ * All `warn`. None of them makes the file wrong -- a figure can be decorative, a
+ * table can be meant to bleed -- and reserving `error` for output that is
+ * actually wrong is what keeps a caller's exit code meaning something.
+ */
+function pageSideFindings(report: PageSideReport, printableWidthPx: number): Finding[] {
+  const out: Finding[] = [];
+
+  if (report.imagesWithoutAlt > 0) {
+    out.push({
+      code: 'missing-alt',
+      severity: 'warn',
+      message:
+        `${report.imagesWithoutAlt} image${report.imagesWithoutAlt === 1 ? ' has' : 's have'} ` +
+        `no alt attribute, so nothing describes them: a screen reader reads the file name or ` +
+        `nothing at all, and a search engine sees a gap. alt="" is correct for a decorative ` +
+        `image and wrong here -- an image with no alt is skipped, one with an empty alt is ` +
+        `read as empty.`,
+    });
+  }
+  if (report.imagesEmptyAlt > 0) {
+    out.push({
+      code: 'empty-alt',
+      severity: 'warn',
+      message:
+        `${report.imagesEmptyAlt} image${report.imagesEmptyAlt === 1 ? ' has' : 's have'} ` +
+        `alt="" and ${report.imagesEmptyAlt === 1 ? 'is' : 'are'} not marked decorative with ` +
+        `role="presentation". a screen reader announces the image as an empty label, which is ` +
+        `worse than silence -- it tells the reader something is there and gives it no name.`,
+    });
+  }
+  if (report.figuresWithoutCaption > 0) {
+    out.push({
+      code: 'figure-uncaptioned',
+      severity: 'warn',
+      message:
+        `${report.figuresWithoutCaption} figure element${report.figuresWithoutCaption === 1 ? '' : 's'} ` +
+        `without a figcaption. measured here, across seven markup shapes: chromium emits a ` +
+        `Figure role in the tagged pdf only when the figcaption is present, so the alt text ` +
+        `alone produces no structure for a screen reader to navigate by.`,
+    });
+  }
+  if (printableWidthPx > 0 && report.overflowing.length > 0) {
+    const widest = Math.max(...report.overflowing.map((o) => o.widthPx));
+    const named = report.overflowing
+      .slice(0, 3)
+      .map((o) => `${o.what} at ${o.widthPx}px`)
+      .join(', ');
+    out.push({
+      code: 'content-overflows-page',
+      severity: 'warn',
+      message:
+        `${report.overflowing.length === 1 ? 'an element is' : 'elements are'} wider than the ` +
+        `printable area: ${named}. the sheet is ${Math.round(printableWidthPx)}px of usable width ` +
+        `and the widest is ${widest}px, so that content is clipped at the paper edge. widths are ` +
+        `measured in screen layout, so an element that only print css widens is not caught here.`,
+    });
+  }
+
+  return out;
+}
+
+/**
+ * What the finished file claims about its language, when the document said
+ * nothing.
+ *
+ * Chromium writes `/Lang` from the document's own `lang` attribute and falls
+ * back to the browser's locale when there is none. A French document with no
+ * attribute therefore produces a PDF that declares English, and nothing
+ * anywhere says so -- the file looks complete and the reader mispronounces
+ * every word.
+ */
+function langFinding(report: PageSideReport | undefined, raw: Uint8Array): Finding[] {
+  if (!report || report.lang.trim()) return [];
+  const declared = /\/Lang\s*\(([^)]*)\)/.exec(new TextDecoder('latin1').decode(raw))?.[1];
+  return [
+    {
+      code: 'lang-undeclared',
+      severity: 'warn',
+      message:
+        `the document declares no language, so chromium stamped the pdf with ` +
+        (declared
+          ? `/Lang (${declared}), which is the browser's locale rather than`
+          : 'no language at all, rather than') +
+        ` the document's own. a screen reader reads the text with the wrong pronunciation and ` +
+        `spell-checking is wrong too. set lang on the <html> element.`,
+    },
+  ];
+}
+
+/**
+ * The printable width in CSS pixels, or 0 when it cannot be worked out.
+ *
+ * Zero means "do not check": a wrong number here would produce overflow
+ * findings about a sheet the document never asked for, which is worse than
+ * saying nothing. Every step that could fail says so instead of guessing --
+ * a page size named in a form this does not know, a length in a unit
+ * printToPDF cannot take.
+ *
+ * The unit matters. Page geometry arrives in points, `getBoundingClientRect`
+ * answers in CSS pixels at 96 per inch, and comparing the two is the mistake
+ * that makes every element look like it overflows: A4 with 15mm margins is
+ * 481.6pt, which is 642px, not 510.
+ */
+function printableWidthPx(req: RenderRequest, html: string | undefined): number {
+  try {
+    const paperInches = paperWidthInches(req.format, html);
+    const margins = marginInches(req, html);
+    if (paperInches === null || margins === null) return 0;
+    const printable = paperInches - margins * 2;
+    return printable > 0 ? printable * 72 * (96 / 72) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** The paper's width in inches, or null when the declaration is unreadable. */
+function paperWidthInches(format: Format | undefined, html: string | undefined): number | null {
+  if (format) return FORMATS[format][0];
+  const declared = html ? declaredPageSize(html) : null;
+  if (!declared) return FORMATS.a4[0];
+
+  const named = declared.match(/^(a3|a4|a5|b4|b5|letter|legal|tabloid|ledger)\b/);
+  if (named) {
+    const key = named[1] as Format;
+    return FORMATS[key]?.[0] ?? FORMATS.a4[0];
+  }
+  const dims = declared.match(/([\d.]+)\s*(mm|cm|in|pt|pc|px|q)\b/gi);
+  return dims && dims.length >= 2 ? toInches(dims[0]!) : FORMATS.a4[0];
+}
+
+/** The margin on each side in inches: the flag, else the document's own, else none. */
+function marginInches(req: RenderRequest, html: string | undefined): number | null {
+  if (req.margin) return toInches(req.margin);
+  const declared = html ? declaredPageMargin(html) : null;
+  if (!declared) return 0;
+  const one = declared.split(/\s+/)[0];
+  return one ? toInches(one) : 0;
+}
+
+/**
  * The sheet, as printToPDF is finally told about it.
  *
  * The paper is in CSS whenever the engine wrote a rule for it, and otherwise
@@ -1205,16 +1377,39 @@ type TabWatch = {
   alive(): boolean;
   /** How many modal dialogs the document opened and this renderer refused. */
   dialogs(): number;
+  /** Uncaught exceptions the document threw, with the browser's own wording. */
+  errors(): string[];
 };
 
 function watchTab(tab: Tab): TabWatch {
   let crashed = false;
   let dialogs = 0;
+  const errors: string[] = [];
 
   tab.on('Page.javascriptDialogOpening', () => {
     dialogs++;
     void tab.send('Page.handleJavaScriptDialog', { accept: false }).catch(() => {});
   });
+  tab.on('Runtime.exceptionThrown', (p) => {
+    const d = p.exceptionDetails;
+    const text = d?.exception?.description?.split('\n')[0]?.trim() || d?.text || 'unknown error';
+    if (!errors.includes(text)) errors.push(text);
+  });
+  void tab
+    .send('Log.enable')
+    .then(() => {
+      // Severity `error` only. A warning is the page complaining about something
+      // it recovered from, which is not a fact about the pdf.
+      tab.on('Log.entryAdded', (p) => {
+        if (p.entry?.level !== 'error') return;
+        const text = p.entry.text?.split('\n')[0]?.trim();
+        if (text && !errors.includes(text)) errors.push(text);
+      });
+    })
+    .catch(() => {
+      // Console errors are a bonus; the exception event above is the one that
+      // matters and needs no domain enabled.
+    });
   void tab
     .send('Inspector.enable')
     .then(() => {
@@ -1227,7 +1422,31 @@ function watchTab(tab: Tab): TabWatch {
       // early signal, so this is not worth failing a render over.
     });
 
-  return { alive: () => !crashed, dialogs: () => dialogs };
+  return { alive: () => !crashed, dialogs: () => dialogs, errors: () => errors };
+}
+
+/**
+ * What the page threw while it was being printed.
+ *
+ * Measured before this existed: a document calling an undefined function
+ * rendered a one-page pdf whose only finding was about text runs. Nothing said
+ * the script had failed, so a caller had no way to know the document it just
+ * produced was not the document it wrote -- which is the one thing a renderer
+ * exists to guarantee.
+ */
+function scriptErrorFindings(errors: string[]): Finding[] {
+  if (!errors.length) return [];
+  return [
+    {
+      code: 'js-error',
+      severity: 'warn',
+      message:
+        `the document threw ${errors.length === 1 ? 'an uncaught error' : `${errors.length} uncaught errors`} ` +
+        `while it was being printed, and the pdf was produced anyway: ${errors.slice(0, 3).join('; ')}` +
+        `${errors.length > 3 ? `; and ${errors.length - 3} more` : ''}. whatever the script was about ` +
+        `to set up did not happen, so the pages may not be the document you wrote.`,
+    },
+  ];
 }
 
 async function watchNetwork(

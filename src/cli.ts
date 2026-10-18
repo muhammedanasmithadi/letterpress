@@ -4,7 +4,8 @@ import { mkdtemp, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Browser } from './browser.ts';
-import { parseArgs, type Options, type ParseResult } from './args.ts';
+import { parseArgs, type Options, type ParseResult, type ProbeName } from './args.ts';
+import { fontProbe, wideGaps } from './pageside.ts';
 
 export { flagNames, parseArgs } from './args.ts';
 export type { Options, ParseResult } from './args.ts';
@@ -63,6 +64,9 @@ options
       --settle <ms>       extra wait after fonts resolve (default 0)
       --timeout <ms>      per-render deadline (default 30000)
       --json              machine-readable result on stdout
+      --probe <name>      ask the loaded page a question of its own and put the
+                          answer in --json as "probe". gaps: where a browser will break a
+                          text selection. fonts: the families the document asked for.
   -q, --quiet             suppress the human summary line. warnings and errors
                           are diagnostics and still go to stderr
   -h, --help              this text
@@ -168,6 +172,27 @@ function killBrowserByProfile(profile: string): void {
   } catch {}
 }
 
+/**
+ * The named probe `--probe` asked for, or nothing.
+ *
+ * `pageProbe` takes the function itself rather than a name, and the function
+ * has to be one this module holds: it is shipped into the page by
+ * `Function.prototype.toString`, where anything written as source text would be
+ * free to reference names that do not exist there. That constraint is why the
+ * flag names probes instead of accepting an expression.
+ */
+function probeFor(name: ProbeName | undefined): (() => unknown) | undefined {
+  // The function itself, never a wrapper around it. `() => wideGaps()` is a
+  // `ReferenceError` in the page -- the arrow is shipped by toString and the
+  // name it closes over is not, because it lives in this module and the page
+  // has never heard of it. Measured, and the `page-probe-failed` finding said so
+  // plainly rather than returning nothing. Both probes take no required
+  // arguments, which is what makes passing them bare possible.
+  if (name === 'gaps') return wideGaps;
+  if (name === 'fonts') return fontProbe;
+  return undefined;
+}
+
 /** The document to render, built from whichever input option was given. */
 async function requestFor(opts: Options): Promise<RenderRequest> {
   if (opts.template && opts.data) {
@@ -251,14 +276,15 @@ function reportOutcome(opts: Options, result: RenderResult, outPath: string): nu
         {
           ok: !contradicted,
           path: outPath,
-          pages: result.info.pages,
-          bytes,
           ms: result.ms,
           source: result.source,
-          mediaBoxes: result.info.mediaBoxes,
-          imageObjects: result.info.imageObjects,
-          tagged: result.info.tagged,
           blocked: result.blocked,
+          ...result.info,
+          // The page probe's return value, when one was given. Nothing in the
+          // engine reads it -- it exists so a caller can ask the page a question
+          // of its own and get the answer back in the same document as
+          // everything else, instead of driving a second browser.
+          probe: result.probe,
           findings: result.findings,
         },
         null,
@@ -351,6 +377,7 @@ export async function main(argv: string[]): Promise<number> {
       subject: opts.subject,
       keywords: opts.keywords,
       pageRanges: opts.pageRanges,
+      pageProbe: probeFor(opts.probe),
     });
 
     await writeAtomic(outPath, result.pdf);

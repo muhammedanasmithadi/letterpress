@@ -559,3 +559,55 @@ describe('inspect says whether a file is encrypted', () => {
     expect(inspect(new Uint8Array(decoy)).encrypted).toBe(false);
   });
 });
+
+describe('pageSizes follows the page tree, not the order objects appear in', () => {
+  // Chromium writes page objects in reading order, so for a document this tool
+  // produced, file order and page order agree and a test on real output cannot
+  // tell them apart. This file disagrees on purpose: `/Kids` names object 5
+  // before object 3, so the tree and the file say opposite things about which
+  // page comes first. Legal, and the reason the tree exists.
+  const shuffled = assemblePdf([
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [5 0 R 3 0 R] /Count 2 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 111 222] >>',
+    '<< /Type /Info /Producer (nothing) >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 333 444] >>',
+  ]);
+
+  test('the first entry is the first page in the tree', () => {
+    const info = inspect(new Uint8Array(shuffled));
+    // File order would answer 111x222 first, because object 3 comes first.
+    expect(info.pageSizes).toEqual(['/MediaBox [0 0 333 444]', '/MediaBox [0 0 111 222]']);
+  });
+
+  test('there is one entry per page either way', () => {
+    expect(inspect(new Uint8Array(shuffled)).pageSizes).toHaveLength(2);
+  });
+
+  test('a file with no page tree falls back to file order rather than to nothing', () => {
+    // No `/Kids` anywhere, so there is no tree to walk. Reporting nothing would
+    // be indistinguishable from a document whose pages have no MediaBox, and
+    // the first is a broken file while the second is not.
+    const tree = assemblePdf([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 111 222] >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 333 444] >>',
+    ]);
+    expect(inspect(new Uint8Array(tree)).pageSizes).toEqual([
+      '/MediaBox [0 0 111 222]',
+      '/MediaBox [0 0 333 444]',
+    ]);
+  });
+
+  test('every page reports a box, including one that declares none', () => {
+    // Chromium's /MediaBox can be inherited from an ancestor node rather than
+    // written on the page itself, which is legal. The entry is still there, so
+    // "which page is this" lines up with the page count; it just says nothing.
+    const inherited = assemblePdf([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 595 842] >>',
+      '<< /Type /Page /Parent 2 0 R >>',
+    ]);
+    expect(inspect(new Uint8Array(inherited)).pageSizes).toEqual(['']);
+  });
+});

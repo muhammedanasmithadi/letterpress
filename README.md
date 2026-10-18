@@ -207,6 +207,47 @@ asked.
 `--quiet` does not silence them, because they are diagnostics rather than part
 of the summary.
 
+### What `--json` carries
+
+Every field of the inspected PDF, rather than the six that were convenient when
+the flag was written. Two of them were wrong and are worth naming, because both
+had been computed and thrown away:
+
+`pageSizes` is the paper of each page, in page order, one entry per page. It is
+not the same as `mediaBoxes`, which is a _set_ of distinct boxes: that can say a
+document is mixed-size but not where the change happens, and this says page 1 is
+Letter and pages 2–6 are A4. It used to return `[""]` for every page of every
+document — the scan it was built from used a lazy `[\s\S]{0,400}?`, which
+matches as little as it can and so never reached the `/MediaBox` a few bytes
+further on.
+
+`outlineTitles` is the bookmark titles **in the order a reader sees them**.
+Chromium serialises an outline parent-first and backwards, so the file order of a
+document with `One`, `Two`, `Three` is `document, Three, Two, One` — measured —
+and a consumer building a table of contents from file order emits it reversed.
+The `/First` and `/Next` links are the order that means something.
+
+### `--probe`
+
+`--probe <name>` asks the loaded page a question and puts the answer in `--json`
+as `probe`. Two are available:
+
+| probe   | answer                                                                         |
+| ------- | ------------------------------------------------------------------------------ |
+| `gaps`  | where a browser will break a text selection, with the element and the cause    |
+| `fonts` | the font families the document asked for, and how many elements asked for each |
+
+There is no raw-JS flag, on purpose. The expression would run inside the page,
+where nothing from this module exists, so `--probe "document.title"` would work
+and `--probe "wideGaps()"` would be a `ReferenceError` — and a flag that accepts
+arbitrary code on a tool that renders whatever it is handed is not worth having.
+The probes are named, shipped by `Function.prototype.toString`, and can only be
+invoked the way they were written to be. A name it does not have is a usage
+error listing the ones it does.
+
+Both probes restate things a finding already summarises. They are here for a
+caller building its own check, not because the findings are missing.
+
 Seven of these read the loaded page before it is printed, so they cost nothing
 extra: the document is already there. `content-overflows-page` compares each
 element against either the printable width or the page box, depending on

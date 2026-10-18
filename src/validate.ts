@@ -18,6 +18,7 @@ import { inflateSync } from 'node:zlib';
 import type { Finding } from './render.ts';
 import {
   inflatedStream,
+  walkObjects,
   isEncrypted,
   streamDict,
   streamRange,
@@ -64,7 +65,6 @@ export function mcidCensus(pdf: Uint8Array): McidCensus {
   const parts = trySplit(pdf);
   const census: McidCensus = { present: [], named: new Set(), role: new Map() };
   if (!parts) return census;
-  const byNum = new Map(parts.objs.map((o) => [o.num, o]));
 
   for (const o of parts.objs) {
     const body = pageContent(parts, o);
@@ -82,29 +82,31 @@ export function mcidCensus(pdf: Uint8Array): McidCensus {
   }
   if (rootNum === undefined) return census;
 
-  // Depth-capped and cycle-guarded. The tree comes from a file, and a file can
-  // contain a structure element that is its own parent.
-  const seen = new Set<number>();
-  const walk = (num: number, depth: number): void => {
-    if (depth > 64 || seen.has(num)) return;
-    seen.add(num);
-    const text = dict(byNum.get(num));
-    const role = /\/S\s*\/(\w+)/.exec(text)?.[1] ?? '?';
-    for (const m of text.matchAll(K_FORMS)) {
-      const block = m[1]!;
-      if (/^\d+$/.test(block)) {
-        note(census, block, role);
-      } else if (/^\d+\s+0\s+R$/.test(block)) {
-        walk(Number(/^(\d+)/.exec(block)![1]), depth + 1);
-      } else {
-        for (const id of block.matchAll(/\/MCID\s+(\d+)/g)) note(census, id[1]!, role);
-        for (const ref of block.matchAll(/(\d+) 0 R/g)) walk(Number(ref[1]), depth + 1);
+  // The guard against a self-referential tree lives in the walker, because this
+  // is the third place in the codebase that walks one and the fourth copy of
+  // the guard is where one of them would forget it.
+  walkObjects(
+    parts,
+    [rootNum],
+    (o) => [...o.dict.matchAll(K_FORMS)].flatMap((m) => structKids(m[1]!)),
+    (o) => {
+      const role = /\/S\s*\/(\w+)/.exec(o.dict)?.[1] ?? '?';
+      for (const m of o.dict.matchAll(K_FORMS)) {
+        const block = m[1]!;
+        if (/^\d+$/.test(block)) note(census, block, role);
+        else for (const id of block.matchAll(/\/MCID\s+(\d+)/g)) note(census, id[1]!, role);
       }
-    }
-  };
-  walk(rootNum, 0);
+    },
+  );
   census.present = [...new Set(census.present)].sort((a, b) => Number(a) - Number(b));
   return census;
+}
+
+/** The object numbers a `/K` entry points at. An mcid in a `/K` is content, not a child. */
+function structKids(block: string): number[] {
+  if (/^\d+$/.test(block)) return [];
+  if (/^\d+\s+0\s+R$/.test(block)) return [Number(/^(\d+)/.exec(block)![1])];
+  return [...block.matchAll(/(\d+) 0 R/g)].map((m) => Number(m[1]));
 }
 
 function note(census: McidCensus, id: string, role: string): void {

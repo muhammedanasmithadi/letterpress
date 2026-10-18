@@ -21,6 +21,7 @@ export type Options = {
   subject?: string;
   keywords?: string;
   pageRanges?: string;
+  probe?: ProbeName;
   json: boolean;
   quiet: boolean;
   help?: boolean;
@@ -208,6 +209,34 @@ function setPageRanges(opts: Options, argv: string[], i: number, a: string): Ste
   return consumedValue();
 }
 
+/**
+ * `--probe <name>`, chosen from the probes that exist rather than written by the
+ * caller.
+ *
+ * A raw-JS flag would be a remote code execution surface on a tool that renders
+ * whatever it is handed, and it would be useless anyway: the expression runs in
+ * the page, where nothing from this module exists, so `--probe "document.title"`
+ * works and `--probe "wideGaps()"` is a ReferenceError. The functions are
+ * named here, shipped by `Function.prototype.toString`, and can only be invoked
+ * the way they were written to be.
+ */
+function setProbe(opts: Options, argv: string[], i: number, a: string): Step {
+  const v = valueAfter(argv, i, a);
+  const known = PROBES as readonly string[];
+  if (!known.includes(v)) {
+    return {
+      kind: 'error',
+      error: `--probe takes one of ${known.join(', ')}, got "${v}"`,
+    };
+  }
+  opts.probe = v as ProbeName;
+  return consumedValue();
+}
+
+/** The named page-side probes `--probe` can ask for. */
+export const PROBES = ['gaps', 'fonts'] as const;
+export type ProbeName = (typeof PROBES)[number];
+
 function setJson(opts: Options): Step {
   opts.json = true;
   return consumedFlag();
@@ -241,6 +270,7 @@ const HANDLERS: Map<string, Handler> = new Map([
   ['--subject', setSubject],
   ['--keywords', setKeywords],
   ['--page-ranges', setPageRanges],
+  ['--probe', setProbe],
   ['--json', setJson],
   ['-q', setQuiet],
   ['--quiet', setQuiet],

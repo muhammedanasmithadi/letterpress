@@ -370,6 +370,143 @@ test('help documents every parsed flag, and every documented flag parses', async
   }
 });
 
+describe('what --json carries', () => {
+  // The summary fields were always there. These are the ones that were computed
+  // and then thrown away, and two of them were wrong before this: `pageSizes`
+  // returned `[""]` for every page of every document, and `outlineTitles` listed
+  // the bookmarks in reverse.
+  const DOC =
+    `<!doctype html><html lang="en"><head><style>@page{size:A4;margin:12mm}@page :first{size:Letter}` +
+    `body{font-family:"DejaVu Sans",sans-serif}p{page-break-before:always}</style></head>` +
+    `<body><h1>One</h1><h2>Two</h2><h3>Three</h3><p>a</p><p>b</p></body></html>`;
+
+  let out: string;
+  let got: Record<string, unknown>;
+
+  beforeAll(async () => {
+    const src = join(dir, 'info.html');
+    await writeFile(src, DOC, 'utf8');
+    out = join(dir, 'info.pdf');
+    const res = await run(['-o', out, '-q', src, '--json']);
+    expect(res.code).toBe(0);
+    got = JSON.parse(res.stdout) as Record<string, unknown>;
+  }, 120_000);
+
+  test('every field of the inspected pdf is there, not a chosen few', () => {
+    for (const key of [
+      'header',
+      'producer',
+      'pages',
+      'mediaBoxes',
+      'pageSizes',
+      'imageObjects',
+      'fontFiles',
+      'type0Fonts',
+      'toUnicodeMaps',
+      'tagged',
+      'outlineTitles',
+      'encrypted',
+    ]) {
+      expect(got, key).toHaveProperty(key);
+    }
+  });
+
+  test('the fields describe this document, and only this document', async () => {
+    expect(got.header).toBe('%PDF-1.4');
+    expect(got.tagged).toBe(true);
+    expect(got.encrypted).toBe(false);
+    expect(got.fontFiles).toBeGreaterThan(0);
+    // A font with no ToUnicode map cannot be selected or searched.
+    expect(got.toUnicodeMaps).toBeGreaterThan(0);
+  });
+
+  test('pageSizes says which page is which size, in page order', () => {
+    // The reason this field exists next to `mediaBoxes`: mediaBoxes is a set of
+    // distinct boxes, so it can say a document is mixed but not where the change
+    // happens. The first page is Letter because `@page :first` says so.
+    const sizes = got.pageSizes as string[];
+    expect(sizes).toHaveLength(got.pages as number);
+    expect(sizes[0]).toContain('612 792');
+    expect(sizes[1]).toContain('594.95996 841.91998');
+  });
+
+  test('outlineTitles is the order a reader sees, not the order in the file', () => {
+    // Chromium serialises an outline parent-first and backwards, so the file
+    // order of this document is document, Three, Two, One. A consumer building
+    // a table of contents from file order emits it reversed.
+    expect(got.outlineTitles).toEqual(['One', 'Two', 'Three']);
+  });
+
+  test('the summary fields still come first and keep their names', () => {
+    for (const key of ['ok', 'path', 'bytes', 'ms', 'source', 'blocked', 'findings']) {
+      expect(got, key).toHaveProperty(key);
+    }
+    expect(got.path).toBe(out);
+  });
+});
+
+describe('--probe', () => {
+  test('gaps names the element that produces a wide gap', async () => {
+    const src = join(dir, 'probe-gaps.html');
+    await writeFile(
+      src,
+      `<!doctype html><html lang="en"><head><style>@page{size:A4;margin:12mm}` +
+        `body{margin:0;font:12pt serif}.row{display:flex;gap:24px}</style></head>` +
+        `<body><div class="row"><span>a</span><span>b</span></div></body></html>`,
+      'utf8',
+    );
+    const { code, stdout } = await run([
+      '-o',
+      join(dir, 'probe-gaps.pdf'),
+      '-q',
+      src,
+      '--probe',
+      'gaps',
+      '--json',
+    ]);
+    expect(code).toBe(0);
+    const probe = (JSON.parse(stdout) as { probe: Array<{ cause: string; em: number }> }).probe;
+    expect(probe.length).toBeGreaterThan(0);
+    expect(probe[0]!.cause).toBe('flex-gap');
+  }, 120_000);
+
+  test('fonts reports the families the document asked for', async () => {
+    const src = join(dir, 'probe-fonts.html');
+    await writeFile(
+      src,
+      `<!doctype html><html lang="en"><head><style>@page{size:A4;margin:12mm}</style></head>` +
+        `<body><p style="font-family:'No Such Face'">x</p></body></html>`,
+      'utf8',
+    );
+    const { code, stdout } = await run([
+      '-o',
+      join(dir, 'probe-fonts.pdf'),
+      '-q',
+      src,
+      '--probe',
+      'fonts',
+      '--json',
+    ]);
+    expect(code).toBe(0);
+    const probe = (JSON.parse(stdout) as { probe: Array<{ family: string }> }).probe;
+    expect(probe.map((f) => f.family)).toContain('No Such Face');
+  }, 120_000);
+
+  test('no probe means no probe key with a value', async () => {
+    const src = join(dir, 'probe-none.html');
+    await writeFile(src, `<html lang="en"><body><p>x</p></body></html>`, 'utf8');
+    const { stdout } = await run(['-o', join(dir, 'probe-none.pdf'), '-q', src, '--json']);
+    expect((JSON.parse(stdout) as { probe?: unknown }).probe ?? null).toBeNull();
+  }, 120_000);
+
+  test('a probe it does not have is a usage error naming the ones it does', async () => {
+    const src = join(dir, 'probe-none.html');
+    const { code, stderr } = await run(['--probe', 'everything', src]);
+    expect(code).toBe(2);
+    expect(stderr).toContain('gaps, fonts');
+  }, 60_000);
+});
+
 describe('--page-ranges', () => {
   // The engine and the HTTP API have had this since before the cli did; the
   // flag was the missing piece, so these pin the parts a caller cannot see from

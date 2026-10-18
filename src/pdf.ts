@@ -2,7 +2,7 @@ const dec = new TextDecoder('latin1');
 
 // pdfparts imports nothing, so this direction is acyclic: pdf.ts reads the
 // trailer through it rather than growing a second, weaker `/Encrypt` probe.
-import { isEncrypted } from './pdfparts.ts';
+import { isEncrypted, trySplit, walkObjects, type Parts } from './pdfparts.ts';
 
 export type PdfInfo = {
   bytes: number;
@@ -63,11 +63,8 @@ export function inspect(pdf: Uint8Array): PdfInfo {
 
   const pages = pageCount(raw);
 
-  const pageSizes: string[] = [];
-  for (const m of raw.matchAll(/\/Type\s*\/Page[^s][\s\S]{0,400}?/g)) {
-    const box = m[0].match(/\/MediaBox\s*\[[^\]]*\]/);
-    pageSizes.push(box ? box[0] : '');
-  }
+  const parts = trySplit(pdf);
+  const pageSizes = pageSizesInOrder(parts);
 
   return {
     bytes: pdf.byteLength,
@@ -81,9 +78,111 @@ export function inspect(pdf: Uint8Array): PdfInfo {
     type0Fonts: all(/\/Subtype\s*\/Type0/g).length,
     toUnicodeMaps: all(/\/ToUnicode/g).length,
     tagged: /\/StructTreeRoot/.test(raw),
-    outlineTitles: all(/\/Title\s*\(([^)]*)\)/g).map((t) => t.slice(8, -1)),
+    outlineTitles: outlineTitles(parts),
     encrypted: isEncrypted(pdf),
   };
+}
+
+/**
+ * The paper of each page, in page order, one entry per page.
+ *
+ * Read from the page objects rather than by scanning the file for `/Type /Page`
+ * and hoping a `/MediaBox` follows: the old scan used a lazy `[\s\S]{0,400}?`,
+ * which matches as little as it can and so never reached the `/MediaBox` a few
+ * bytes further on. It returned `[""]` for every page of every document,
+ * including one whose first page is Letter and rest A4 -- measured, and the
+ * reason this is worth doing rather than deleting: whether a document is
+ * mixed-size is a question about a document, and `pageSizes` was the field that
+ * claimed to answer it.
+ *
+ * Page order is the order of the `/Kids` array in the page tree, which is the
+ * order a reader turns pages in. Objects appear in the same order in Chromium's
+ * output; where they do not, this says file order and the finding does not
+ * pretend otherwise.
+ */
+function pageSizesInOrder(parts: Parts | undefined): string[] {
+  if (!parts) return [];
+  const isPage = (d: string) => /\/Type\s*\/Page[^s]/.test(d);
+
+  let rootNum: number | undefined;
+  for (const o of parts.objs) {
+    const d = o.bytes.toString('latin1');
+    if (/\/Type\s*\/Pages/.test(d) && /\/Kids/.test(d)) {
+      rootNum = o.num;
+      break;
+    }
+  }
+
+  const order: string[] = [];
+  if (rootNum !== undefined) {
+    walkObjects(
+      parts,
+      [rootNum],
+      (o) => (isPage(o.dict) ? [] : kidsIn(o.dict)),
+      (o) => {
+        if (isPage(o.dict)) order.push(/\/MediaBox\s*\[[^\]]*\]/.exec(o.dict)?.[0] ?? '');
+      },
+    );
+  }
+
+  // No tree, or a tree that named no pages: file order, which is what the
+  // objects are in, and is the same order for a linear file.
+  if (order.length === 0) {
+    return parts.objs
+      .filter((o) => isPage(o.bytes.toString('latin1')))
+      .map((o) => /\/MediaBox\s*\[[^\]]*\]/.exec(o.bytes.toString('latin1'))?.[0] ?? '');
+  }
+  return order;
+}
+
+/** The numbers in a `/Kids [...]` array. */
+function kidsIn(dict: string): number[] {
+  return [...(/\/Kids\s*\[([^\]]*)\]/.exec(dict)?.[1] ?? '').matchAll(/(\d+) 0 R/g)].map((m) =>
+    Number(m[1]),
+  );
+}
+
+/**
+ * The bookmark titles, in the order a reader sees them.
+ *
+ * Not the order they appear in the file. Chromium serialises an outline
+ * parent-first and backwards, so the file order of a document with `One`, `Two`
+ * and `Three` is `document, Three, Two, One` -- measured -- and a consumer
+ * building a table of contents from it would emit the entries reversed. The
+ * `/First` and `/Next` links are the order that means something, so that is
+ * what is walked, depth first, parents before children.
+ */
+function outlineTitles(parts: Parts | undefined): string[] {
+  if (!parts) return [];
+  let rootNum: number | undefined;
+  for (const o of parts.objs) {
+    if (/\/Type\s*\/Outlines/.test(o.bytes.toString('latin1'))) {
+      rootNum = o.num;
+      break;
+    }
+  }
+  if (rootNum === undefined) return [];
+
+  const out: string[] = [];
+  walkObjects(
+    parts,
+    [rootNum],
+    (o) => [firstRef(o.dict, 'First'), nextRef(o.dict)].filter((n) => n > 0),
+    (o) => {
+      const title = /\/Title\s*\(([^)]*)\)/.exec(o.dict)?.[1];
+      if (title !== undefined) out.push(title);
+    },
+  );
+  return out;
+}
+
+/** The object number a `/Name n 0 R` entry points at, or 0. */
+function firstRef(dict: string, name: string): number {
+  return Number(new RegExp(`/${name}\\s+(\\d+) 0 R`).exec(dict)?.[1] ?? 0);
+}
+
+function nextRef(dict: string): number {
+  return firstRef(dict, 'Next');
 }
 
 function declaredPageProp(html: string, prop: string): string | null {

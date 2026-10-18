@@ -389,3 +389,81 @@ export function pageSideReport(printableWidthPx: number): PageSideReport {
     overflowing: scanOverflow(),
   };
 }
+
+/**
+ * The distinct fonts a document asks for, one element each, to be asked about
+ * over CDP.
+ *
+ * `document.fonts.check` is the obvious way to ask whether a family exists and
+ * it does not work. Measured: with no `@font-face` for it, it answers `true`
+ * for "Totally Absent Face" and for "Helvetica Neue" on a machine with neither,
+ * because it consults the `FontFaceSet` alone and there is no failed face to
+ * report. It only answers honestly when an `@font-face` exists and failed to
+ * load -- which is the case where nothing needs saying, since a webfont the
+ * browser cannot fetch already produces a `subresource-failed` finding.
+ *
+ * What does work is asking which font was actually used:
+ * `CSS.getPlatformFontsForNode` answers with the real faces, so a mismatch
+ * between what was asked for and what was drawn is a fact rather than a guess.
+ *
+ * The element carrying each family is marked with a `data-` attribute because
+ * that is the only handle CDP will take, and a node id cannot be written into
+ * a value-only evaluate. It is set and removed inside one render step, before
+ * anything is printed, and has no effect on layout or on any rule.
+ */
+export function fontProbe(): Array<{ family: string; elements: number }> {
+  const generic =
+    /^(serif|sans-serif|monospace|cursive|fantasy|system-ui|ui-|math|emoji|fangsong|inherit|initial)$/i;
+  // Nested rather than module-scope: see the note at the top of this file, and
+  // the gate counts per function -- these are the two questions the loop asks
+  // and neither is a step of the scan itself.
+  const drawsText = (el: Element): boolean => {
+    for (const node of el.childNodes) {
+      if (node.nodeType === 3 && (node.textContent ?? '').trim()) return true;
+    }
+    return false;
+  };
+
+  // The first family is the one asked for; the rest are the author's own
+  // fallback chain, and whether *they* exist is not this check's business -- if
+  // the first one exists, nothing fell back.
+  const wanted = (el: Element): string => {
+    const want = getComputedStyle(el)
+      .fontFamily.split(',')[0]!
+      .trim()
+      .replace(/^["']|["']$/g, '');
+    // Generic keywords never count: `serif` is a request for whatever the
+    // system considers serif, always satisfiable, nothing to fall back from.
+    return generic.test(want) ? '' : want;
+  };
+
+  const counts = new Map<string, number>();
+  const first = new Map<string, HTMLElement>();
+  for (const el of document.body.querySelectorAll<HTMLElement>('*')) {
+    if (!drawsText(el)) continue;
+    const want = wanted(el);
+    if (!want) continue;
+    counts.set(want, (counts.get(want) ?? 0) + 1);
+    if (!first.has(want)) first.set(want, el);
+  }
+  if (!counts.size) return [];
+
+  // A family backed by a FontFace that actually loaded is not a fallback, even
+  // when the face name will not match: `src: local("Noto Serif")` under the name
+  // LocalFace draws Noto Serif, which is what the author asked for, and
+  // `getPlatformFontsForNode` reports the concrete face rather than the alias.
+  // Measured both ways before this was added -- the name comparison alone called
+  // that a fallback, naming a substitution that had not happened.
+  const loaded = new Set<string>();
+  for (const face of document.fonts) {
+    if (face.status === 'loaded') loaded.add(face.family);
+  }
+
+  const found: Array<{ family: string; elements: number }> = [];
+  for (const [family, elements] of counts) {
+    if (loaded.has(family)) continue;
+    first.get(family)!.setAttribute('data-lp-font', String(found.length));
+    found.push({ family, elements });
+  }
+  return found;
+}

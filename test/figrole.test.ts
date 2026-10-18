@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Browser } from '../src/browser.ts';
+import { tabWithHtml } from './browser.ts';
 import { render } from '../src/render.ts';
 import { fixRedundantFigures, redundantFigureCount, redundantFigures } from '../src/figrole.ts';
 import { dictOf, structElementsInOrder, trySplit, LATIN1 } from '../src/pdfparts.ts';
@@ -155,16 +156,8 @@ describe('fixRedundantFigures', () => {
   }, 30_000);
 
   test('redundantFigures names the objects it would change', async () => {
-    const tab = await browser.newTab();
+    const tab = await tabWithHtml(browser, DOC(fig('x', 'y')));
     try {
-      await tab.send('Page.enable');
-      const { frameTree } = (await tab.send('Page.getFrameTree')) as {
-        frameTree: { frame: { id: string } };
-      };
-      await tab.send('Page.setDocumentContent', {
-        frameId: frameTree.frame.id,
-        html: DOC(fig('x', 'y')),
-      });
       await Bun.sleep(200);
       const res = (await tab.send('Runtime.evaluate', {
         expression: `(() => { const i = document.querySelector('img'); return JSON.stringify({ w: i.naturalWidth }); })()`,

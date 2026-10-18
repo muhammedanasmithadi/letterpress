@@ -138,13 +138,23 @@ asked.
 `--quiet` does not silence them, because they are diagnostics rather than part
 of the summary.
 
-Six of these read the loaded page before it is printed, so they cost nothing
+Seven of these read the loaded page before it is printed, so they cost nothing
 extra: the document is already there. `content-overflows-page` compares each
 element against either the printable width or the page box, depending on
 whether it is sized in pixels, because a fixed width survives into print while
 a fluid one scales with its container. Two shapes it cannot separate are stated
 in the finding itself rather than left as a surprise: a fixed width set by a
 stylesheet rule rather than inline, and an element that only print CSS widens.
+
+`font-fallback` asks the renderer rather than the document, because the
+document's own answer is unreliable: `document.fonts.check` reports `true` for
+any family with no matching `@font-face`, measured on a machine with neither
+"Totally Absent Face" nor "Helvetica Neue" installed. The face actually drawn
+comes back from `CSS.getPlatformFontsForNode`, so the finding names what
+Chromium printed instead — a `Georgia` request on a box with no Georgia comes
+back as "drawn in Noto Serif", which is the fact worth having. One round trip
+per distinct family, not per element; a document naming only generic keywords
+asks nothing.
 
 | code                        | meaning                                                                                                                               |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
@@ -183,6 +193,7 @@ stylesheet rule rather than inline, and an element that only print CSS widens.
 | `lang-undeclared`           | the document names no language, so Chromium stamped the pdf with the browser's locale instead                                         |
 | `figure-uncaptioned`        | a `<figure>` has no `<figcaption>`, which is what makes Chromium emit a Figure role in the tagged pdf                                 |
 | `content-overflows-page`    | an element is wider than the printable area, measured in screen layout                                                                |
+| `font-fallback`             | the document asks for a family this machine does not have; the finding names the substitute Chromium printed instead                  |
 | `stylesheet-unreadable`     | a cross-origin stylesheet could not be read, so layout findings cover only this origin                                                |
 | `url-render-blocked`        | a remote URL needs `allowNetwork`; without it its subresource loads and usually the document itself is blocked                        |
 

@@ -9,7 +9,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Browser } from '../src/browser.ts';
+import { Browser, type Tab } from '../src/browser.ts';
 
 export type TestBrowser = {
   browser: Browser;
@@ -24,4 +24,24 @@ export async function launchTestBrowser(name: string): Promise<TestBrowser> {
 export async function closeTestBrowser(t: TestBrowser): Promise<void> {
   await t.browser.close();
   await rm(t.profile, { recursive: true, force: true }).catch(() => {});
+}
+
+/**
+ * A tab holding exactly the markup given, with the domains enabled.
+ *
+ * Same reason as `launchTestBrowser`, one step further on: `Page.enable`,
+ * `getFrameTree` and `setDocumentContent` in a row is a sequence every test
+ * that drives a tab by hand has to get right in the same order, and the
+ * duplication gate counted the third copy of it rather than the reason it is
+ * there.
+ */
+export async function tabWithHtml(browser: Browser, html: string): Promise<Tab> {
+  const tab = await browser.newTab();
+  await tab.send('Page.enable');
+  await tab.send('Runtime.enable');
+  const { frameTree } = (await tab.send('Page.getFrameTree')) as {
+    frameTree: { frame: { id: string } };
+  };
+  await tab.send('Page.setDocumentContent', { frameId: frameTree.frame.id, html });
+  return tab;
 }

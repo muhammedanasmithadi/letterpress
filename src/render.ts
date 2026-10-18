@@ -10,6 +10,7 @@ import { textFlow } from './selection.ts';
 import { mergeTextRuns } from './tjmerge.ts';
 import {
   applyImageReplacements,
+  fontProbe,
   measureImages,
   pageSideReport,
   type PageSideReport,
@@ -739,6 +740,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       await tab.send('Page.enable');
       await tab.send('Runtime.enable');
       await tab.send('Network.enable');
+      void enableFontDomains(tab);
       // A modal dialog blocks the renderer until something answers it. Measured
       // with a page that calls `alert()`: nothing answered, the render sat out
       // the full deadline, and the failure surfaced as `cdp socket closed` --
@@ -785,6 +787,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         .then((r: { result?: { value?: PageSideReport } }) => r.result?.value);
       if (report) findings.push(...pageSideFindings(report, printableWidth));
       findings.push(...scriptErrorFindings(alive.errors()));
+      findings.push(...(await fontFindings(tab, timeoutMs)));
 
       const { raw } = await printPdf(tab, req, override, declaresPaper, timeoutMs, timedOutRef);
 
@@ -1140,6 +1143,111 @@ function langFinding(report: PageSideReport | undefined, raw: Uint8Array): Findi
         `spell-checking is wrong too. set lang on the <html> element.`,
     },
   ];
+}
+
+/**
+ * The two domains the font check needs, best effort.
+ *
+ * A renderer that will not answer these cannot answer the font question
+ * either, and losing a finding is not worth failing a render over -- the rest
+ * of the page-side findings do not depend on either domain. The DOM domain
+ * caches a document, so it is the document pushed after the content is set
+ * that the check queries, not whatever this enabled against.
+ */
+async function enableFontDomains(tab: Tab): Promise<void> {
+  await Promise.all([tab.send('DOM.enable'), tab.send('CSS.enable')]).catch(() => {});
+}
+
+/**
+ * Whether the pdf is set in the typeface the document asked for.
+ *
+ * The question has to be asked of the renderer rather than of the document,
+ * because the document's own view is unreliable: `document.fonts.check` answers
+ * `true` for any family with no matching `@font-face`, measured on a machine
+ * with neither "Totally Absent Face" nor "Helvetica Neue" installed. The face
+ * actually drawn is reported by `CSS.getPlatformFontsForNode`, so this compares
+ * what was asked for against what was used.
+ *
+ * The cost is one round trip per distinct family, not per element: the page
+ * marks one representative per family and this asks about each of those. A
+ * document naming only generic families asks nothing.
+ *
+ * Never throws. A renderer that cannot answer this is not a renderer that
+ * cannot print, and losing a finding is not worth failing a render over.
+ */
+async function fontFindings(tab: Tab, timeoutMs: number): Promise<Finding[]> {
+  let asked: Array<{ family: string; elements: number }>;
+  try {
+    // Push the document after `setDocumentContent`, not before: the DOM domain
+    // caches it, and a stale root makes every lookup miss.
+    const { root } = (await tab.send('DOM.getDocument', {}, timeoutMs)) as {
+      root: { nodeId: number };
+    };
+    asked = await tab
+      .send('Runtime.evaluate', { expression: `(${fontProbe})()`, returnByValue: true }, timeoutMs)
+      .then(
+        (r: { result?: { value?: Array<{ family: string; elements: number }> } }) =>
+          r.result?.value ?? [],
+      );
+    if (!asked.length) return [];
+
+    const missed: Array<{ family: string; elements: number; used: string }> = [];
+    for (const [i, want] of asked.entries()) {
+      const { nodeId } = (await tab.send(
+        'DOM.querySelector',
+        { nodeId: root.nodeId, selector: `[data-lp-font="${i}"]` },
+        timeoutMs,
+      )) as { nodeId: number };
+      const used = (
+        (await tab.send('CSS.getPlatformFontsForNode', { nodeId }, timeoutMs)) as {
+          fonts?: Array<{ familyName: string }>;
+        }
+      ).fonts?.map((f) => f.familyName);
+      // One unavailable family can leave the rest of a chain in use, so a
+      // single match anywhere in what was drawn settles it -- including the
+      // per-glyph case, where a face missing one character is listed beside
+      // the substitute that covered it.
+      if (used?.some((u) => u.toLowerCase() === want.family.toLowerCase())) continue;
+      missed.push({ ...want, used: used?.join(', ') || 'nothing' });
+    }
+    return missed.length ? [fontFinding(missed)] : [];
+  } catch {
+    return [];
+  } finally {
+    // Whatever happened above, the page goes back the way it was found.
+    void tab
+      .send('Runtime.evaluate', {
+        expression: `document.querySelectorAll('[data-lp-font]').forEach((e) => e.removeAttribute('data-lp-font'))`,
+        returnByValue: true,
+      })
+      .catch(() => {});
+  }
+}
+
+function fontFinding(missed: Array<{ family: string; elements: number; used: string }>): Finding {
+  const named = missed
+    .slice(0, 3)
+    .map(
+      (m) =>
+        `${m.family} (${m.elements} element${m.elements === 1 ? '' : 's'}, drawn in ${m.used})`,
+    )
+    .join(', ');
+  // Each of these is a separate statement rather than an interpolation inside
+  // the message. A backtick nested inside `${}` is enough for lizard to lose
+  // track of where the function ends: measured, it read this one as 201 lines
+  // long with a complexity of 40, swallowing the six functions after it, and
+  // the ratchet believed it.
+  const families = missed.length === 1 ? 'family' : 'families';
+  const extra = missed.length > 3 ? `, and ${missed.length - 3} more` : '';
+  return {
+    code: 'font-fallback',
+    severity: 'warn',
+    message:
+      `the document asks for ${missed.length} font ${families} this machine does not have: ` +
+      `${named}${extra}. chromium printed a substitute, so the pdf is not set in the typeface asked ` +
+      `for -- line breaks and spacing follow the substitute's metrics, and so does the page count. ` +
+      `ship the font as a webfont, or name one that is installed.`,
+  };
 }
 
 /**

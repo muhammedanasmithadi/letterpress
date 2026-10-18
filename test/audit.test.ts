@@ -6,6 +6,8 @@ import { deflateSync } from 'node:zlib';
 import { Browser } from '../src/browser.ts';
 import { render } from '../src/render.ts';
 import { readXmpPacket } from '../src/meta.ts';
+import { fontProbe } from '../src/pageside.ts';
+import { tabWithHtml } from './browser.ts';
 import { launchTestServer, serverOrigin } from './servers.ts';
 
 function widePng(width: number, height: number): Buffer {
@@ -920,5 +922,114 @@ describe('what the page said about itself', () => {
     const f = r.findings.find((x) => x.code === 'js-error')!;
     expect(f.severity).toBe('warn');
     expect(f.message).toContain('undefinedThing');
+  }, 60_000);
+});
+
+describe('the typeface the pdf was actually set in', () => {
+  const sheet = '<style>@page{size:A4;margin:15mm}</style>';
+  const codes = (r: { findings: Array<{ code: string }> }) => r.findings.map((f) => f.code);
+  const one = async (css: string, body = '<p id="a">text</p>') =>
+    codes(
+      await render(browser, {
+        html: `<html lang="en">${sheet}<style>${css}</style><body>${body}</body></html>`,
+      }),
+    );
+
+  // Whatever face this machine has. `fc-list` decides that, and the test asks
+  // the renderer rather than naming one, so it holds on a machine with a
+  // different font set installed.
+  let installed = 'serif';
+  beforeAll(async () => {
+    const tab = await tabWithHtml(browser, '<html lang="en"><body></body></html>');
+    const got = (await tab.send('Runtime.evaluate', {
+      expression: `JSON.stringify(['Noto Serif','Noto Sans','DejaVu Serif','Liberation Serif'].filter((f) => document.fonts.check('16px "' + f + '"')))`,
+      returnByValue: true,
+    })) as { result: { value: string } };
+    installed = (JSON.parse(got.result.value) as string[])[0] ?? 'serif';
+    await browser.closeTab(tab);
+  }, 30_000);
+
+  test('a family this machine has is not a fallback', async () => {
+    expect(await one(`#a{font-family:"${installed}"}`)).not.toContain('font-fallback');
+    // A chain whose first entry exists never falls back either.
+    expect(await one(`#a{font-family:"${installed}",Georgia}`)).not.toContain('font-fallback');
+  }, 90_000);
+
+  test('a family it does not have is, and the substitute is named', async () => {
+    const r = await render(browser, {
+      html: `<html lang="en">${sheet}<style>#a{font-family:"No Such Face Anywhere"}</style><body><p id="a">x</p></body></html>`,
+    });
+    const found = r.findings.find((f) => f.code === 'font-fallback');
+    expect(found).toBeDefined();
+    expect(found!.severity).toBe('warn');
+    // The point of asking the renderer rather than the document: the finding
+    // says what was drawn instead, so it is actionable.
+    expect(found!.message).toContain('drawn in ');
+  }, 60_000);
+
+  test('a generic keyword is not a family that can be missing', async () => {
+    // `serif` is a request for whatever the system considers serif. There is
+    // nothing behind it to fall back from.
+    for (const keyword of ['serif', 'sans-serif', 'monospace', 'system-ui']) {
+      expect(await one(`#a{font-family:${keyword}}`), keyword).not.toContain('font-fallback');
+    }
+  }, 120_000);
+
+  test('an @font-face that loaded is not a fallback, even under an alias', async () => {
+    // Measured false positive before this was handled: `src: local(...)` under
+    // a new name draws the concrete face, and `getPlatformFontsForNode` reports
+    // that name rather than the alias, so the comparison called it a
+    // substitution that had not happened.
+    expect(
+      await one(`@font-face{font-family:Aliased;src:local("${installed}")}#a{font-family:Aliased}`),
+    ).not.toContain('font-fallback');
+  }, 60_000);
+
+  test('every missing family is named, with how many elements asked for it', async () => {
+    const r = await render(browser, {
+      html: `<html lang="en">${sheet}<style>#a,#b{font-family:Missing One}#c{font-family:Missing Two}</style><body><p id="a">x</p><p id="b">y</p><p id="c">z</p></body></html>`,
+    });
+    const f = r.findings.find((x) => x.code === 'font-fallback')!;
+    expect(f.message).toContain('Missing One (2 elements');
+    expect(f.message).toContain('Missing Two (1 element');
+  }, 60_000);
+
+  test('an element that draws no text is not asked about', async () => {
+    expect(await one(`body{font-family:"No Such Face Anywhere"}`, '<div></div>')).not.toContain(
+      'font-fallback',
+    );
+  }, 60_000);
+
+  test('the marker the node ids hang off is removed again', async () => {
+    // `DOM.querySelector` is the only handle CDP takes, and a node id cannot be
+    // written into a value-only evaluate, so the page marks one element per
+    // family. The window where the document is not as it was found is inside
+    // one step, and this is what closes it.
+    const tab = await tabWithHtml(
+      browser,
+      `<html lang="en"><body><p id="a" style="font-family:'No Such Face'">x</p></body></html>`,
+    );
+
+    const asked = (await tab.send('Runtime.evaluate', {
+      expression: `(${fontProbe})()`,
+      returnByValue: true,
+    })) as { result: { value: Array<{ family: string; elements: number }> } };
+    expect(asked.result.value).toEqual([{ family: 'No Such Face', elements: 1 }]);
+
+    const count = async () =>
+      (
+        (await tab.send('Runtime.evaluate', {
+          expression: `document.querySelectorAll('[data-lp-font]').length`,
+          returnByValue: true,
+        })) as { result: { value: number } }
+      ).result.value;
+    expect(await count()).toBe(1);
+
+    await tab.send('Runtime.evaluate', {
+      expression: `document.querySelectorAll('[data-lp-font]').forEach((e) => e.removeAttribute('data-lp-font'))`,
+      returnByValue: true,
+    });
+    expect(await count()).toBe(0);
+    await browser.closeTab(tab);
   }, 60_000);
 });

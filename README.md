@@ -169,6 +169,7 @@ of the summary.
 | `output-unverified`         | the finished file failed the structural check; an error, never a warning                                                              |
 | `page-probe-failed`         | a page-side probe threw, so its measurement is absent                                                                                 |
 | `repair-rejected`           | a repair was discarded because it did not leave a valid pdf; the file is unchanged                                                    |
+| `dialog-dismissed`          | the document opened an `alert`/`confirm`/`prompt` mid-render and it was refused, so a blocked script never finished                   |
 | `stylesheet-unreadable`     | a cross-origin stylesheet could not be read, so layout findings cover only this origin                                                |
 | `url-render-blocked`        | a remote URL needs `allowNetwork`; without it its subresource loads and usually the document itself is blocked                        |
 
@@ -445,6 +446,14 @@ veraPDF is not vendored — 33MB of Java with a bundled JRE — so `tools/pdfua.
 reads `VERA_PDF` and points at an install. It is **not pinned by this repository**:
 the conformance numbers recorded in `docs/architecture-assessment.md` were measured
 with 1.30.3, and a different version can move them.
+
+Encrypted files are reported rather than repaired. Seven repair modules — the
+toUnicode, font descriptor, link description, metadata, figure-role, text-run and
+ligature-span fixes — decline a file that declares `/Encrypt` in its trailer,
+because repairing one would mean writing a key into it. `inspect()` reports
+`encrypted` so a caller can see why nothing was fixed. A render cannot produce
+one: Chromium writes the file, and a PDF passed in as input is refused as not
+HTML.
 
 `tools/structure-tree.ts <file.pdf>` prints a tagged document's structure tree and
 the MCID census behind it, which is the fastest way to see what a change to the

@@ -15,6 +15,7 @@ import {
   LATIN1,
   type Obj,
 } from '../src/pdfparts.ts';
+import { inspect } from '../src/pdf.ts';
 import { contentPayloads, verify } from '../src/verify.ts';
 import { assemblePdf, encryptedFixture } from './fixtures.ts';
 
@@ -529,5 +530,32 @@ describe('encryption declared in the trailer', () => {
     expect(isEncrypted(decoy)).toBe(false);
     // Not a linear file at all: undeterminable, not encrypted.
     expect(isEncrypted(new Uint8Array([1, 2, 3]))).toBe(false);
+  });
+});
+
+describe('inspect says whether a file is encrypted', () => {
+  // Six repair modules decline an encrypted file whole -- figrole, fontdesc,
+  // linkdesc, meta, spans, tjmerge and tounicode all return their input
+  // untouched -- and until now the only sign of that was a repair that had
+  // quietly done nothing. A caller reading `fontFiles` on a file it believed
+  // had been fixed had no way to know the fixes were skipped.
+  test('a declared /Encrypt is reported', () => {
+    expect(inspect(new Uint8Array(encryptedFixture())).encrypted).toBe(true);
+  });
+
+  test('an ordinary file is reported as not encrypted', () => {
+    expect(
+      inspect(new Uint8Array(assemblePdf(['<< /Type /Catalog /Pages 2 0 R >>']))).encrypted,
+    ).toBe(false);
+  });
+
+  test('the word inside a content stream is not a declaration', () => {
+    // Same rule the repairs use: /Encrypt in the trailer is a declaration,
+    // and anywhere else it is document bytes.
+    const decoy = assemblePdf([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      { dict: '<< /Length 8 >>', payload: Buffer.from('/Encrypt', LATIN1) },
+    ]);
+    expect(inspect(new Uint8Array(decoy)).encrypted).toBe(false);
   });
 });

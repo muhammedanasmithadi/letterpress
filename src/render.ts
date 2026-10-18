@@ -734,6 +734,13 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
       await tab.send('Page.enable');
       await tab.send('Runtime.enable');
       await tab.send('Network.enable');
+      // A modal dialog blocks the renderer until something answers it. Measured
+      // with a page that calls `alert()`: nothing answered, the render sat out
+      // the full deadline, and the failure surfaced as `cdp socket closed` --
+      // an error naming the transport rather than the document. And a tab that
+      // dies outright used to cost the same full deadline before anyone noticed.
+      // Both now say so at once.
+      const alive = watchTab(tab);
       const net = await watchNetwork(tab, {
         loopback: loopbackPattern(server),
         allowNetwork: req.allowNetwork === true,
@@ -791,11 +798,19 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
 
       const info = inspect(pdf);
 
+      if (!alive.alive()) {
+        throw new Error(
+          `the browser tab crashed while printing, most likely out of memory on a very large ` +
+            `document. the deadline would have said only that ${timeoutMs}ms passed.`,
+        );
+      }
+
       findings.push(
         ...metadataFindings(docMeta, req, rejected),
         ...assetFindings(outsideRoot, req),
         ...networkFindings(blocked, failedSubresources, req),
         ...fontMetricFindings(pdf),
+        ...dialogFindings(alive.dialogs()),
       );
 
       return {
@@ -1120,6 +1135,29 @@ type LoadRequest = {
   timedOutRef: { timedOut: boolean };
 };
 
+/**
+ * A document that asked for a decision mid-render.
+ *
+ * Reported because it changes what the PDF means. A page that blocks on
+ * `confirm()` and is then refused is a page whose script did not finish: whatever
+ * the rest of the run then produced is whatever ran next, and the caller has no
+ * way to know from the file alone that anything was interrupted.
+ */
+function dialogFindings(dialogs: number): Finding[] {
+  if (!dialogs) return [];
+  return [
+    {
+      code: 'dialog-dismissed',
+      severity: 'warn',
+      message:
+        `the document opened ${dialogs} modal dialog${dialogs === 1 ? '' : 's'} ` +
+        `(alert, confirm or prompt) and this renderer refused ${dialogs === 1 ? 'it' : 'them'}, ` +
+        `because a print job has no user to answer. a script blocked on a decision ` +
+        `never finished, so the pages after that point are whatever ran next.`,
+    },
+  ];
+}
+
 type NetworkWatch = {
   /** The status of the main document, once one has answered. */
   mainStatus(): number | undefined;
@@ -1141,6 +1179,57 @@ type NetworkWatch = {
  * Loopback is never blocked. Remote requests are, unless the caller allowed
  * them, and the first few are named so the reader knows which.
  */
+/**
+ * Answer anything that would otherwise stop the renderer, and notice when the
+ * tab dies.
+ *
+ * Two subscriptions, both for the same reason: a page can wedge the print
+ * pipeline in a way that produces no error event at all, and the only symptom
+ * is that the deadline arrives with nothing to show for it.
+ *
+ * A document calling `alert()` -- which needs no permission and no user gesture
+ * -- blocks the renderer until a dialog is handled. Nothing printed and nothing
+ * was logged; the render simply ran out of time and the tab was torn down, which
+ * closed the socket and produced `cdp socket closed`. That is an error naming
+ * the transport rather than the document, and it is the one failure a caller
+ * cannot act on. Refusing the dialog is also the right answer rather than the
+ * polite one: a print job has no user to click the button.
+ *
+ * `Inspector.targetCrashed` covers the other silence. A tab killed by the
+ * out-of-memory killer on a very large document reports nothing on the print
+ * path, so the deadline was the only signal, and paying it in full says less
+ * than the event does.
+ */
+type TabWatch = {
+  /** False once the tab has crashed, so the caller can stop waiting for it. */
+  alive(): boolean;
+  /** How many modal dialogs the document opened and this renderer refused. */
+  dialogs(): number;
+};
+
+function watchTab(tab: Tab): TabWatch {
+  let crashed = false;
+  let dialogs = 0;
+
+  tab.on('Page.javascriptDialogOpening', () => {
+    dialogs++;
+    void tab.send('Page.handleJavaScriptDialog', { accept: false }).catch(() => {});
+  });
+  void tab
+    .send('Inspector.enable')
+    .then(() => {
+      tab.on('Inspector.targetCrashed', () => {
+        crashed = true;
+      });
+    })
+    .catch(() => {
+      // Without the domain the deadline still applies. Nothing is lost but the
+      // early signal, so this is not worth failing a render over.
+    });
+
+  return { alive: () => !crashed, dialogs: () => dialogs };
+}
+
 async function watchNetwork(
   tab: Tab,
   opts: {

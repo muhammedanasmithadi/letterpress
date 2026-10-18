@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -747,3 +747,73 @@ test('images are downsampled to the cap, and reported', async () => {
     },
   );
 }, 90_000);
+
+describe('a page that blocks the renderer', () => {
+  // A document calling `alert()` needs no permission and no user gesture, and
+  // blocks the renderer until something answers it. Measured before this was
+  // handled: the render sat out its whole deadline and came back as
+  // `cdp socket closed` -- an error naming the transport rather than the
+  // document, which is the one failure a caller cannot act on.
+  test('a modal dialog is refused and the render still completes', async () => {
+    const r = await render(browser, {
+      html:
+        '<!doctype html><style>@page{size:A4;margin:15mm}</style>' +
+        '<body><p>before the dialog</p><script>alert("are you sure")</script>' +
+        '<p>after the dialog</p></body>',
+      timeoutMs: 20_000,
+    });
+    expect(r.info.pages).toBe(1);
+    expect(codes(r.findings)).toContain('dialog-dismissed');
+  }, 60_000);
+
+  test('a document with no dialog reports none', async () => {
+    const r = await render(browser, {
+      html: '<!doctype html><style>@page{size:A4}</style><p>quiet</p>',
+    });
+    expect(codes(r.findings)).not.toContain('dialog-dismissed');
+  }, 60_000);
+
+  test('the finding says the script never finished', async () => {
+    // The refusal is not politeness: a script blocked on a decision does not
+    // continue, so whatever the rest of the run produced is whatever ran next,
+    // and the file alone cannot show that.
+    const r = await render(browser, {
+      html:
+        '<!doctype html><style>@page{size:A4;margin:15mm}</style>' +
+        '<body><script>prompt("name")</script><p>x</p></body>',
+      timeoutMs: 20_000,
+    });
+    const finding = r.findings.find((f) => f.code === 'dialog-dismissed')!;
+    expect(finding.severity).toBe('warn');
+    expect(finding.message).toContain('never finished');
+  }, 60_000);
+});
+
+test('a crashed tab is reported rather than waited out', async () => {
+  // A tab killed by the out-of-memory killer on a very large document emits
+  // nothing on the print path, so the deadline was the only signal -- and paying
+  // it in full says less than this event does. The event is what the render's
+  // fast-fail reads.
+  //
+  // This proves the mechanism, not the render path: `Page.crash` cannot be
+  // staged inside a real render, so what is pinned here is that the event fires
+  // on a crash at all. Without the subscription there is no other signal.
+  const tab = await browser.newTab();
+  await tab.send('Page.enable');
+  await tab.send('Inspector.enable');
+  let crashed = false;
+  tab.on('Inspector.targetCrashed', () => {
+    crashed = true;
+  });
+  await new Promise((r) => setTimeout(r, 200));
+  expect(crashed).toBe(false);
+
+  // The call itself never answers -- the tab is gone -- so it is given a short
+  // deadline rather than the 30s default, and the wait afterwards polls rather
+  // than guessing: the renderer takes its own time to actually die.
+  void tab.send('Page.crash', {}, 2_000).catch(() => {});
+  for (let i = 0; i < 40 && !crashed; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  expect(crashed).toBe(true);
+}, 30_000);

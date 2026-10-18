@@ -1,5 +1,9 @@
 const dec = new TextDecoder('latin1');
 
+// pdfparts imports nothing, so this direction is acyclic: pdf.ts reads the
+// trailer through it rather than growing a second, weaker `/Encrypt` probe.
+import { isEncrypted } from './pdfparts.ts';
+
 export type PdfInfo = {
   bytes: number;
   header: string;
@@ -17,6 +21,17 @@ export type PdfInfo = {
   toUnicodeMaps: number;
   tagged: boolean;
   outlineTitles: string[];
+
+  /**
+   * Whether the file declares `/Encrypt` in its trailer.
+   *
+   * Said here because six repair modules decline such files whole -- `figrole`,
+   * `fontdesc`, `linkdesc`, `meta`, `spans`, `tjmerge`, `tounicode` all return
+   * their input untouched -- and until now the only sign of it was that a repair
+   * had quietly done nothing. An unreadable font descriptor in a file the caller
+   * believed had been fixed is worse than a declared refusal.
+   */
+  encrypted: boolean;
 };
 
 function pageCount(raw: string): number {
@@ -67,6 +82,7 @@ export function inspect(pdf: Uint8Array): PdfInfo {
     toUnicodeMaps: all(/\/ToUnicode/g).length,
     tagged: /\/StructTreeRoot/.test(raw),
     outlineTitles: all(/\/Title\s*\(([^)]*)\)/g).map((t) => t.slice(8, -1)),
+    encrypted: isEncrypted(pdf),
   };
 }
 

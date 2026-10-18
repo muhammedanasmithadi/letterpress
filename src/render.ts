@@ -1503,21 +1503,21 @@ function watchTab(tab: Tab): TabWatch {
     const text = d?.exception?.description?.split('\n')[0]?.trim() || d?.text || 'unknown error';
     if (!errors.includes(text)) errors.push(text);
   });
-  void tab
-    .send('Log.enable')
-    .then(() => {
-      // Severity `error` only. A warning is the page complaining about something
-      // it recovered from, which is not a fact about the pdf.
-      tab.on('Log.entryAdded', (p) => {
-        if (p.entry?.level !== 'error') return;
-        const text = p.entry.text?.split('\n')[0]?.trim();
-        if (text && !errors.includes(text)) errors.push(text);
-      });
-    })
-    .catch(() => {
-      // Console errors are a bonus; the exception event above is the one that
-      // matters and needs no domain enabled.
-    });
+  // `Log.entryAdded` was tried here and removed, having been measured twice.
+  //
+  // Console messages do not arrive through it: a document calling
+  // `console.error` produces `Runtime.consoleAPICalled` and nothing here, so a
+  // listener on this domain never sees one. What it does see is failed
+  // resource loads, with `source: 'network'` -- and Chromium asks for
+  // `/favicon.ico` on its own for every document loaded over http, so this
+  // reported "the document threw an uncaught error" on essentially every
+  // render that used the static server, for a request the document never made.
+  // Those 404s are already `subresource-failed`, which names the URL and the
+  // kind; repeating them here as a script error added noise and nothing else.
+  //
+  // The exception event above needs no domain enabled and is the whole of what
+  // this finding claims. A logged-but-not-thrown error is a different fact and
+  // would be a different code, from a different event.
   void tab
     .send('Inspector.enable')
     .then(() => {
@@ -1555,6 +1555,23 @@ function scriptErrorFindings(errors: string[]): Finding[] {
         `to set up did not happen, so the pages may not be the document you wrote.`,
     },
   ];
+}
+
+/**
+ * Chromium's own icon request.
+ *
+ * The browser asks for `/favicon.ico` unprompted for anything loaded over http,
+ * so it fails on every document the static server serves and the document never
+ * mentioned it. Measured on a page with a missing stylesheet and a missing
+ * image: `subresource-failed` reported three, naming a file that was not in the
+ * markup. The document is missing two things and that is what it should say.
+ *
+ * One definition for both handlers that see a failure, so the rule cannot be
+ * applied in one place and forgotten in the other -- which is how it was, with
+ * the response handler exempting the favicon and the failure handler not.
+ */
+function isFavicon(url: string | undefined): boolean {
+  return url !== undefined && /\/favicon\.ico(\?|$)/.test(url);
 }
 
 async function watchNetwork(
@@ -1598,8 +1615,7 @@ async function watchNetwork(
   }
   tab.on('Network.responseReceived', (p) => {
     const status = p.response?.status ?? 0;
-    const isFavicon = /\/favicon\.ico(\?|$)/.test(p.response?.url ?? '');
-    if (status >= 400 && p.type && p.type !== 'Document' && !isFavicon) {
+    if (status >= 400 && p.type && p.type !== 'Document' && !isFavicon(p.response?.url)) {
       failedSubresources.push({ kind: p.type, url: `${status} ${p.response?.url ?? ''}` });
     }
   });
@@ -2319,19 +2335,40 @@ function networkFindings(
     });
   }
   if (failedSubresources.length) {
-    const kinds = [...new Set(failedSubresources.map((f) => f.kind))];
-    const images = failedSubresources.filter((f) => f.kind === 'Image').length;
+    // Distinct URLs, not distinct events.
+    //
+    // One missing file arrives more than once: measured on a document with a
+    // missing stylesheet and a missing image, the stylesheet was reported by two
+    // events under two resource types, so the finding said "3 subresources
+    // (Stylesheet, Image, Fetch)" and then listed two URLs under it. The count
+    // was counting the browser's events and the list was counting the files, and
+    // the two answers are not the same question. The file is what the document
+    // is missing, so the file is what is counted.
+    //
+    // An entry with no URL cannot be compared with anything and keeps its own
+    // place, because there is nothing to tell it apart by.
+    const seen = new Set<string>();
+    const unique = failedSubresources.filter((f) => {
+      if (isFavicon(f.url)) return false;
+      if (!f.url) return true;
+      if (seen.has(f.url)) return false;
+      seen.add(f.url);
+      return true;
+    });
 
-    const listed = [...new Set(failedSubresources.map((f) => f.url))]
+    const kinds = [...new Set(unique.map((f) => f.kind))];
+    const images = unique.filter((f) => f.kind === 'Image').length;
+
+    const listed = [...new Set(unique.map((f) => f.url))]
       .slice(0, 5)
       .map((u) => `  ${u}`)
       .join('\n');
     out.push({
       code: 'subresource-failed',
       severity: 'warn',
-      url: failedSubresources[0]?.url,
+      url: unique[0]?.url,
       message:
-        `${failedSubresources.length} ${failedSubresources.length === 1 ? 'subresource' : 'subresources'} (${kinds.join(', ')}) failed to load, so the document is missing ${failedSubresources.length === 1 ? 'it' : 'them'}.\n${listed}` +
+        `${unique.length} ${unique.length === 1 ? 'subresource' : 'subresources'} (${kinds.join(', ')}) failed to load, so the document is missing ${unique.length === 1 ? 'it' : 'them'}.\n${listed}` +
         (images
           ? `\n${images} ${images === 1 ? 'is an image' : 'are images'}: where a picture should be, the pdf carries chromium's broken-image placeholder.`
           : '') +

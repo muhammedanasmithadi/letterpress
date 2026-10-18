@@ -915,6 +915,23 @@ describe('what the page said about itself', () => {
     expect(await one('<p>quiet</p>')).not.toContain('js-error');
   }, 90_000);
 
+  test('a missing asset is not a script error', async () => {
+    // Measured false positive. `Log.entryAdded` was read as a second source of
+    // script errors, and it is not one: console messages arrive through
+    // `Runtime.consoleAPICalled` and never appear there, while failed resource
+    // loads do -- with `source: 'network'`. Chromium requests /favicon.ico on
+    // its own for anything loaded over http, so this reported "the document
+    // threw an uncaught error" on every render that used the static server, for
+    // a request the document never made, duplicating `subresource-failed`.
+    const r = await render(browser, {
+      html: `<html lang="en">${sheet}<body><img src="gone.png" alt="x"><p>t</p></body></html>`,
+    });
+    const codes = r.findings.map((f) => f.code);
+    expect(codes).not.toContain('js-error');
+    // The fact is still reported, by the check that owns it.
+    expect(codes).toContain('subresource-failed');
+  }, 90_000);
+
   test('the script error names the browser own wording', async () => {
     const r = await render(browser, {
       html: `<html lang="en">${sheet}<body><script>undefinedThing()</script></body></html>`,

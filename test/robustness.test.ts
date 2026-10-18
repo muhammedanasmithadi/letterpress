@@ -144,6 +144,28 @@ describe('a missing subresource does not kill the render', () => {
 
     expect(code!.message).toContain('broken-image placeholder');
   }, 60_000);
+
+  test('a missing asset is counted once, whatever the browser reports', async () => {
+    // Measured: one missing stylesheet arrived as two events under two resource
+    // types, so the finding said "3 subresources (Stylesheet, Image, Fetch)"
+    // over a document missing two files, and then listed two URLs under it. The
+    // count was counting events and the list was counting files.
+    await writeFile(
+      join(dir, 'counted.html'),
+      `<!doctype html><html lang="en"><head><link rel="stylesheet" href="gone.css"></head>` +
+        `<body><img src="gone.png" alt="x"></body></html>`,
+    );
+    const r = await render(browser, { path: join(dir, 'counted.html') });
+    const f = r.findings.find((x) => x.code === 'subresource-failed')!;
+    const listed = [...f.message.matchAll(/^ {2}\d{3} http/gm)].map((m) => m[0]);
+    expect(listed).toHaveLength(2);
+    // The number in the sentence is the number of URLs under it.
+    const claimed = Number(/^(\d+) subresources?/.exec(f.message)![1]);
+    expect(claimed).toBe(listed.length);
+    // Chromium asks for /favicon.ico by itself; it is not something the document
+    // is missing, and it was counted here before.
+    expect(f.message).not.toContain('favicon');
+  }, 60_000);
 });
 
 describe('the relative-asset scan sees every reference form', () => {

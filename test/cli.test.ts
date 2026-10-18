@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { flagNames, parseArgs } from '../src/cli.ts';
 import { pdfInfo, pdfText } from './poppler.ts';
+import { readFile } from 'node:fs/promises';
+
+const bytesOf = async (p: string) => new Uint8Array(await readFile(p));
 
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
 let dir: string;
@@ -365,6 +368,90 @@ test('help documents every parsed flag, and every documented flag parses', async
       /unknown option/,
     );
   }
+});
+
+describe('--page-ranges', () => {
+  // The engine and the HTTP API have had this since before the cli did; the
+  // flag was the missing piece, so these pin the parts a caller cannot see from
+  // the parser alone.
+  const paged = (n: number) =>
+    `<!doctype html><html lang="en"><head><style>` +
+    `@page { size: A4; margin: 12mm; @bottom-center { content: "page " counter(page) " of " counter(pages); font: 9pt sans-serif } }` +
+    `body { font-family: "DejaVu Sans", sans-serif } h2 { page-break-before: always }` +
+    `</style></head><body>` +
+    Array.from({ length: n }, (_, i) => `<p>body ${i + 1}</p><h2>head ${i + 1}</h2>`).join('') +
+    `</body></html>`;
+
+  let src: string;
+
+  beforeAll(async () => {
+    src = join(dir, 'ranges.html');
+    await writeFile(src, paged(5), 'utf8');
+  }, 30_000);
+
+  test('it prints the named pages and no others', async () => {
+    const out = join(dir, 'ranges-a.pdf');
+    const { code } = await run(['-o', out, '-q', src, '--page-ranges', '2-3']);
+    expect(code).toBe(0);
+    const bytes = await bytesOf(out);
+    expect((await pdfInfo(bytes)).pages).toBe(2);
+    const text = await pdfText(bytes);
+    expect(text).toContain('body 2');
+    expect(text).not.toContain('body 5');
+  }, 120_000);
+
+  test('a list and a single page are both accepted', async () => {
+    for (const [spec, want] of [
+      ['1', 1],
+      ['1,4', 2],
+      ['2-3,5', 3],
+    ] as const) {
+      const out = join(dir, `ranges-${spec.replace(/\W/g, '')}.pdf`);
+      const { code } = await run(['-o', out, '-q', src, '--page-ranges', spec]);
+      expect(code, spec).toBe(0);
+      expect((await pdfInfo(await bytesOf(out))).pages, spec).toBe(want);
+    }
+  }, 180_000);
+
+  test('page numbers in a footer keep counting the whole document', async () => {
+    // The reason this is worth stating: an extract renumbered from 1 would make
+    // "page 1 of 2" out of two pages of a four-page document, which is a
+    // different document. Chromium keeps the document's own numbering.
+    const out = join(dir, 'ranges-counters.pdf');
+    // The total is read from the full render rather than written down: a
+    // hardcoded page count is a test that fails when the fixture's markup
+    // changes rather than when the behaviour does. Measured 6, not the 5 the
+    // fixture's five sections suggest.
+    const whole = join(dir, 'ranges-whole.pdf');
+    await run(['-o', whole, '-q', src]);
+    const total = (await pdfInfo(await bytesOf(whole))).pages;
+
+    await run(['-o', out, '-q', src, '--page-ranges', '3-4']);
+    const text = await pdfText(await bytesOf(out));
+    expect(text).toContain(`page 3 of ${total}`);
+    expect(text).toContain(`page 4 of ${total}`);
+    expect(text).not.toContain('page 1 of 2');
+  }, 120_000);
+
+  test('omitting it renders every page', async () => {
+    const out = join(dir, 'ranges-all.pdf');
+    const { code } = await run(['-o', out, '-q', src]);
+    expect(code).toBe(0);
+    expect((await pdfInfo(await bytesOf(out))).pages).toBeGreaterThan(2);
+  }, 120_000);
+
+  test('a spec it cannot read is refused before a browser is launched', async () => {
+    // The alternative is Chromium rejecting the string a few hundred ms into a
+    // render, as a protocol error naming the transport rather than the input.
+    for (const spec of ['0-3', 'abc', '1,,2', '1-', '']) {
+      const { code, stdout } = await run(['-o', join(dir, 'bad.pdf'), src, '--page-ranges', spec]);
+      expect(code, spec).toBe(2);
+      expect(stdout, spec).not.toContain('BADPATH');
+      expect(stdout, spec).toBe('');
+    }
+    const { stderr } = await run(['--page-ranges', 'abc', src]);
+    expect(stderr).toContain('--page-ranges takes page numbers and ranges');
+  }, 60_000);
 });
 
 describe('letterpress validate', () => {

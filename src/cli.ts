@@ -57,6 +57,9 @@ options
                           <meta name="author">, so pass it here to keep it
       --subject <text>     pdf subject
       --keywords <text>    pdf keywords
+      --page-ranges <spec> print only these pages: 1-3, or 1,4-6. counters keep
+                          counting the whole document, so page numbers in a footer
+                          stay the numbers the reader sees, not 1,2,3 of the extract
       --settle <ms>       extra wait after fonts resolve (default 0)
       --timeout <ms>      per-render deadline (default 30000)
       --json              machine-readable result on stdout
@@ -347,6 +350,7 @@ export async function main(argv: string[]): Promise<number> {
       author: opts.author,
       subject: opts.subject,
       keywords: opts.keywords,
+      pageRanges: opts.pageRanges,
     });
 
     await writeAtomic(outPath, result.pdf);

@@ -20,6 +20,7 @@ export type Options = {
   author?: string;
   subject?: string;
   keywords?: string;
+  pageRanges?: string;
   json: boolean;
   quiet: boolean;
   help?: boolean;
@@ -182,6 +183,31 @@ function setKeywords(opts: Options, argv: string[], i: number, a: string): Step 
   return consumedValue();
 }
 
+/**
+ * `--page-ranges`, checked here rather than left to fail inside the engine.
+ *
+ * Chromium's `printToPDF` takes this string and validates it itself, but the
+ * error arrives as a rejected protocol call several hundred milliseconds into a
+ * render, after a browser has been launched, and reads as a transport failure.
+ * The grammar is small and it is stated in the message either way.
+ */
+function setPageRanges(opts: Options, argv: string[], i: number, a: string): Step {
+  const v = valueAfter(argv, i, a);
+  // A comma-separated list of single pages and ranges: `1`, `1-3`, `1,4-6`.
+  const part = /^[1-9]\d*(-[1-9]\d*)?$/;
+  const bad = v.split(',').filter((p) => !part.test(p.trim()));
+  if (bad.length > 0) {
+    return {
+      kind: 'error',
+      error:
+        `--page-ranges takes page numbers and ranges separated by commas, like "1-3" or ` +
+        `"1,4-6"; ${bad.map((b) => `"${b}"`).join(', ')} ${bad.length === 1 ? 'is' : 'are'} not one`,
+    };
+  }
+  opts.pageRanges = v;
+  return consumedValue();
+}
+
 function setJson(opts: Options): Step {
   opts.json = true;
   return consumedFlag();
@@ -214,6 +240,7 @@ const HANDLERS: Map<string, Handler> = new Map([
   ['--author', setAuthor],
   ['--subject', setSubject],
   ['--keywords', setKeywords],
+  ['--page-ranges', setPageRanges],
   ['--json', setJson],
   ['-q', setQuiet],
   ['--quiet', setQuiet],

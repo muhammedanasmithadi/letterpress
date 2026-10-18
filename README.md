@@ -156,6 +156,28 @@ To make this work the document and its images are served together over loopback
 rather than opened as files. A `file://` image taints the canvas, so it cannot
 be read back for resizing at all.
 
+### Printing only some pages
+
+`--page-ranges` takes page numbers and ranges separated by commas: `2-3`,
+`1,4-6`, `5`. The engine and the HTTP body have both had it for a while; the
+flag is what was missing, and the CLI now matches the API.
+
+```bash
+bun src/cli.ts --page-ranges 2-3 report.html -o pages-2-3.pdf
+```
+
+Two things worth knowing, both tested rather than assumed:
+
+Page numbers in a footer keep counting the **whole document**. An extract of
+pages 3 and 4 out of a six-page document prints `page 3 of 6` and
+`page 4 of 6`, not `page 1 of 2`. Chromium keeps the document's own numbering,
+which is the only correct answer — a renumbered extract is a different document.
+
+A spec it cannot read is refused before a browser is launched, with exit code 2
+and the grammar in the message. The alternative is Chromium rejecting the string
+a few hundred milliseconds into a render, as a protocol error that names the
+transport rather than the input.
+
 ### Assets beside the document
 
 A document may only read files inside its own directory. That is the safe

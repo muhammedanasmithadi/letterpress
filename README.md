@@ -14,10 +14,57 @@ bun src/cli.ts page.html -o page.pdf
 cat page.html | bun src/cli.ts - -o page.pdf
 bun src/cli.ts https://example.com -o page.pdf      # implies --allow-network
 bun src/cli.ts --template invoice --data order.json -o invoice.pdf
+bun src/cli.ts validate invoice.pdf                 # check a pdf that already exists
+bun src/cli.ts page page.html                       # explain the document's @page rules
 ```
 
 `--help` lists every option. Exit codes are `0` rendered, `1` render failed,
 `2` bad usage.
+
+### `validate` and `page`
+
+Two commands that do not render, and do not need a browser. Both read files
+that already exist.
+
+`validate` applies the checks a render already applies to its own output, to a
+file that may have come from anywhere: a structural verification of the bytes,
+the selection-order analysis, and a comparison of the structure tree against the
+page streams. It exists because the file under test is not always one this tool
+wrote, and because a render answers a different question.
+
+The two structural findings it adds are navigation failures rather than visual
+ones. `structure-orphan-mcid` is a marked-content block in a page stream that no
+structure element names — the text draws, and a reader walking the structure
+walks past it. `structure-ghost-mcid` is the reverse: the tree names a block that
+is in no stream, so the document claims something is there and navigating to it
+lands on nothing. `untagged-document` (info) is the absence of a structure tree
+at all, which is a fact about a file rather than a fault in one.
+
+Measured on an 11-page, 136 KB document: `validate` takes ~70 ms against a
+~490 ms render, about 7×. Most of that is the selection check, which walks every
+glyph — the same work the render does anyway.
+
+```bash
+bun src/cli.ts validate report.pdf
+bun src/cli.ts validate report.pdf --json
+```
+
+`page` explains the document's `@page` rules without printing anything, which
+answers "why is my paper the wrong size" without a render:
+
+```bash
+bun src/cli.ts page report.html
+bun src/cli.ts page report.html --format A4 --margin 15mm --json
+```
+
+`--landscape` is the case worth having this for, because the answer depends on
+the document. A document that declares no paper passes the flag straight to
+Chromium and it works. A document declaring `size: A4` has its declaration
+transposed in place, keeping its own paper and margin. A document declaring
+`size: auto` is refused with an `orientation-ignored` error and the sheet stays
+portrait — there is no portrait spelling to rotate. The last two both come back
+from `transposePageSize` as null and are opposites, so the command distinguishes
+them by what was actually declared.
 
 ## What the renderer gives you
 
@@ -190,10 +237,16 @@ asks nothing.
 | `dialog-dismissed`          | the document opened an `alert`/`confirm`/`prompt` mid-render and it was refused, so a blocked script never finished                   |
 | `js-error`                  | the document threw an uncaught error while being printed, and the pdf was produced anyway                                             |
 | `missing-alt`               | an image has no `alt` at all, so nothing describes it; `empty-alt` covers `alt=""` on an image that is not marked decorative          |
+| `empty-alt`                 | `alt=""` on an image that is not marked decorative: a screen reader announces an empty label, which is worse than silence             |
 | `lang-undeclared`           | the document names no language, so Chromium stamped the pdf with the browser's locale instead                                         |
 | `figure-uncaptioned`        | a `<figure>` has no `<figcaption>`, which is what makes Chromium emit a Figure role in the tagged pdf                                 |
 | `content-overflows-page`    | an element is wider than the printable area, measured in screen layout                                                                |
 | `font-fallback`             | the document asks for a family this machine does not have; the finding names the substitute Chromium printed instead                  |
+| `untagged-document`         | the file has no structure tree, so a screen reader has no headings or lists to navigate by; `info`, not a fault                       |
+| `structure-orphan-mcid`     | a marked-content block in a page stream that no structure element names: the text draws, and a reader walks past it                   |
+| `structure-ghost-mcid`      | the structure tree names a block that is in no page stream, so navigating to it lands on nothing                                      |
+| `not-a-pdf`                 | the file does not begin with `%PDF-`; an error, and nothing else is reported                                                          |
+| `encrypted-document`        | the file is encrypted, so none of the checks below can decompress anything; an error                                                  |
 | `stylesheet-unreadable`     | a cross-origin stylesheet could not be read, so layout findings cover only this origin                                                |
 | `url-render-blocked`        | a remote URL needs `allowNetwork`; without it its subresource loads and usually the document itself is blocked                        |
 

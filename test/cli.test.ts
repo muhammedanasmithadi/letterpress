@@ -366,3 +366,121 @@ test('help documents every parsed flag, and every documented flag parses', async
     );
   }
 });
+
+describe('letterpress validate', () => {
+  const PDF_DOC =
+    `<!doctype html><html lang="en"><head><style>@page{size:A4;margin:15mm}</style></head>` +
+    `<body><h1>Heading</h1><p>Some text.</p><ul><li>one</li><li>two</li></ul></body></html>`;
+
+  let good: string;
+  let broken: string;
+
+  beforeAll(async () => {
+    const html = join(dir, 'validate.html');
+    await writeFile(html, PDF_DOC, 'utf8');
+    good = join(dir, 'validate.pdf');
+    broken = join(dir, 'broken.pdf');
+    const rendered = await run(['-o', good, '-q', html]);
+    expect(rendered.code).toBe(0);
+    await writeFile(broken, 'not a pdf at all', 'utf8');
+  }, 120_000);
+
+  test('a pdf this tool just wrote passes, with the exit code to match', async () => {
+    const { code, stdout, stderr } = await run(['validate', good]);
+    expect(stderr).not.toMatch(/ERROR/);
+    expect(stdout).toMatch(/0 findings/);
+    expect(code).toBe(0);
+  });
+
+  test('a file that is not a pdf fails, and says which check said so', async () => {
+    const { code, stdout, stderr } = await run(['validate', broken]);
+    expect(stderr).toContain('not-a-pdf');
+    expect(stdout).toContain('not ok');
+    expect(code).toBe(1);
+  });
+
+  test('--json carries the findings and the verdict', async () => {
+    const { code, stdout } = await run(['validate', broken, '--json']);
+    const got = JSON.parse(stdout) as {
+      ok: boolean;
+      bytes: number;
+      findings: Array<{ code: string }>;
+    };
+    expect(got.ok).toBe(false);
+    expect(got.bytes).toBeGreaterThan(0);
+    expect(got.findings.map((f) => f.code)).toEqual(['not-a-pdf']);
+    expect(code).toBe(1);
+  });
+
+  test('a missing file is a usage error, not a failed check', async () => {
+    // Exit 2, distinct from 1: nothing was inspected, so a script cannot mistake
+    // "I could not look" for "I looked and it is wrong".
+    const { code, stdout } = await run(['validate', join(dir, 'absent.pdf')]);
+    expect(stdout).not.toContain('not ok');
+    expect(code).toBe(2);
+  });
+
+  test('no file is a usage error rather than reading stdin', async () => {
+    const { code } = await run(['validate']);
+    expect(code).toBe(2);
+  });
+});
+
+describe('letterpress page', () => {
+  const write = async (name: string, css: string) => {
+    const p = join(dir, name);
+    await writeFile(
+      p,
+      `<!doctype html><html><head><style>${css}</style></head><body>x</body></html>`,
+    );
+    return p;
+  };
+
+  test('it reports what the document declared', async () => {
+    const p = await write('paged.html', '@page{size:A4;margin:15mm}@page :first{margin:20mm}');
+    const { code, stdout } = await run(['page', p]);
+    expect(code).toBe(0);
+    expect(stdout).toContain('a4');
+    expect(stdout).toContain('15mm');
+    expect(stdout).toContain('@page rules           2');
+  });
+
+  test('--landscape is explained per document, and the two null cases are opposites', async () => {
+    // A document declaring no paper passes the flag straight to chromium and it
+    // works; `size: auto` is refused and the sheet stays portrait. Both are
+    // `transposePageSize` returning null, and reporting the second reason for
+    // the first is how a working flag gets called broken.
+    const none = await run(['page', await write('nopage.html', 'body{color:red}')]);
+    expect(none.stdout).toContain('passed straight to chromium');
+
+    const auto = await run(['page', await write('auto.html', '@page{size:auto;margin:1in}')]);
+    expect(auto.stdout).toContain('refused');
+    expect(auto.stdout).toContain('orientation-ignored');
+
+    const portrait = await run(['page', await write('portrait.html', '@page{size:A4;margin:1in}')]);
+    expect(portrait.stdout).toContain('transposed in place');
+
+    const landscape = await run([
+      'page',
+      await write('land.html', '@page{size:A4 landscape;margin:1in}'),
+    ]);
+    expect(landscape.stdout).toContain('already landscape');
+  });
+
+  test('--json carries the same facts as the text', async () => {
+    const p = await write('paged2.html', '@page{size:Letter;margin:1in}');
+    const { stdout } = await run(['page', p, '--json']);
+    const got = JSON.parse(stdout) as {
+      declared: { size: string; margin: string; orientation: string; rules: string[] };
+    };
+    expect(got.declared.size).toBe('letter');
+    expect(got.declared.margin).toBe('1in');
+    expect(got.declared.orientation).toBe('portrait');
+    expect(got.declared.rules).toHaveLength(1);
+  });
+
+  test('it needs exactly one file', async () => {
+    const { code } = await run(['page']);
+    expect(code).toBe(2);
+  });
+});

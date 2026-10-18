@@ -1900,7 +1900,7 @@ async function prepareSource(
  * symptom, and a reader who is told only that selection breaks will look in the
  * wrong place.
  */
-function selectionFinding(pdf: Uint8Array): Finding | null {
+export function selectionFinding(pdf: Uint8Array): Finding | null {
   // What a browser will do with a selection over this page. Firefox's PDF.js keeps a
   // word gap inside the current text item only between 0.102 and 0.6 em; outside that
   // it ends the item and the gap becomes a highlight of its own, which is why a

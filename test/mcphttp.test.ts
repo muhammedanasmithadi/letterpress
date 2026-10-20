@@ -187,6 +187,20 @@ describe('the mcp endpoint', () => {
     }
   }, 120_000);
 
+  test('a pdf outside the server own directory cannot be read', async () => {
+    const r = await modern({
+      jsonrpc: '2.0',
+      id: 10,
+      method: 'tools/call',
+      params: { name: 'validate_pdf', arguments: { path: '/etc/passwd' } },
+    });
+    const body = (await r.json()) as {
+      result: { isError?: boolean; content: Array<{ text: string }> };
+    };
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0]!.text).toContain('can be read');
+  }, 60_000);
+
   test('a request from another web page is refused', async () => {
     const r = await fetch(`${server.origin}/mcp`, {
       method: 'POST',

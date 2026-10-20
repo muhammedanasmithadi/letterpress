@@ -157,7 +157,7 @@ export const TOOLS: Tool[] = [
       'Check a pdf that already exists, without a browser: structure, tagged navigation, fonts, and the ' +
       'same findings a render would report. Use this on a file from anywhere, including one another tool wrote.',
     inputSchema: VALIDATE_SCHEMA as unknown as Record<string, unknown>,
-    execute: (args) => validatePdf(args),
+    execute: (args, ctx) => validatePdf(args, ctx),
   },
   {
     name: 'list_findings',
@@ -215,6 +215,17 @@ function findingLine(f: { severity: string; code: string; message: string }): st
   return `${f.severity}: ${f.code} -- ${f.message}`;
 }
 
+function confineRead(path: string, ctx: McpContext): string | null {
+  const root = ctx.outputRoot;
+  if (root === undefined) return null;
+  const base = realpathOf(root);
+  const target = realpathOf(resolve(path));
+  if (target !== base && !target.startsWith(base + sep)) {
+    return `only a pdf inside ${root} can be read, not ${path}`;
+  }
+  return null;
+}
+
 function confineOutput(out: string, ctx: McpContext): string | null {
   const root = ctx.outputRoot;
   if (root === undefined) return null;
@@ -236,9 +247,7 @@ function realpathOf(path: string): string {
       if (lstatSync(at).isSymbolicLink()) {
         at = realpathOf(resolve(dirname(at), readlinkSync(at)));
       }
-    } catch {
-      // path is just names, and the file will be created there.
-    }
+    } catch {}
   }
   return at;
 }
@@ -357,9 +366,11 @@ async function renderHtml(args: Record<string, unknown>, ctx: McpContext): Promi
   return { content, structuredContent: structured };
 }
 
-async function validatePdf(args: Record<string, unknown>): Promise<ToolResult> {
+async function validatePdf(args: Record<string, unknown>, ctx: McpContext): Promise<ToolResult> {
   const path = typeof args.path === 'string' ? args.path : undefined;
   if (!path) return failure('validate_pdf needs a path to a pdf file.');
+  const confined = confineRead(path, ctx);
+  if (confined !== null) return failure(confined);
 
   let bytes: Uint8Array;
   try {

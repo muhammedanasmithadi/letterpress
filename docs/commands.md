@@ -93,6 +93,10 @@ else, and a path outside it is refused rather than corrected — a caller that
 asked for `/etc/passwd` and was handed a file in a temporary directory would
 think it had what it asked for.
 
+Reading a file is the same privilege as writing one, so `validate_pdf` is
+confined the same way — and it agrees with the server's own render endpoint,
+which accepts no path at all.
+
 The check resolves the path, so `../` cannot get out and neither can a
 symbolic link whose target is elsewhere. A link is followed by hand rather
 than by `realpathSync`, because the file the link points at usually does not

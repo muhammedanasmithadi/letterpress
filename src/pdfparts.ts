@@ -334,19 +334,6 @@ export function streamDict(o: Obj): string {
   return text.slice(0, marker?.index ?? text.length);
 }
 
-/**
- * Walk a tree of PDF objects depth first, visiting each one once.
- *
- * The guard is the point. These trees come out of a file, not out of this
- * renderer, and a file can contain a node that is its own parent or a `/Next`
- * that leads back up the chain; without a depth cap and a visited set that is an
- * unbounded loop on input the caller believed was data.
- *
- * The caller says which objects are children, because that is the part that
- * differs between them: the page tree hangs off `/Kids`, an outline off
- * `/First` and `/Next`, a structure tree off three shapes of `/K`. Returning an
- * empty list means "visit this and stop here", so a leaf needs no special case.
- */
 export function walkObjects(
   parts: Parts,
   roots: number[],

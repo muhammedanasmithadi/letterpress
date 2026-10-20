@@ -4,39 +4,18 @@
  * A migration tool, not a gate: it rewrites the files it is pointed at. The
  * gate that keeps the count from going back up is `tools/lint-comments.mjs`.
  *
- * The removal is done on the TypeScript scanner's trivia, so a `//` inside a
- * string is untouched -- this repository ships a large block of browser
- * JavaScript as a string, and a regex would have taken it apart.
+ * The comment ranges come from the parser, so a `//` inside a string or a
+ * regular expression is untouched -- see `tools/comment-ranges.mjs`.
  *
  * A comment that is a machine directive stays: `noqa`, `prettier-ignore` and
  * the like are instructions to a tool.
  */
-import * as ts from 'typescript-api';
 import { readFileSync, writeFileSync } from 'node:fs';
+
+import { commentRanges } from './comment-ranges.mjs';
 
 const DIRECTIVE =
   /(?:\/\/|\/\*)\s*(?:noqa\b|eslint-disable|eslint-enable|oxlint-disable(?:-next-line|-line)?|prettier-ignore|@ts-|nosemgrep|cspell:|istanbul\s+ignore|v8\s+ignore|c8\s+ignore|go:|fmt:|isort:|#\s*(?:noqa|pragma|type:|fmt:|isort:))/;
-
-function kindOf(file) {
-  if (file.endsWith('.ts') || file.endsWith('.mts') || file.endsWith('.cts')) {
-    return ts.ScriptKind.TS;
-  }
-  return ts.ScriptKind.JS;
-}
-
-/** The comment ranges in a file, as [start, end) offsets. */
-function commentRanges(file, text) {
-  const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, kindOf(file), text);
-  const out = [];
-  for (let t = scanner.scan(); t !== ts.SyntaxKind.EndOfFileToken; t = scanner.scan()) {
-    if (t !== ts.SyntaxKind.SingleLineCommentTrivia && t !== ts.SyntaxKind.MultiLineCommentTrivia) {
-      continue;
-    }
-    if (DIRECTIVE.test(scanner.getTokenText())) continue;
-    out.push([scanner.getTokenPos(), scanner.getTextPos()]);
-  }
-  return out;
-}
 
 /**
  * The span to delete for one comment.
@@ -63,7 +42,9 @@ function spanToRemove(text, start, end) {
 
 for (const file of process.argv.slice(2)) {
   const text = readFileSync(file, 'utf8');
-  const ranges = commentRanges(file, text);
+  const ranges = commentRanges(file, text).filter(
+    ([start, end]) => !DIRECTIVE.test(text.slice(start, end)),
+  );
   if (!ranges.length) {
     console.log(`${file}: nothing to remove`);
     continue;

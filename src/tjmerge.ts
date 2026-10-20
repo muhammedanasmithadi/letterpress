@@ -210,14 +210,6 @@ function applyFont(st: ScanState, m: RegExpExecArray): boolean {
   return true;
 }
 
-/**
- * Record a `Tm`, refusing anything but the untransformed shape.
- *
- * `Td tx ty` moves the origin to (e + tx*a + ty*c, f + tx*b + ty*d), and folding a leading
- * `Td` into `e` is the same move only when a is 1 and b is 0. Any shear, rotation or mirror
- * therefore changes what a `Td` does to the origin, and reading it as a plain horizontal
- * move puts glyphs somewhere the proof cannot see, because the proof walks the same mistake.
- */
 function applyMatrix(st: ScanState, m: RegExpExecArray): boolean {
   if (st.items.some((i) => 'cids' in i)) return false;
   if (Number(m[3]) !== 1 || Number(m[4]) !== 0 || Number(m[5]) !== 0) return false;
@@ -226,7 +218,6 @@ function applyMatrix(st: ScanState, m: RegExpExecArray): boolean {
   return true;
 }
 
-/** Remember a `Td`, to be resolved against the last advance when the next glyph shows. */
 function applyMove(st: ScanState, m: RegExpExecArray): boolean {
   st.dx = Number(m[9]);
   st.dy = Number(m[10]);
@@ -234,9 +225,7 @@ function applyMove(st: ScanState, m: RegExpExecArray): boolean {
   return true;
 }
 
-/** Record a shown string, refusing an odd byte count or a vertical move. */
 function applyShow(st: ScanState, m: RegExpExecArray): boolean {
-  // A glyph that moves the pen vertically is not a run.
   if (st.dy !== 0) return false;
   const cids = cidsOf(m[11]!);
   if (!cids) return false;
@@ -246,15 +235,10 @@ function applyShow(st: ScanState, m: RegExpExecArray): boolean {
   return true;
 }
 
-/** Rebuild a scanned block as `TJ` arrays, or null when its font or size is unusable. */
 function buildBlock(scan: BlockScan, widths: Widths): string | null {
   const widthOf = widths.get(scan.tf.slice(1, scan.tf.indexOf(' ')));
   if (!widthOf || scan.size <= 0) return null;
 
-  // `Td` positions the pen against the *line* matrix, so what a run of text costs the pen
-  // is the sum of every advance in it, not the width of its last glyph. Chromium writes Latin
-  // one glyph per string, where the two coincide, and CJK several per string, where using
-  // only the last one puts every following word out by the width of the text before it.
   const advanceOf = (cids: number[]): number =>
     cids.reduce((sum, cid) => sum + (widthOf(cid) / 1000) * scan.size, 0);
 
@@ -298,15 +282,6 @@ function buildBlock(scan: BlockScan, widths: Widths): string | null {
   return `BT ${scan.tf} ${tm} ${out.join(' ')} ET`;
 }
 
-/**
- * Fold a leading `Td` into the text matrix.
- *
- * The first `Td` in a block moves the line matrix before anything is shown, and a TJ array
- * cannot express that: it has no position of its own. Folding it into the text matrix is
- * exactly equivalent, since `Td tx ty` sets Tlm to [1 0 0 1 tx ty] x Tlm and the shape
- * checked above gives an origin of e + tx. A block with no Tm at all starts from the
- * identity matrix, so the shift is written out whole.
- */
 function foldFirstTd(tm: string, dx: number): string {
   if (dx === 0) return tm;
   if (!tm) return `1 0 0 -1 ${dx} 0 Tm`;
@@ -314,7 +289,6 @@ function foldFirstTd(tm: string, dx: number): string {
   return `${m[0]} ${m[1]} ${m[2]} ${m[3]} ${Number(m[4]) + dx} ${m[5]} Tm`;
 }
 
-/** Every glyph position in a whole content stream, or null if any block is unfamiliar. */
 function streamPlaced(stream: string, widths: Widths): Placed[] | null {
   const out: Placed[] = [];
   for (const block of blocksOf(stream)) {
@@ -325,7 +299,6 @@ function streamPlaced(stream: string, widths: Widths): Placed[] | null {
   return out;
 }
 
-/** Whether every glyph kept its position. */
 function sameGlyphs(before: Placed[], after: Placed[] | null): boolean {
   if (!after || after.length !== before.length) return false;
   for (let i = 0; i < before.length; i++) {
@@ -336,7 +309,6 @@ function sameGlyphs(before: Placed[], after: Placed[] | null): boolean {
   return true;
 }
 
-/** The decoded text of a stream object, or null when it is not one. */
 function decodeStream(o: Obj): { text: string; compressed: boolean } | null {
   const dict = dictOf(o);
   const range = streamRange(o.bytes);
@@ -355,11 +327,7 @@ function decodeStream(o: Obj): { text: string; compressed: boolean } | null {
 
 export function mergeTextRuns(pdf: Uint8Array): { pdf: Uint8Array; stats: MergeStats } {
   const stats: MergeStats = { blocks: 0, merged: 0, refused: 0 };
-  // Same fragment hazard as stripRedundantSpans: rewriting streams split() only
-  // partly sees drops the rest. Decline whole.
   if (hasPostTrailerObjects(pdf)) return { pdf, stats };
-  // Ciphertext matches glyph patterns by chance on some producers; rewriting
-  // from it is unsound even when the bytes look parseable.
   if (isEncrypted(pdf)) return { pdf, stats };
   const parts = trySplit(pdf);
   if (!parts) return { pdf, stats };
@@ -390,7 +358,6 @@ export function mergeTextRuns(pdf: Uint8Array): { pdf: Uint8Array; stats: MergeS
       return o;
     }
 
-    // The proof: every glyph must land where it did.
     if (!sameGlyphs(before!, streamPlaced(rewritten, widths))) {
       stats.refused += blocks.length;
       return o;
@@ -400,11 +367,6 @@ export function mergeTextRuns(pdf: Uint8Array): { pdf: Uint8Array; stats: MergeS
     changed++;
     const payload = Buffer.from(rewritten, LATIN1);
     const body = decoded.compressed ? deflateSync(payload) : payload;
-    // dictOf already includes the "N 0 obj" header, so it is not written again -- doing so
-    // produced two headers per object, which rendered blank and extracted as nothing while
-    // still passing verify(), because the gate compares streams and not the header above
-    // them. The dictionary is also not truncated: cutting it at a fixed length loses its
-    // tail, and for a content stream holding a Type 3 font that tail is the resource dict.
     const head = dictOf(o)
       .replace(/\/Length\s+\d+/, `/Length ${body.length}`)
       .trim();
@@ -422,7 +384,6 @@ export function mergeTextRuns(pdf: Uint8Array): { pdf: Uint8Array; stats: MergeS
   return { pdf: new Uint8Array(join(parts.head, objs, parts.trailer)), stats };
 }
 
-/** Glyphs, `TJ` runs, and show operations in the file. */
 export function textRunProfile(pdf: Uint8Array): { glyphs: number; tj: number; showOps: number } {
   const parts = trySplit(pdf);
   const profile = { glyphs: 0, tj: 0, showOps: 0 };

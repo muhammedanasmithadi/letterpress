@@ -409,9 +409,6 @@ const AUDIT = String.raw`
 
 export async function audit(tab: Tab, timeoutMs: number): Promise<Finding[]> {
   try {
-    // Linked stylesheets, fetched before the synchronous script runs. Contained on
-    // purpose: any failure here -- a hung fetch, a closed socket -- must leave the
-    // audit running as before, without the linked sources, rather than break it.
     try {
       await tab.send(
         'Runtime.evaluate',

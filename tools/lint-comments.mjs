@@ -13,14 +13,14 @@
  * not acquire some. That is the same shape as the duplication and complexity
  * gates, and it is why removing a comment is a change the gate can see.
  *
- * The count comes from the TypeScript scanner rather than a regex, because a
- * `//` inside a string is not a comment: this repository ships a large block of
- * JavaScript as a string to run in the browser, and a regex would count the
- * comment markers inside it.
+ * The comments come from the parser rather than from a scanner -- see
+ * `tools/comment-ranges.mjs` for why that matters and what it cost to get
+ * wrong.
  */
-import * as ts from 'typescript-api';
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { commentRanges } from './comment-ranges.mjs';
 
 const BASELINE = new URL('../waivers/baseline.comments.json', import.meta.url);
 
@@ -36,14 +36,6 @@ const EXT = new Set(['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs']);
 const DIRECTIVE =
   /(?:\/\/|\/\*)\s*(?:noqa\b|eslint-disable|eslint-enable|oxlint-disable(?:-next-line|-line)?|prettier-ignore|@ts-|nosemgrep|cspell:|istanbul\s+ignore|v8\s+ignore|c8\s+ignore|go:|fmt:|isort:|#\s*(?:noqa|pragma|type:|fmt:|isort:))/;
 
-/** The script kind, so a `.js` file is scanned as JavaScript. */
-function kindOf(file) {
-  if (file.endsWith('.ts') || file.endsWith('.mts') || file.endsWith('.cts')) {
-    return ts.ScriptKind.TS;
-  }
-  return ts.ScriptKind.JS;
-}
-
 function files(dir) {
   const out = [];
   for (const entry of readdirSync(dir)) {
@@ -56,22 +48,11 @@ function files(dir) {
 
 /**
  * The comments in a file that are not machine directives.
- *
- * The scanner is asked for trivia, so it emits comments and whitespace but
- * not the tokens of the program itself. Each comment is then checked for a
- * directive; one that has it does not count.
  */
 function commentsIn(file, text) {
-  const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, kindOf(file), text);
   let count = 0;
-  for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
-    if (
-      token !== ts.SyntaxKind.SingleLineCommentTrivia &&
-      token !== ts.SyntaxKind.MultiLineCommentTrivia
-    ) {
-      continue;
-    }
-    if (!DIRECTIVE.test(scanner.getTokenText())) count++;
+  for (const [start, end] of commentRanges(file, text)) {
+    if (!DIRECTIVE.test(text.slice(start, end))) count++;
   }
   return count;
 }

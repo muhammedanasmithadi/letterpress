@@ -214,7 +214,6 @@ function setDescriptorKey(text: string, key: string, value: number): string {
     : insertIntoDict(text, `/${key} ${value}`);
 }
 
-/** Rewrite the flagged descriptors, leaving every other object untouched. */
 function applyDescriptorFixes(parts: Parts, wanted: Map<number, DescriptorFix>): Uint8Array {
   const objs = parts.objs.map((o) => {
     const fix = wanted.get(o.num);
@@ -248,13 +247,6 @@ export function unresolvedFontMetrics(
     const cap = Number(text.match(/\/CapHeight\s+(-?\d+)/)?.[1]);
     if (!(cap < 0)) continue;
     if (/\/FontFile\d?\s+\d+\s+0\s+R/.test(text)) continue;
-    // The subtype is read from the owning font rather than assumed. This filter selects
-    // on "no embedded program", and until now this function said nothing about which kind
-    // of font that was -- while the finding in render.ts told the reader every one of them
-    // was a Type 3. Measured on rendered documents the two coincide, because the only
-    // program-less descriptor Chromium emits is a Type 3, but a synthetic or future file
-    // can have a CIDFontType2 with no program, and then "emitted as Type 3" is a lie about
-    // the reader's own document.
     out.push({
       fontName: text.match(/\/FontName\s*\/([^\s/>\]]+)/)?.[1] ?? 'unnamed',
       capHeight: cap,

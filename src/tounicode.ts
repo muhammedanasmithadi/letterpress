@@ -79,18 +79,6 @@ export function fixCMap(cmap: string): string | undefined {
   return out;
 }
 
-/**
- * One row of a `bfrange` block, and the `bfchar` rows it becomes.
- *
- * Two forms, and they are genuinely different rather than two spellings of the same thing:
- * `<lo> <hi> <dst>` increments from a base, and `<lo> [ <d0> <d1> ... ]` lists one
- * destination per code from `<lo>` upwards. Treating the array's first elements as `hi` and
- * the base is how it used to be read, and it is why the report named codepoints the map does
- * not contain.
- *
- * `null` means the line is not a range row at all, and is kept verbatim. Otherwise `affected`
- * is false when nothing in the row needs expanding, and the line is kept too.
- */
 function rangeRow(line: string): { entries: string[]; affected: boolean } | null {
   const arr = line.match(/^<([0-9A-Fa-f]+)>\s*\[([\s\S]*)\]$/);
   const inc = line.match(/^<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]{4})>$/);
@@ -137,11 +125,6 @@ function fixRanges(cmap: string): string | undefined {
     }
     return false;
   });
-  // An array form carries one destination per code from `<lo>` upwards. It was skipped
-  // entirely: the line pattern below matched only `<lo> <hi> <dst>`, so a map written this
-  // way was reported as having unresolved ligatures and never repaired -- and running the
-  // checker over it afterwards reported more codepoints than before, because the checker
-  // read the array's elements as the operands of an incremental range.
   const needsArray = [...cmap.matchAll(/<([0-9A-Fa-f]+)>\s*\[([\s\S]*?)\]/g)].some((m) =>
     [...m[2]!.matchAll(/<([0-9A-Fa-f]+)>/g)].some((d) =>
       [...d[1]!.matchAll(/.{4}/g)].some((u) => ligatureExpansion(parseInt(u[0], 16)) !== undefined),
@@ -157,7 +140,6 @@ function fixRanges(cmap: string): string | undefined {
     const keep: string[] = [];
     const added: string[] = [];
     for (const raw of body.split('\n')) {
-      // A row ends at the newline, and on a CRLF map that newline carries a \r with it.
       const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
       const row = rangeRow(line);
       if (row === null) {
@@ -195,16 +177,6 @@ function fixCMapBoth(cmap: string): string | undefined {
 
 function rewrittenStream(o: Obj, cmap: string): Buffer {
   const compressed = deflateSync(Buffer.from(cmap, LATIN1));
-  // dictOf, not streamDict. streamDict blanks the body of every literal string so that a
-  // string cannot be mistaken for a keyword when reading -- which is right for reading and
-  // wrong for writing. Using it here meant a ToUnicode stream carrying /Producer (Acme PDF
-  // 3.0) came back out of the repair as /Producer (            ), the contents destroyed,
-  // with no finding and no error. The mask exists to stop a read from being fooled; it must
-  // never reach the file.
-  //
-  // dictOf trims, so the newline before `stream` is written back explicitly. The PDF spec
-  // wants an end-of-line there, and this reproduces the bytes streamDict produced for the
-  // ordinary case, where the trim changes nothing.
   const dict = dictOf(o).replace(/\/Length\s+\d+/, `/Length ${compressed.length}`);
   return Buffer.concat([
     Buffer.from(`${dict}\nstream\n`, LATIN1),
@@ -267,7 +239,6 @@ export function unresolvedLigatures(pdf: Uint8Array): Array<{ cp: number; expans
   return out;
 }
 
-/** `beginbfchar` blocks: one source code to one destination. */
 function scanBfchar(cmap: string, note: (cp: number) => void): void {
   for (const m of cmap.matchAll(/beginbfchar\r?\n([\s\S]*?)\r?\nendbfchar/g)) {
     for (const e of m[1]!.matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g)) {
@@ -276,19 +247,9 @@ function scanBfchar(cmap: string, note: (cp: number) => void): void {
   }
 }
 
-/** `beginbfrange` blocks: `<lo> <hi> <dst>` or `<lo> [ <d0> <d1> ... ]`. */
 function scanBfrange(cmap: string, note: (cp: number) => void): void {
   for (const m of cmap.matchAll(/beginbfrange\r?\n([\s\S]*?)\r?\nendbfrange/g)) {
     for (const e of m[1]!.matchAll(
-      // Either `<lo> <hi> <dst>` or `<lo> [ <d0> <d1> ... ]`.
-      //
-      // The array form is a third alternative after the first operand, not a fourth. The
-      // old pattern demanded `<lo> <hex>` before it would consider a bracket, so an array
-      // line failed to match at `<lo>`, the engine advanced, and it started matching at
-      // the first array element -- reading elements one and two as lo and hi and element
-      // three as the increment base. A two-element array therefore reported nothing at
-      // all, and a four-element array reported codepoints the map does not contain while
-      // missing two that it does.
       /<([0-9A-Fa-f]+)>\s*(?:<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>|\[\s*([\s\S]*?)\s*\])/g,
     )) {
       const lo = parseInt(e[1]!, 16);
@@ -297,8 +258,6 @@ function scanBfrange(cmap: string, note: (cp: number) => void): void {
         const base = parseInt(e[3]!.slice(0, 4), 16);
         for (let gid = lo; gid <= hi && gid - lo <= 0xffff; gid++) note(base + (gid - lo));
       } else {
-        // An array supplies one destination per code from `<lo>` upwards, and each
-        // destination is a codepoint like any other.
         for (const d of (e[4] ?? '').matchAll(/<([0-9A-Fa-f]+)>/g)) {
           for (let k = 0; k + 4 <= d[1]!.length; k += 4) note(parseInt(d[1]!.slice(k, k + 4), 16));
         }

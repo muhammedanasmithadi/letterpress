@@ -51,16 +51,11 @@ function checkMarkers(text: string, failures: string[]): void {
   } else if (pointers.length > 1) {
     failures.push(`${pointers.length} startxref lines: readers disagree which one is current`);
   }
-  // A reader that reaches the end without %%EOF throws away the cross-reference table and
-  // rebuilds one by scanning for object headers, which is a reconstruction, not a read. A
-  // truncated write looks exactly like this, so it is a damaged file rather than a
-  // tolerated one.
   const eofs = text.match(/%%EOF/g);
   if (!eofs) failures.push('no %%EOF');
   else if (eofs.length > 1) failures.push(`${eofs.length} %%EOF markers`);
 }
 
-/** Check the cross-reference table that `startxref` points at. */
 function checkCrossRef(text: string, failures: string[]): void {
   const sx = Number(text.match(/startxref\s+(\d+)/)?.[1] ?? -1);
   if (sx < 0 || text.slice(sx, sx + 4) !== 'xref') {
@@ -115,10 +110,6 @@ function checkReferences(
   }
 }
 
-/**
- * Check one object's stream length, following an indirect `/Length`. Returns the step the
- * object loop should take: `break` once a failure is recorded, `continue` otherwise.
- */
 function checkStreamLength(
   o: Obj,
   byNum: Map<number, Obj>,
@@ -127,19 +118,11 @@ function checkStreamLength(
   const length = streamDict(o).match(/\/Length\s+(\d+)(\s+0\s+R)?/);
   if (!length) return 'continue';
   if (length[2]) {
-    // `/Length` may legally be an indirect reference, and the old pattern captured the
-    // object number and compared it against a byte count. `<< /Length 99 0 R >>` carrying
-    // 12 bytes produced two failures, both wrong: the reference was legitimate, and 99 was
-    // never a length. And `/Length 12 0 R` whose target held 99 read as 12 and passed.
-    // docs/architecture-assessment.md claims every stream /Length is checked matching; for
-    // the indirect form it was not checked at all.
     const target = byNum.get(Number(length[1]));
     if (!target) {
       failures.push(`object ${o.num} declares /Length ${length[1]} 0 R, which is not in the file`);
       return 'break';
     }
-    // Object 9 *is* the integer when a stream says `/Length 9 0 R`; it is not another
-    // dictionary carrying a /Length of its own.
     const value = dictOf(target)
       .replace(/^\s*\d+\s+\d+\s+obj\s*/i, '')
       .replace(/\s*endobj\s*$/i, '')
@@ -176,18 +159,12 @@ function checkStreamLength(
   return 'continue';
 }
 
-/** Check dictionary balance and stream /Length across every object in the file. */
 function checkObjects(
   parts: ReturnType<typeof trySplit>,
   byNum: Map<number, Obj>,
   failures: string[],
 ): void {
   for (const o of parts?.objs ?? []) {
-    // A dictionary that is opened and never closed is the shape a repair that truncates
-    // an object body leaves behind. Nothing downstream notices: the splitter clamps the
-    // object at the next header, the writer recomputes a self-consistent cross-reference
-    // table around what survived, and the result parses. Checking that every dictionary
-    // balances is what makes a truncated body visible to the gate.
     const code = dictCode(o);
     const opened = (code.match(/<</g) ?? []).length;
     const closed = (code.match(/>>/g) ?? []).length;
@@ -199,7 +176,6 @@ function checkObjects(
   }
 }
 
-/** With the original in hand, refuse any rewrite of a content stream. */
 function checkPreserved(original: Uint8Array, pdf: Uint8Array, failures: string[]): void {
   const before = contentPayloads(original);
   const after = contentPayloads(pdf);

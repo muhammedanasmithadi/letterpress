@@ -72,23 +72,6 @@ export function inspect(pdf: Uint8Array): PdfInfo {
   };
 }
 
-/**
- * The paper of each page, in page order, one entry per page.
- *
- * Read from the page objects rather than by scanning the file for `/Type /Page`
- * and hoping a `/MediaBox` follows: the old scan used a lazy `[\s\S]{0,400}?`,
- * which matches as little as it can and so never reached the `/MediaBox` a few
- * bytes further on. It returned `[""]` for every page of every document,
- * including one whose first page is Letter and rest A4 -- measured, and the
- * reason this is worth doing rather than deleting: whether a document is
- * mixed-size is a question about a document, and `pageSizes` was the field that
- * claimed to answer it.
- *
- * Page order is the order of the `/Kids` array in the page tree, which is the
- * order a reader turns pages in. Objects appear in the same order in Chromium's
- * output; where they do not, this says file order and the finding does not
- * pretend otherwise.
- */
 function pageSizesInOrder(parts: Parts | undefined): string[] {
   if (!parts) return [];
   const isPage = (d: string) => /\/Type\s*\/Page[^s]/.test(d);
@@ -114,8 +97,6 @@ function pageSizesInOrder(parts: Parts | undefined): string[] {
     );
   }
 
-  // No tree, or a tree that named no pages: file order, which is what the
-  // objects are in, and is the same order for a linear file.
   if (order.length === 0) {
     return parts.objs
       .filter((o) => isPage(o.bytes.toString('latin1')))
@@ -124,23 +105,12 @@ function pageSizesInOrder(parts: Parts | undefined): string[] {
   return order;
 }
 
-/** The numbers in a `/Kids [...]` array. */
 function kidsIn(dict: string): number[] {
   return [...(/\/Kids\s*\[([^\]]*)\]/.exec(dict)?.[1] ?? '').matchAll(/(\d+) 0 R/g)].map((m) =>
     Number(m[1]),
   );
 }
 
-/**
- * The bookmark titles, in the order a reader sees them.
- *
- * Not the order they appear in the file. Chromium serialises an outline
- * parent-first and backwards, so the file order of a document with `One`, `Two`
- * and `Three` is `document, Three, Two, One` -- measured -- and a consumer
- * building a table of contents from it would emit the entries reversed. The
- * `/First` and `/Next` links are the order that means something, so that is
- * what is walked, depth first, parents before children.
- */
 function outlineTitles(parts: Parts | undefined): string[] {
   if (!parts) return [];
   let rootNum: number | undefined;
@@ -165,7 +135,6 @@ function outlineTitles(parts: Parts | undefined): string[] {
   return out;
 }
 
-/** The object number a `/Name n 0 R` entry points at, or 0. */
 function firstRef(dict: string, name: string): number {
   return Number(new RegExp(`/${name}\\s+(\\d+) 0 R`).exec(dict)?.[1] ?? 0);
 }
@@ -182,25 +151,9 @@ function declaredPageProp(html: string, prop: string): string | null {
   return null;
 }
 
-/**
- * The same document with the `size` declaration taken out of every `@page` rule, so the
- * paper sent to Chromium wins over anything the page asked for.
- *
- * This walks `<style>` elements for the same reason `pageRules` does. The first version
- * replaced across the whole document and so reached into `<script>` bodies: a page builder
- * holding `"@page{size:A4}"` in a JavaScript string had that string rewritten to
- * `"@page{}"`, and a template injected at load time then carried no page size at all. The
- * replacement is inside a print pipeline whose contract is to change the paper and nothing
- * else, so leaving the script alone is the whole point.
- */
 export function stripPageSize(html: string): string {
   return html.replace(/(<style\b[^>]*>)([\s\S]*?)(<\/style\s*>|$)/gi, (whole, tag, css, end) => {
-    // A `<style>` with no `@page` in it is left byte-identical, so the no-op case cannot be
-    // disturbed by a rewrite that was never needed.
     if (!/@page/i.test(css)) return whole;
-    // `body` is matched on its own so that `^` anchors at the first declaration. Applied to
-    // the whole rule instead, `@page{size:A4}` -- size first, nothing before it -- kept its
-    // size, because `^` would have been the `@`.
     const stripped = css.replace(
       /(@page[^{]*\{)([^}]*)(\})/gi,
       (_w: string, open: string, body: string, close: string) =>
@@ -224,25 +177,11 @@ export function declaredPageSize(html: string): string | null {
   return declaredPageProp(html, 'size');
 }
 
-/**
- * The landscape spelling of a declared `size`, or null when there is none to
- * give.
- *
- * A paper name takes the keyword (`a4` becomes `a4 landscape`) and two lengths
- * swap edges (`210mm 297mm` becomes `297mm 210mm`). A value that names no paper
- * -- `auto`, an unknown keyword -- returns null rather than a guess, because a
- * wrong rewrite would change the sheet a document chose, which is worse than
- * reporting that the request could not be honoured.
- */
 function landscapeSizeValue(value: string): string | null {
   const v = value.trim().replace(/\s+/g, ' ').toLowerCase();
   if (!v || /\blandscape\b/.test(v)) return null;
   const dims = /^([\d.]+)\s*(mm|cm|in|pt|pc|px|q)\s+([\d.]+)\s*(mm|cm|in|pt|pc|px|q)$/.exec(v);
   if (dims) {
-    // Only ever portrait to landscape. Swapping unconditionally turned
-    // `297mm 210mm` -- already landscape, and the one spelling that needs no
-    // change -- into portrait. A transpose that can run backwards is not a
-    // transpose.
     try {
       if (toInches(`${dims[1]}${dims[2]}`) > toInches(`${dims[3]}${dims[4]}`)) return null;
     } catch {
@@ -257,40 +196,12 @@ function landscapeSizeValue(value: string): string | null {
   return null;
 }
 
-/**
- * The same document with every declared `size` transposed to landscape, or null
- * when there is nothing that can be transposed.
- *
- * This is how a landscape request reaches a document that declares its own
- * paper. Chromium's `landscape` parameter is ignored whenever
- * `preferCSSPageSize` is set, so asking it to rotate a page it is deferring to
- * does nothing at all -- measured, the request left a portrait sheet and
- * nothing in the output said so. Transposing the declaration keeps the
- * document's own size and its own margin, which is what the flag must not
- * touch, and changes the one thing that was asked for.
- *
- * Only `<style>` elements are walked, for the same reason `stripPageSize` walks
- * only those: a `size` inside a script string is not a page declaration, and a
- * print pipeline's contract is to change the paper and nothing else.
- *
- * Comments and strings *inside* a stylesheet are skipped too, for the reason
- * `pageRules` skips them: a commented-out `@page{size:A5}` is a note about a
- * page, not a page. Rewriting one would put a landscape declaration in the
- * document's mouth that its author never wrote -- measured here, the first
- * version transposed the `size` inside a commented-out page rule as readily as
- * the live one.
- */
 export function transposePageSize(html: string): string | null {
   let rewritten = '';
   const out = html.replace(
     /(<style\b[^>]*>)([\s\S]*?)(<\/style\s*>|$)/gi,
     (whole, tag, css, end) => {
       if (!/@page/i.test(css)) return whole;
-      // Comments and strings are matched *before* the page rule in one pass, so
-      // a rule inside either is never treated as a rule at all. Matching the rule
-      // first is the trap: a commented-out `@page{size:A5}` is itself a match for
-      // the rule pattern, and the measured result was that a page nobody had
-      // written got a landscape declaration added to it.
       const transposed = css.replace(PAGE_RULE_OR_LITERAL, (rule: string) => {
         if (/^(\/\*|["'])/.test(rule)) return rule;
         const next = rule.replace(DECLARATION_OR_LITERAL, (decl: string) => {
@@ -298,9 +209,6 @@ export function transposePageSize(html: string): string | null {
           const value = decl.slice(decl.indexOf(':') + 1);
           const landscape = landscapeSizeValue(value);
           if (landscape === null) return decl;
-          // Whitespace that trailed the value is kept: `size: letter }` becomes
-          // `size: letter landscape }` rather than closing the brace onto the
-          // keyword.
           const tail = /\s*$/.exec(value)?.[0] ?? '';
           const head = decl.slice(0, decl.indexOf(':') + 1);
           return `${head} ${landscape}${tail}`;
@@ -315,21 +223,6 @@ export function transposePageSize(html: string): string | null {
   return rewritten === '' ? null : out;
 }
 
-/**
- * The same document with an `@page` rule of the engine's own appended to it.
- *
- * Paper travels in CSS rather than in `printToPDF`'s inch parameters, because
- * Chromium quantizes those: measured across 19 widths, a request that lands on
- * a whole CSS pixel comes back exact and every other one comes back *larger*,
- * in steps of 1/300 inch and never smaller -- A4 asked for as 8.2677in came
- * back 595.92pt where the same paper written as `@page { size: a4 }` is
- * 594.96pt. A flag that silently prints 0.34mm off is worse than a slow one.
- *
- * Appended last so it wins the cascade against the document's own rules. That
- * is belt and braces rather than the whole plan: a named page such as
- * `@page :first` is more specific than a bare `@page`, and callers strip the
- * document's sizes before calling this rather than trusting source order alone.
- */
 export function injectPageRule(html: string, declarations: string): string {
   const style = `<style>@page{${declarations}}</style>`;
   const body = /<\/body\s*>/i.exec(html);
@@ -343,34 +236,12 @@ const COMMENT_OR_STRING = String.raw`\/\*[\s\S]*?\*\/|"(?:\\[\s\S]|[^"\\])*"|'(?
 
 const PAGE_RULE_OR_LITERAL = new RegExp(`${COMMENT_OR_STRING}|@page[^{]*\\{[^}]*\\}`, 'gi');
 
-/** A `size` declaration, or a comment or string that must survive untouched. */
 const DECLARATION_OR_LITERAL = new RegExp(`${COMMENT_OR_STRING}|\\bsize\\s*:[^;}]+`, 'gi');
 
 export function declaredPageMargin(html: string): string | null {
   return declaredPageProp(html, 'margin');
 }
 
-/**
- * The `@page` rules a browser would actually apply to `html`, and nothing else.
- *
- * The first version regexed the whole document. Every form of non-CSS text in a page --
- * an HTML comment, a `<script>` body, an attribute value, a CSS string literal -- matched
- * `@page { size: ... }` just as well as a stylesheet does, and each one reported a paper
- * the browser had never been told about. That is not a mislabelled finding: the caller
- * reads a non-null answer as "the document chose its own paper", turns off
- * `preferCSSPageSize`, and sends no paper to Chromium at all. Chromium's fallback is
- * Letter, so an A4 document silently printed on a Letter sheet with nothing reported. A
- * page builder that embeds a template in a script string triggers it on ordinary pages.
- *
- * Comments go first because they are the outer container: `<style>` inside an HTML comment
- * is the oldest way of toggling a stylesheet off, and the `<!--` is the only thing marking
- * it as text. The `|$` on each closing delimiter matches the browser, where an unterminated
- * comment or `<style>` runs to the end of the file rather than being ignored.
- *
- * `<template>` contents are the one case left where this can over-report: a `@page` in a
- * template is not applied, and this cannot tell. No page builder puts page geometry in a
- * template, and teaching this to parse HTML would cost more than the case is worth.
- */
 export function pageRules(html: string): string[] {
   const withoutHtml = html.replace(/<!--[\s\S]*?(?:-->|$)/g, ' ');
   const styles = [...withoutHtml.matchAll(/<style\b[^>]*>([\s\S]*?)(?:<\/style\s*>|$)/gi)];
@@ -424,15 +295,6 @@ const RELATIVE_UNITS = [
   'ic',
 ];
 
-/**
- * The orientation a declared `size` asks for, or null when it names none.
- *
- * Two spellings mean landscape: the `landscape` keyword beside a paper name
- * (`a4 landscape`), and two lengths whose first is the longer edge
- * (`297mm 210mm`). Everything else is portrait, including a value too vague to
- * rewrite (`auto`), because this reads what the document declared and not what
- * a browser would eventually settle on.
- */
 export function declaredPageOrientation(html: string): 'portrait' | 'landscape' | null {
   const declared = declaredPageSize(html);
   if (declared === null) return null;
@@ -442,9 +304,6 @@ export function declaredPageOrientation(html: string): 'portrait' | 'landscape' 
   try {
     return toInches(dims[0]!) > toInches(dims[1]!) ? 'landscape' : 'portrait';
   } catch {
-    // A size written in a unit printToPDF cannot take. The declaration is
-    // still a declaration, and treating it as portrait is what the browser
-    // would do with it.
     return 'portrait';
   }
 }

@@ -31,6 +31,9 @@ usage
 
   letterpress validate <file.pdf>              check a pdf that already exists
   letterpress page <file.html>                 explain the document’s @page rules
+  letterpress mcp                              serve the model context protocol on
+                                                stdin and stdout, for an agent that
+                                                speaks it
 
 options
   -o, --out <path>        output PDF (default: input name with .pdf)
@@ -342,6 +345,13 @@ function reportOutcome(opts: Options, result: RenderResult, outPath: string): nu
  */
 async function subcommand(argv: string[]): Promise<number | null> {
   const name = argv[0];
+  if (name === 'mcp') {
+    // The Model Context Protocol server. It speaks JSON-RPC on stdin and
+    // stdout, so it owns both: the protocol forbids anything else on stdout,
+    // and this tool prints its findings to stderr.
+    const { runMcp } = await import('./mcp.ts');
+    return runMcp();
+  }
   if (name !== 'validate' && name !== 'page') return null;
   const { runValidate, runPage } = await import('./subcommands.ts');
   return (name === 'validate' ? runValidate : runPage)(argv.slice(1));

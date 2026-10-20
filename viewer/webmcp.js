@@ -1,40 +1,7 @@
-/*
- * The tools this page offers to an agent, over WebMCP.
- *
- * The page is already a renderer: it has a source box, a toolbar, and a
- * Render button. What it lacked was a way for an agent -- the one built into
- * the browser, or one the user points at this tab -- to use it. WebMCP is
- * that: the page registers tools, and an agent discovers and calls them.
- *
- * Three things were measured on this machine's Chromium 154, and all three
- * shaped this file:
- *
- * The API is `document.modelContext`, not `navigator.modelContext`. The
- * navigator spelling is undefined here, and an undefined API is the kind of
- * thing that looks like a missing feature rather than a wrong spelling.
- *
- * `registerTool` takes the tool's arguments as a JSON *string*, and
- * `getTools` hands back `inputSchema` as a string too. An object where a
- * string belongs fails with "Failed to parse input arguments", which names
- * the symptom rather than the mistake.
- *
- * The whole API is absent without `--enable-blink-features=WebMCP`, and it is
- * absent on a page that is not a secure context. `about:blank` counts as
- * insecure; `http://127.0.0.1` counts as secure, which is where the viewer is
- * served from. So the code below checks for the API and does nothing when it
- * is not there, rather than throwing on a browser that has never heard of it.
- *
- * The tools are thin, and they go through the page's own render rather than
- * fetching `/render` again. A person watching the tab and an agent asking a
- * question then get the same render, with the same preview, rather than two
- * renders that could differ.
- */
-
 import { renderForTool } from './app.js';
 
 const MANIFEST_URL = '/findings';
 
-/** The tools, in the shape `registerTool` wants. */
 const TOOLS = [
   {
     name: 'render_html',
@@ -91,18 +58,10 @@ const TOOLS = [
   },
 ];
 
-/** The text of a finding, one per line. */
 function findingLine(f) {
   return `${f.severity}: ${f.code} -- ${f.message}`;
 }
 
-/**
- * The manifest, fetched once and kept.
- *
- * A tool call that has to fetch the vocabulary before it can answer is a tool
- * call that fails when the server is slow, and the list does not change while
- * the page is open.
- */
 let manifest = null;
 async function findingsManifest() {
   if (manifest) return manifest;
@@ -112,7 +71,6 @@ async function findingsManifest() {
   return manifest;
 }
 
-/** The tools' `execute` bodies, keyed by name. */
 const EXECUTE = {
   async render_html(args) {
     const body = await renderForTool(args);
@@ -141,13 +99,6 @@ const EXECUTE = {
   },
 };
 
-/**
- * Register the tools, if this browser has WebMCP at all.
- *
- * Returns what happened, because the page says so in the footer: an agent
- * that finds no tools should be able to find out why, and "the page did not
- * register anything" is a worse answer than "this browser has no WebMCP".
- */
 export async function registerWebMcpTools() {
   const api = document.modelContext;
   if (!api || typeof api.registerTool !== 'function') {
@@ -164,7 +115,4 @@ export async function registerWebMcpTools() {
   return { registered: true, count: TOOLS.length };
 }
 
-// The page is a module, so this runs when the module is evaluated. The
-// registration is not awaited at the top level: a browser without WebMCP
-// must not see an unhandled rejection because of it.
 registerWebMcpTools().catch(() => {});

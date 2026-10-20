@@ -37,8 +37,6 @@
     "test/findings.test.ts": 7,
     "test/mcp.test.ts": 20,
     "test/webmcp.test.ts": 15,
-    "viewer/app.js": 107,
-    "viewer/webmcp.js": 9,
     "tools/check-verification-gap.ts": 5,
     "tools/pdfua.ts": 4,
     "tools/samples.ts": 1,
@@ -54,5 +52,5 @@
     "tools/lint-comments.mjs": 6,
     "tools/comment-ranges.mjs": 2
   },
-  "total": 1050
+  "total": 934
 }

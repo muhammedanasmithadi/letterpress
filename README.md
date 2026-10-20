@@ -449,6 +449,20 @@ handshake and a negotiated version. What differs is small but real: a modern
 result carries `resultType`, and a modern `tools/list` carries a cache
 lifetime, and a legacy client gets neither.
 
+The same tools are on the HTTP server, at `/mcp`, for an agent that cannot
+start a subprocess — one on another machine, or one that speaks HTTP and
+nothing else:
+
+```bash
+bun src/server.ts   # then POST to http://127.0.0.1:8787/mcp
+```
+
+One endpoint, every JSON-RPC message its own POST, the answer as a single
+JSON object. The headers the spec requires — `MCP-Protocol-Version`,
+`Mcp-Method`, `Mcp-Name` — are checked against the body, because an
+intermediary may route on one and the server act on the other. A request from
+another origin is refused, as every request to that server is.
+
 ### WebMCP, in the browser
 
 The viewer page offers the same two useful tools to whatever agent is in the

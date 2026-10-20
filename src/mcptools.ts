@@ -189,6 +189,10 @@ export async function makeContext(): Promise<McpContext> {
   };
 }
 
+export function contextWith(browser: Browser, workDir: string): McpContext {
+  return { browser: async () => browser, workDir };
+}
+
 export async function closeContext(ctx: McpContext): Promise<void> {
   const { rm } = await import('node:fs/promises');
   await rm(ctx.workDir, { recursive: true, force: true }).catch(() => {});

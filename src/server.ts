@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Browser } from './browser.ts';
 import { FINDINGS, FINDING_CODES } from './findings.ts';
+import { handle, type Session } from './mcp.ts';
+import { contextWith } from './mcptools.ts';
 import { EMPTY_INPUT_MESSAGE, FORMATS, render, type Format } from './render.ts';
 
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
@@ -282,6 +284,78 @@ function badRequest(message: string) {
   return Response.json({ ok: false, error: message }, { status: 400 });
 }
 
+async function mcpResponse(request: Request, session: Session): Promise<Response> {
+  const type = (request.headers.get('content-type') ?? '').split(';')[0]?.trim() ?? '';
+  if (type !== 'application/json') {
+    return mcpError(
+      null,
+      -32600,
+      `send content-type: application/json, not "${type || 'nothing'}"`,
+      415,
+    );
+  }
+
+  let msg: Record<string, unknown>;
+  try {
+    msg = (await request.json()) as Record<string, unknown>;
+  } catch (e) {
+    return mcpError(null, -32700, `the body is not JSON: ${(e as Error).message}`);
+  }
+  if (msg === null || typeof msg !== 'object' || Array.isArray(msg)) {
+    return mcpError(null, -32600, 'the body must be a JSON-RPC message');
+  }
+
+  const mismatch = headerMismatch(request, msg);
+  if (mismatch) return mcpError(idOf(msg), -32020, mismatch);
+
+  const reply = await handle(session, msg as never);
+  if (reply === null) {
+    return new Response(null, { status: 202 });
+  }
+  return Response.json(reply, { headers: { 'cache-control': 'no-store' } });
+}
+
+function idOf(msg: Record<string, unknown>): string | number | null {
+  const id = msg['id'];
+  return typeof id === 'string' || typeof id === 'number' ? id : null;
+}
+
+function headerMismatch(request: Request, msg: Record<string, unknown>): string | null {
+  const method = String(msg['method'] ?? '');
+  const headerMethod = request.headers.get('mcp-method');
+  if (headerMethod !== null && headerMethod !== method) {
+    return `Mcp-Method header value '${headerMethod}' does not match body value '${method}'`;
+  }
+
+  const name = (msg['params'] as Record<string, unknown> | undefined)?.['name'];
+  const headerName = request.headers.get('mcp-name');
+  if (headerName !== null && headerName !== String(name ?? '')) {
+    return `Mcp-Name header value '${headerName}' does not match body value '${String(name ?? '')}'`;
+  }
+
+  const headerVersion = request.headers.get('mcp-protocol-version');
+  const bodyVersion = (msg['params'] as Record<string, unknown> | undefined)?.['_meta'] as
+    | Record<string, unknown>
+    | undefined;
+  const declared = bodyVersion?.['io.modelcontextprotocol/protocolVersion'];
+  if (headerVersion !== null && typeof declared === 'string' && headerVersion !== declared) {
+    return `MCP-Protocol-Version header value '${headerVersion}' does not match body value '${declared}'`;
+  }
+  return null;
+}
+
+function mcpError(
+  id: string | number | null,
+  code: number,
+  message: string,
+  status = 400,
+): Response {
+  return Response.json(
+    { jsonrpc: '2.0', id, error: { code, message } },
+    { status, headers: { 'cache-control': 'no-store' } },
+  );
+}
+
 function typed(value: unknown): string | number | boolean | undefined {
   return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
     ? value
@@ -323,6 +397,10 @@ export async function startServer(opts: ServerOptions = {}) {
     extraArgs: opts.browserArgs,
   });
   opts.onReady?.(browser);
+
+  const mcpWorkDir = await mkdtemp(join(tmpdir(), 'letterpress-mcp-'));
+  const mcpContext = contextWith(browser, mcpWorkDir);
+  const mcpSession: Session = { context: mcpContext };
 
   const viewerDir = join(import.meta.dir, '..', 'viewer');
 
@@ -397,6 +475,16 @@ export async function startServer(opts: ServerOptions = {}) {
             { ok: alive, port: server.port, chromium: alive },
             { status: alive ? 200 : 503 },
           );
+        }
+
+        if (url.pathname === '/mcp') {
+          if (request.method !== 'POST') {
+            return Response.json(
+              { ok: false, error: 'the mcp endpoint takes POST' },
+              { status: 405 },
+            );
+          }
+          return mcpResponse(request, mcpSession);
         }
 
         if (url.pathname === '/findings') {
@@ -651,6 +739,7 @@ export async function startServer(opts: ServerOptions = {}) {
     await browser.close();
     await reapChromium();
     await rm(profile, { recursive: true, force: true }).catch(() => {});
+    await rm(mcpWorkDir, { recursive: true, force: true }).catch(() => {});
 
     const ours = `letterpress-${process.pid}-`;
     for (const entry of await readdir(tmpdir()).catch(() => [] as string[])) {

@@ -1,30 +1,20 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startServer } from '../src/server.ts';
-import { launchTestServer, serverOrigin, type TestServer } from './servers.ts';
+import { useTestServer } from './servers.ts';
 import { pdfText } from './poppler.ts';
 
-let s: TestServer;
-let origin: string;
+const server = useTestServer();
 
-const port = () => s.server.port as number;
-
-beforeAll(async () => {
-  s = await launchTestServer();
-  origin = serverOrigin(s);
-}, 60_000);
-
-afterAll(async () => {
-  await s?.stop();
-}, 30_000);
+const port = () => Number(new URL(server.origin).port);
 
 const json = { 'content-type': 'application/json' };
 const post = (body: unknown, headers: Record<string, string> = {}) =>
-  fetch(`${origin}/render`, {
+  fetch(`${server.origin}/render`, {
     method: 'POST',
     headers: { ...json, ...headers },
     body: typeof body === 'string' ? body : JSON.stringify(body),
@@ -180,7 +170,7 @@ describe('another web origin cannot drive the renderer', () => {
   });
 
   test("this viewer's own Origin is accepted", async () => {
-    const r = await post({ html: DOC }, { origin });
+    const r = await post({ html: DOC }, { origin: server.origin });
     expect(r.status).toBe(200);
   }, 60_000);
 });
@@ -195,7 +185,7 @@ describe('a foreign page cannot read the response either', () => {
   }, 90_000);
 
   test('a preflight is refused, so the real request is never sent', async () => {
-    const r = await fetch(`${origin}/render`, {
+    const r = await fetch(`${server.origin}/render`, {
       method: 'OPTIONS',
       headers: {
         origin: 'https://evil.example',
@@ -213,7 +203,7 @@ describe('a foreign page cannot read the response either', () => {
       'multipart/form-data',
       '',
     ]) {
-      const r = await fetch(`${origin}/render`, {
+      const r = await fetch(`${server.origin}/render`, {
         method: 'POST',
         headers: type ? { 'content-type': type } : {},
         body: JSON.stringify({ html: DOC }),
@@ -343,7 +333,7 @@ describe('bounded resources', () => {
   }, 180_000);
 
   test('the server is healthy and rendering after the burst', async () => {
-    const h = await fetch(`${origin}/health`);
+    const h = await fetch(`${server.origin}/health`);
     expect(h.status).toBe(200);
     const r = await post({ html: DOC });
     const body = (await r.json()) as { ok: boolean; pdf: string };
@@ -354,10 +344,10 @@ describe('bounded resources', () => {
 
 describe('health reports the browser honestly', () => {
   test('healthy reports the real bound port', async () => {
-    const r = await fetch(`${origin}/health`);
+    const r = await fetch(`${server.origin}/health`);
     expect(r.status).toBe(200);
     const body = (await r.json()) as { ok: boolean; port: number; chromium: boolean };
-    expect(body.port).toBe(s.server.port as number);
+    expect(body.port).toBe(port());
     expect(body.chromium).toBe(true);
   });
 

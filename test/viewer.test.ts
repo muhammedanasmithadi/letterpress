@@ -1,20 +1,10 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { launchTestServer, serverOrigin, type TestServer } from './servers.ts';
+import { describe, expect, test } from 'bun:test';
+import { useTestServer } from './servers.ts';
 
-let s: TestServer;
-let origin: string;
-
-beforeAll(async () => {
-  s = await launchTestServer();
-  origin = serverOrigin(s);
-}, 60_000);
-
-afterAll(async () => {
-  await s?.stop();
-}, 30_000);
+const server = useTestServer();
 
 const post = (body: unknown) =>
-  fetch(`${origin}/render`, {
+  fetch(`${server.origin}/render`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
@@ -24,7 +14,7 @@ const DOC = `<!doctype html><style>@page{size:a5;margin:8mm}</style><h1>Viewer</
 
 describe('the shell is served', () => {
   test('the index is html', async () => {
-    const r = await fetch(`${origin}/`);
+    const r = await fetch(`${server.origin}/`);
     expect(r.status).toBe(200);
     expect(r.headers.get('content-type')).toContain('text/html');
     const html = await r.text();
@@ -38,7 +28,7 @@ describe('the shell is served', () => {
       ['/assets/theme.css', 'text/css'],
       ['/assets/app.js', 'text/javascript'],
     ] as const) {
-      const r = await fetch(`${origin}${path}`);
+      const r = await fetch(`${server.origin}${path}`);
       expect(r.status, path).toBe(200);
       expect(r.headers.get('content-type'), path).toContain(type);
       expect((await r.text()).length, path).toBeGreaterThan(100);
@@ -46,11 +36,11 @@ describe('the shell is served', () => {
   });
 
   test('a missing asset is a 404, not a crash', async () => {
-    expect((await fetch(`${origin}/assets/nope.css`)).status).toBe(404);
+    expect((await fetch(`${server.origin}/assets/nope.css`)).status).toBe(404);
   });
 
   test('an absurd asset path is a 404, not a crash', async () => {
-    expect((await fetch(`${origin}/assets/${'x'.repeat(600)}`)).status).toBe(404);
+    expect((await fetch(`${server.origin}/assets/${'x'.repeat(600)}`)).status).toBe(404);
   });
 });
 
@@ -175,14 +165,14 @@ describe('margin is checked before it is used', () => {
 });
 
 describe('the shell itself', () => {
-  const html = async () => await (await fetch(`${origin}/`)).text();
+  const html = async () => await (await fetch(`${server.origin}/`)).text();
 
   test('every control is a native element', async () => {
     const page = (await html()).replace(/<!--[\s\S]*?-->/g, '');
     expect(page).not.toMatch(/<div[^>]*role=["']button["']/);
     expect(page).not.toMatch(/<span[^>]*onclick/);
 
-    const css = (await (await fetch(`${origin}/assets/theme.css`)).text()).replace(
+    const css = (await (await fetch(`${server.origin}/assets/theme.css`)).text()).replace(
       /\/\*[\s\S]*?\*\//g,
       '',
     );
@@ -220,7 +210,7 @@ describe('the shell itself', () => {
     ]) {
       expect(row, `#${id} inside the settings row`).toContain(`id="${id}"`);
     }
-    const css = await (await fetch(`${origin}/assets/theme.css`)).text();
+    const css = await (await fetch(`${server.origin}/assets/theme.css`)).text();
     expect(css).toMatch(/\.settings-row\s*\{[^}]*flex:\s*1 1 100%/s);
   });
 
@@ -230,19 +220,19 @@ describe('the shell itself', () => {
     expect(page).toContain('id="portrait" aria-pressed="true">Portrait');
     expect(page).toContain('id="landscape" aria-pressed="false">Landscape');
     expect(page).not.toContain('name="orientation"');
-    const js = await (await fetch(`${origin}/assets/app.js`)).text();
+    const js = await (await fetch(`${server.origin}/assets/app.js`)).text();
     expect(js).toContain('landscape: isLandscape()');
     expect(js).not.toContain('el.landscape.checked');
     expect(js).toContain("setAttribute('aria-pressed'");
     expect(js).toContain('orientation-ignored');
     expect(js).toContain('paintOrientation');
-    const sheet = await (await fetch(`${origin}/assets/theme.css`)).text();
+    const sheet = await (await fetch(`${server.origin}/assets/theme.css`)).text();
     expect(sheet).toMatch(/\.segmented\s*\{[^}]*display:\s*flex/s);
     expect(sheet).toMatch(/\.segmented button\[aria-pressed='true'\]\s*\{[^}]*font-weight:\s*700/s);
     expect(page).toContain('id="download"');
     expect(page).toMatch(/>\s*PDF\s*</s);
     expect(page).toContain('Ready to render.');
-    const css = await (await fetch(`${origin}/assets/theme.css`)).text();
+    const css = await (await fetch(`${server.origin}/assets/theme.css`)).text();
     expect(css).not.toContain('text-decoration');
     expect(js).toContain("el.margin.addEventListener('input'");
     expect(js).toContain('isLengthLike');
@@ -258,12 +248,12 @@ describe('the shell itself', () => {
     expect(page).not.toContain('<svg');
     expect(page).not.toContain('class="paneltitle"');
     expect(page).toContain('Georgia, serif');
-    const css = await (await fetch(`${origin}/assets/theme.css`)).text();
+    const css = await (await fetch(`${server.origin}/assets/theme.css`)).text();
     expect(css).not.toContain('▸');
     expect(css).not.toContain('▾');
     expect(page).toContain('class="chev left"');
     expect(page).toContain('class="chev right"');
-    const js = await (await fetch(`${origin}/assets/app.js`)).text();
+    const js = await (await fetch(`${server.origin}/assets/app.js`)).text();
     expect(js).not.toContain('el.filename');
     expect(js).not.toContain('formatLabel()');
     expect(js).not.toContain('closeOutside');
@@ -294,7 +284,7 @@ describe('the shell itself', () => {
   });
 
   test('bare shell: platform paint only, mechanics intact', async () => {
-    const css = (await (await fetch(`${origin}/assets/theme.css`)).text()).replace(
+    const css = (await (await fetch(`${server.origin}/assets/theme.css`)).text()).replace(
       /\/\*[\s\S]*?\*\//g,
       '',
     );
@@ -323,14 +313,14 @@ describe('the shell itself', () => {
   });
 
   test('the panes scroll and the window does not', async () => {
-    const css = await (await fetch(`${origin}/assets/theme.css`)).text();
+    const css = await (await fetch(`${server.origin}/assets/theme.css`)).text();
 
     expect(css).toMatch(/grid-template-rows: auto minmax\(0, 1fr\) auto/);
     expect(css).toMatch(/\.preview\s*\{[^}]*overflow: auto/s);
   });
 
   test('the editor and the preview are placed on the flex row, not auto-sized', async () => {
-    const css = (await (await fetch(`${origin}/assets/theme.css`)).text()).replace(
+    const css = (await (await fetch(`${server.origin}/assets/theme.css`)).text()).replace(
       /\/\*[\s\S]*?\*\//g,
       '',
     );
@@ -355,7 +345,7 @@ describe('the shell itself', () => {
     expect(page).toContain('id="editor"');
     expect(page).toContain('id="highlight" aria-hidden="true"');
     expect(page).toContain('id="gutter" aria-hidden="true"');
-    const sheet = (await (await fetch(`${origin}/assets/theme.css`)).text()).replace(
+    const sheet = (await (await fetch(`${server.origin}/assets/theme.css`)).text()).replace(
       /\/\*[\s\S]*?\*\//g,
       '',
     );
@@ -366,7 +356,7 @@ describe('the shell itself', () => {
   });
 
   test('the tokenizer escapes before it wraps, and yields on IME', async () => {
-    const js = await (await fetch(`${origin}/assets/app.js`)).text();
+    const js = await (await fetch(`${server.origin}/assets/app.js`)).text();
     expect(js).toContain('tok-tag');
     expect(js).toContain('tok-str');
     expect(js).toContain('tok-com');
@@ -376,7 +366,7 @@ describe('the shell itself', () => {
   });
 
   test('stale claims need a render behind them, in app voice', async () => {
-    const js = await (await fetch(`${origin}/assets/app.js`)).text();
+    const js = await (await fetch(`${server.origin}/assets/app.js`)).text();
     expect(js).toContain('!on || !lastBytes');
     expect(js).toContain('Showing the last good render (out of date).');
     expect(js).not.toContain('showing the last good render, not the current source');
@@ -387,7 +377,7 @@ describe('the shell itself', () => {
   });
 
   test('the pager navigates rendered bytes without re-rendering', async () => {
-    const js = await (await fetch(`${origin}/assets/app.js`)).text();
+    const js = await (await fetch(`${server.origin}/assets/app.js`)).text();
     expect(js).toMatch(/\$\{objectUrl\}#page=/);
     expect(js).toMatch(/pager\.hidden = pageCount <= 1/);
     const page = await html();
@@ -400,7 +390,7 @@ describe('the shell itself', () => {
 
 describe('the shell renders end to end', () => {
   test('the starter document comes back as a real pdf', async () => {
-    const page = await (await fetch(`${origin}/`)).text();
+    const page = await (await fetch(`${server.origin}/`)).text();
     const starter = page.slice(page.indexOf('<textarea'), page.indexOf('</textarea>'));
     const html = starter
       .replace(/^[\s\S]*?>/, '')
@@ -431,10 +421,13 @@ describe('the shell renders end to end', () => {
 });
 describe('the toolbar wiring holds', () => {
   const shell = async () =>
-    (await (await fetch(`${origin}/`)).text()).replace(/<!--[\s\S]*?-->/g, '');
+    (await (await fetch(`${server.origin}/`)).text()).replace(/<!--[\s\S]*?-->/g, '');
   const css = async () =>
-    (await (await fetch(`${origin}/assets/theme.css`)).text()).replace(/\/\*[\s\S]*?\*\//g, '');
-  const script = async () => await (await fetch(`${origin}/assets/app.js`)).text();
+    (await (await fetch(`${server.origin}/assets/theme.css`)).text()).replace(
+      /\/\*[\s\S]*?\*\//g,
+      '',
+    );
+  const script = async () => await (await fetch(`${server.origin}/assets/app.js`)).text();
 
   test('the app sends printBackground, which is the field the server reads', async () => {
     const js = await script();
@@ -493,7 +486,7 @@ div{height:250px;background:#c03030}</style><div>BOX</div>`;
 
   test('the shell is not cacheable', async () => {
     for (const path of ['/', '/assets/theme.css', '/assets/app.js']) {
-      const r = await fetch(`${origin}${path}`);
+      const r = await fetch(`${server.origin}${path}`);
       expect(r.headers.get('cache-control'), path).toBe('no-store');
     }
   });

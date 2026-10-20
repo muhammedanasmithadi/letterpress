@@ -54,6 +54,35 @@ works, while `size: auto` is refused with an error finding and the sheet
 stays portrait. Reporting the second reason for the first is how a correct
 flag gets called broken.
 
+## The model context protocol over HTTP
+
+The server answers the model context protocol on `/mcp`, the same tools the
+stdio server offers, for an agent that cannot start a subprocess -- one on
+another machine, or one that speaks HTTP and nothing else.
+
+The spec's Streamable HTTP transport, in the shape the current revision
+defines: one endpoint, every JSON-RPC message its own POST, and the answer as
+a single JSON object. A notification is answered with 202 and no body.
+
+The headers are not decoration. `MCP-Protocol-Version` has to agree with the
+version in the body, and `Mcp-Method` and `Mcp-Name` have to agree with the
+body, because an intermediary may route on one and the server may act on the
+other. A request whose headers disagree with its body is refused with `400`
+and `HeaderMismatch`, which is the code the spec allocates for it.
+
+The origin check is the one this server already applies to every request: a
+local MCP endpoint that answers requests from any web page is a remote code
+execution surface, and the spec says the same about it.
+
+The version header is only required once the body carries a version, which is
+what tells a modern request from a legacy one: a legacy request has no
+`_meta` at all, so there is nothing for the header to disagree with.
+
+The tools render in the browser the server already owns, and in the queue
+around it, so an MCP call arriving over HTTP renders in the same browser as an
+HTTP render rather than launching a second one. The PDF lands in a work
+directory the server removes when it stops.
+
 ## The HTTP API
 
 A limit from the environment, or the default when it is absent or unusable.

@@ -1,28 +1,24 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 
 import { closeTestBrowser, launchTestBrowser, type TestBrowser } from './browser.ts';
-import { launchTestServer, serverOrigin, type TestServer } from './servers.ts';
+import { useTestServer } from './servers.ts';
 import type { Tab } from '../src/browser.ts';
 
 let t: TestBrowser;
-let s: TestServer;
-let origin: string;
+const server = useTestServer();
 let tab: Tab;
 
 beforeAll(async () => {
-  s = await launchTestServer();
-  origin = serverOrigin(s);
   t = await launchTestBrowser('webmcp', ['--enable-blink-features=WebMCP']);
   tab = await t.browser.newTab();
   await tab.send('Page.enable');
   await tab.send('Runtime.enable');
-  await tab.send('Page.navigate', { url: `${origin}/` });
+  await tab.send('Page.navigate', { url: `${server.origin}/` });
   await Bun.sleep(1500);
 }, 90_000);
 
 afterAll(async () => {
   await closeTestBrowser(t);
-  await s?.stop();
 }, 30_000);
 
 async function evaluate(expression: string): Promise<unknown> {
@@ -161,7 +157,7 @@ describe('the page offers tools to an agent', () => {
 
 describe('the server serves the manifest', () => {
   test('over http, as data', async () => {
-    const r = await fetch(`${origin}/findings`);
+    const r = await fetch(`${server.origin}/findings`);
     expect(r.status).toBe(200);
     const body = (await r.json()) as {
       findings: Array<{ code: string; severity: string; summary: string }>;

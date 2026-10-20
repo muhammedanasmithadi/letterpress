@@ -83,6 +83,23 @@ around it, so an MCP call arriving over HTTP renders in the same browser as an
 HTTP render rather than launching a second one. The PDF lands in a work
 directory the server removes when it stops.
 
+Where the PDF may be written differs by transport, and the difference is a
+privilege one. The stdio server answers to whoever started it, and that
+caller can already write wherever it likes, so it is given the whole
+filesystem. The HTTP server is a shared daemon: any local process can reach
+it, so a path it accepts becomes a file-write primitive for all of them. Over
+HTTP the PDF therefore lands in the server's own work directory and nowhere
+else, and a path outside it is refused rather than corrected — a caller that
+asked for `/etc/passwd` and was handed a file in a temporary directory would
+think it had what it asked for.
+
+The check resolves the path, so `../` cannot get out and neither can a
+symbolic link whose target is elsewhere. A link is followed by hand rather
+than by `realpathSync`, because the file the link points at usually does not
+exist yet — the PDF is about to be written there — and `realpathSync` fails
+on a broken link, which would have left the link itself as the answer and
+missed the escape entirely.
+
 ## The HTTP API
 
 A limit from the environment, or the default when it is absent or unusable.

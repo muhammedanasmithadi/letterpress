@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { mkdtemp, writeFile } from 'node:fs/promises';
+import { lstatSync, readlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 
 import { Browser } from './browser.ts';
 import { FINDINGS, FINDING_CODES } from './findings.ts';
@@ -172,6 +173,8 @@ export const TOOLS: Tool[] = [
 export type McpContext = {
   browser: () => Promise<Browser>;
   workDir: string;
+
+  outputRoot?: string;
 };
 
 export async function makeContext(): Promise<McpContext> {
@@ -190,7 +193,7 @@ export async function makeContext(): Promise<McpContext> {
 }
 
 export function contextWith(browser: Browser, workDir: string): McpContext {
-  return { browser: async () => browser, workDir };
+  return { browser: async () => browser, workDir, outputRoot: workDir };
 }
 
 export async function closeContext(ctx: McpContext): Promise<void> {
@@ -210,6 +213,34 @@ export async function callTool(
 
 function findingLine(f: { severity: string; code: string; message: string }): string {
   return `${f.severity}: ${f.code} -- ${f.message}`;
+}
+
+function confineOutput(out: string, ctx: McpContext): string | null {
+  const root = ctx.outputRoot;
+  if (root === undefined) return null;
+  const base = realpathOf(root);
+  const target = realpathOf(resolve(out));
+  if (target !== base && !target.startsWith(base + sep)) {
+    return `the pdf can only be written inside ${root}, not ${out}`;
+  }
+  return null;
+}
+
+function realpathOf(path: string): string {
+  const full = resolve(path);
+  const parts = full.split(sep).filter(Boolean);
+  let at: string = sep;
+  for (const part of parts) {
+    at = join(at, part);
+    try {
+      if (lstatSync(at).isSymbolicLink()) {
+        at = realpathOf(resolve(dirname(at), readlinkSync(at)));
+      }
+    } catch {
+      // path is just names, and the file will be created there.
+    }
+  }
+  return at;
 }
 
 function stringArg(args: Record<string, unknown>, key: string): string | undefined {
@@ -278,6 +309,8 @@ async function renderHtml(args: Record<string, unknown>, ctx: McpContext): Promi
     requested !== undefined && requested.trim() !== ''
       ? requested
       : join(ctx.workDir, 'output.pdf');
+  const confined = confineOutput(out, ctx);
+  if (confined !== null) return failure(confined);
 
   let result;
   try {

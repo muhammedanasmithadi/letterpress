@@ -1,3 +1,5 @@
+import { rm, symlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import { useTestServer } from './servers.ts';
 
@@ -122,6 +124,68 @@ describe('the mcp endpoint', () => {
   test('a GET is not allowed', async () => {
     expect((await fetch(`${server.origin}/mcp`)).status).toBe(405);
   });
+
+  test('the pdf cannot be written outside the server own directory', async () => {
+    for (const outputPath of [
+      '/tmp/letterpress-escape.pdf',
+      '/etc/passwd',
+      '../escape.pdf',
+      '../../escape.pdf',
+    ]) {
+      const r = await modern({
+        jsonrpc: '2.0',
+        id: 7,
+        method: 'tools/call',
+        params: {
+          name: 'render_html',
+          arguments: { html: '<p>x</p>', outputPath },
+        },
+      });
+      const body = (await r.json()) as {
+        result: { isError?: boolean; content: Array<{ text: string }> };
+      };
+      expect(body.result.isError, outputPath).toBe(true);
+      expect(body.result.content[0]!.text, outputPath).toContain('can only be written inside');
+    }
+  }, 120_000);
+
+  test('a symbolic link out of the directory is refused too', async () => {
+    const first = await modern({
+      jsonrpc: '2.0',
+      id: 8,
+      method: 'tools/call',
+      params: {
+        name: 'render_html',
+        arguments: { html: '<p>x</p>', outputPath: '/etc/passwd' },
+      },
+    });
+    const body = (await first.json()) as {
+      result: { content: Array<{ text: string }> };
+    };
+    const root = /inside (.+), not/.exec(body.result.content[0]!.text)?.[1];
+    expect(root, 'the refusal names the directory').toBeTruthy();
+
+    const link = join(root!, 'escape.pdf');
+    await symlink('/tmp/letterpress-symlink-target.pdf', link);
+    try {
+      const r = await modern({
+        jsonrpc: '2.0',
+        id: 9,
+        method: 'tools/call',
+        params: {
+          name: 'render_html',
+          arguments: { html: '<p>x</p>', outputPath: link },
+        },
+      });
+      const out = (await r.json()) as {
+        result: { isError?: boolean; content: Array<{ text: string }> };
+      };
+      expect(out.result.isError).toBe(true);
+      expect(out.result.content[0]!.text).toContain('can only be written inside');
+    } finally {
+      await rm(link, { force: true }).catch(() => {});
+    }
+  }, 120_000);
 
   test('a request from another web page is refused', async () => {
     const r = await fetch(`${server.origin}/mcp`, {

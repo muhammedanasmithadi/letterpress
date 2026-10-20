@@ -14,6 +14,13 @@ on this machine unless marked unverified.
 > Sections below are corrected where the code disagrees; the CDP findings that
 > drove the original decision are kept, because they are still true.
 >
+> **Update 2026-10-20 — Phase 4 shipped, in the other direction.** The viewer
+> now also serves `webmcp.js`, which registers `render_html` and
+> `list_findings` with `document.modelContext` so an agent in the browser tab
+> can drive the page. The plan proposed the reverse — the page registers a tool
+> and the server invokes it over the CDP `WebMCP` domain — and the reason for
+> the change is in the Phase 4 section below.
+>
 > One artifact of the blob URL: the platform viewer logs
 > `Invalid absolute docBaseUrl: "blob:..."` once per render, because a blob has
 > no base for relative links. It is inside the browser's own viewer and cannot
@@ -220,12 +227,33 @@ because a mismatch forces an opaque canvas.
 
 ### Phase 4 — WebMCP surface (optional, cheap, no infrastructure)
 
-**Not built.** `src/server.ts` still passes `--enable-blink-features=WebMCP`
-when `HTML2PDF_WEBMCP` is set, but nothing registers a tool, so the flag has no
-effect on the shell today. The design, for when it is picked up:
+**Built, in the other direction.** `viewer/webmcp.js` registers two tools —
+`render_html` and `list_findings` — with `document.modelContext`, so an agent
+in the browser tab can drive the page. `test/webmcp.test.ts` proves it against
+a real browser with the flag on, loading the real page over the real loopback
+server.
 
-Because the extension route is gone, use the CDP domain. The viewer page
-registers one tool; the server invokes it:
+The plan below proposed the reverse: the page registers a tool and the _server_
+invokes it over the CDP `WebMCP` domain. That is a different arrangement, and
+the page-driven one is the one WebMCP is for: the browser's own agent is
+already in the tab, it can already see the page, and a tool that reuses the
+page's own code keeps what the human sees and what the agent sees the same.
+The CDP route is for a server-side agent driving a page it controls, which is
+what the MCP server does more directly.
+
+`src/server.ts` still passes `--enable-blink-features=WebMCP` when
+`HTML2PDF_WEBMCP` is set. That flag is on the server's _rendering_ browser,
+which is not the browser the viewer is viewed in, so it does nothing for the
+viewer page: the flag has to be on the browser that opens
+`http://127.0.0.1:8787/`. Both are opt-in and neither is required.
+
+Three measurements from `docs/measurements.md` shaped the implementation, and
+each of them is a way to get nothing back: the API is
+`document.modelContext` and not `navigator.modelContext`; it needs a secure
+context, so `about:blank` does not count and `http://127.0.0.1` does; and
+`executeTool` takes its arguments as a JSON string and answers with one.
+
+The original sketch, for the record:
 
 ```js
 document.modelContext.registerTool({
@@ -244,13 +272,9 @@ document.modelContext.registerTool({
 });
 ```
 
-Server side: `WebMCP.enable`, wait for `toolsAdded`, then
-`invokeTool({frameId, toolName, input})` and await `toolResponded` by
-`invocationId`. Requires `--enable-blink-features=WebMCP` and a secure context,
-which the loopback server already provides.
-
-Deferrable: it adds nothing a human needs and the CLI already covers agents that
-can run commands.
+Server side, had it gone that way: `WebMCP.enable`, wait for `toolsAdded`,
+then `invokeTool({frameId, toolName, input})` and await `toolResponded` by
+`invocationId`.
 
 ## What I got wrong, and what I am therefore careful about
 

@@ -3,6 +3,7 @@ import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Browser } from './browser.ts';
+import { FINDINGS, FINDING_CODES } from './findings.ts';
 import { EMPTY_INPUT_MESSAGE, FORMATS, render, type Format } from './render.ts';
 
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
@@ -446,6 +447,19 @@ export async function startServer(opts: ServerOptions = {}) {
           return Response.json(
             { ok: alive, port: server.port, chromium: alive },
             { status: alive ? 200 : 503 },
+          );
+        }
+
+        if (url.pathname === '/findings') {
+          // The manifest, as data. The codes are the vocabulary the findings
+          // use, and a caller that has been handed one has no way to know
+          // what it means unless something says so. The page asks for this
+          // when it is asked what a code means.
+          return Response.json(
+            {
+              findings: FINDING_CODES.map((code) => ({ code, ...FINDINGS[code]! })),
+            },
+            { headers: { 'cache-control': 'no-store' } },
           );
         }
 

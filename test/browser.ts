@@ -16,9 +16,12 @@ export type TestBrowser = {
   profile: string;
 };
 
-export async function launchTestBrowser(name: string): Promise<TestBrowser> {
+export async function launchTestBrowser(
+  name: string,
+  extraArgs: string[] = [],
+): Promise<TestBrowser> {
   const profile = await mkdtemp(join(tmpdir(), `letterpress-${name}-`));
-  return { browser: await Browser.launch({ profile }), profile };
+  return { browser: await Browser.launch({ profile, extraArgs }), profile };
 }
 
 export async function closeTestBrowser(t: TestBrowser): Promise<void> {

@@ -275,19 +275,30 @@ function setBytes(bytes) {
   objectUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
 }
 
-async function render() {
+/**
+ * Render the document, and hand back what the server said.
+ *
+ * The body on a good render, and null on a bad one, so a caller that is not
+ * the button -- the agent's tool -- can say what happened instead of having to
+ * read the status line to find out.
+ */
+async function render(overrides = {}) {
   const mine = ++seq;
   controller?.abort();
   controller = new AbortController();
   const timer = setTimeout(() => controller.abort('timeout'), CLIENT_TIMEOUT_MS);
 
-  const html = el.source.value;
+  // The markup to print: what the tool asked for if it asked for anything,
+  // and what is in the source box otherwise. The empty check is against the
+  // markup that is really going to be printed, not against the box, or a tool
+  // that passes html would be refused because the box is empty.
+  const html = typeof overrides.html === 'string' ? overrides.html : el.source.value;
   if (!html.trim()) {
     clearTimeout(timer);
     say('Nothing to render: the source is empty.', 'warn');
     el.metrics.textContent = '';
     markStale(true, 'source is empty');
-    return;
+    return null;
   }
 
   inflight++;
@@ -305,17 +316,17 @@ async function render() {
     const res = await fetch('/render', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ html, ...settings() }),
+      body: JSON.stringify({ ...settings(), ...overrides, html }),
       signal: controller.signal,
     });
     const body = await res.json();
     // Every write below is gated. A response for an older request is dropped
     // whole, not merged.
-    if (mine !== seq) return;
+    if (mine !== seq) return null;
 
     if (!res.ok || body.ok === false) {
       fail(body.error ?? `render failed: ${res.status}`, 'error');
-      return;
+      return null;
     }
 
     // Held as bytes rather than a data URL, so a large document is not a string
@@ -369,8 +380,9 @@ async function render() {
       // The full wording, for anyone who wants it.
       el.status.title = findings.map((f) => f.message).join('\n\n');
     }
+    return body;
   } catch (e) {
-    if (mine !== seq) return;
+    if (mine !== seq) return null;
     const aborted = e instanceof Error && e.name === 'AbortError';
     if (aborted && controller.signal.reason === 'timeout') {
       fail(
@@ -381,7 +393,7 @@ async function render() {
       );
     } else if (aborted) {
       // Superseded by a newer request, which is not a failure worth reporting.
-      return;
+      return null;
     } else {
       fail(
         `Could not reach the renderer (${e instanceof Error ? e.message : e}). ` +
@@ -389,6 +401,7 @@ async function render() {
         'error',
       );
     }
+    return null;
   } finally {
     clearTimeout(timer);
     clearInterval(ticker);
@@ -624,3 +637,49 @@ el.source.addEventListener('compositionend', () => {
 });
 
 renderHighlight();
+
+/**
+ * Render on behalf of a tool, and hand back what the server said.
+ *
+ * The agent's tool goes through here rather than fetching `/render` itself,
+ * for two reasons. The page updates as it does for a person -- the preview, the
+ * page count, the findings in the status line -- so the human watching and the
+ * agent asking are looking at the same render. And the page is where the
+ * toolbar lives, so the settings a tool is given have to go through it: a
+ * `landscape` the page does not know about is a landscape the page does not
+ * show.
+ *
+ * The source box is left alone. An agent rendering a document it has not been
+ * given a reason to show would overwrite what the human is editing, and the
+ * human's document is not the agent's to replace.
+ */
+export async function renderForTool(args = {}) {
+  const overrides = {};
+  if (typeof args.format === 'string' && hasFormat(args.format)) {
+    el.format.value = args.format;
+    syncMargin();
+  }
+  if (typeof args.margin === 'string') el.margin.value = args.margin;
+  if (typeof args.landscape === 'boolean') {
+    // Not setOrientation: that renders, and this is about to render. Two
+    // renders for one call is two answers, and the second is the one that
+    // lands.
+    landscapeOn = args.landscape;
+    paintOrientation();
+  }
+  if (typeof args.allowNetwork === 'boolean') el.network.checked = args.allowNetwork;
+
+  if (typeof args.html === 'string') {
+    // Rendered without putting it in the box, so the page's own state is
+    // unchanged, but the html still has to reach the server.
+    overrides.html = args.html;
+  }
+  if (typeof args.pageRanges === 'string') overrides.pageRanges = args.pageRanges;
+
+  return render(overrides);
+}
+
+/** Whether the toolbar's paper list has this one in it. */
+function hasFormat(name) {
+  return [...el.format.options].some((o) => o.value === name);
+}

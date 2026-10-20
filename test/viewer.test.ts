@@ -626,7 +626,9 @@ div{height:250px;background:#c03030}</style><div>BOX</div>`;
   test('renders are ordered, so a slow one cannot overwrite a fast one', async () => {
     const js = await script();
 
-    expect(js).toContain('if (mine !== seq) return;');
+    // The guard, whatever it returns: the render that is not the newest is
+    // dropped whole, so a slow one cannot land on top of a fast one.
+    expect(js).toContain('if (mine !== seq) return');
     expect(js).toContain('controller?.abort()');
   });
 

@@ -182,3 +182,17 @@ secure context, so it is absent on `about:blank` and present on
 `--enable-blink-features=WebMCP` or `--enable-features=WebMCPTesting`.
 `registerTool` succeeds; `executeTool` takes a registered tool handle rather than a
 name, and `getTools` is what resolves names.
+
+**`executeTool` takes a JSON string, and answers with one.** Measured on
+Chromium 154 with `--enable-blink-features=WebMCP`, against a page served from
+`http://127.0.0.1`:
+
+- `executeTool(tool, {x: 'hello'})` fails with `UnknownError: Failed to parse
+  input arguments`. `executeTool(tool, JSON.stringify({x: 'hello'}))` works.
+- The result is a **string** holding the JSON, not an object. `r.content[0].text`
+  is a `TypeError`; `JSON.parse(r).content[0].text` is the answer.
+- `getTools()` hands back `inputSchema` as a string too, so a schema has to be
+  parsed before it can be read as one.
+
+Two of the three are the kind of mistake that looks like a missing feature: the
+tool is registered, it is listed, and the call fails anyway.

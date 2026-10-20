@@ -314,6 +314,19 @@ asks nothing.
 | `stylesheet-unreadable`     | a cross-origin stylesheet could not be read, so layout findings cover only this origin                                                                                                                             |
 | `url-render-blocked`        | a remote URL needs `allowNetwork`; without it its subresource loads and usually the document itself is blocked                                                                                                     |
 
+### The findings manifest
+
+The table above is also a machine-readable list, at `GET /findings` over HTTP
+and as the `list_findings` tool over MCP and WebMCP. Each entry is the code,
+the severity it is reported at, and one line saying what it means.
+
+It exists because a finding code is a promise: a caller writes
+`if (code === 'js-error')`, and that string has to keep meaning the same
+thing. A test holds the source to the manifest in both directions — a code
+emitted but not listed fails, a code listed but not emitted fails, a code
+listed at the wrong severity fails — and holds the README's table to the
+manifest as well.
+
 ### Findings over HTTP
 
 `POST /render` answers in one of two shapes. The default is JSON, with
@@ -402,6 +415,63 @@ Notes:
   and the page controls.
 - Every edit re-renders the whole document. There is no page-range render and no
   large-document cutoff yet, so a very long document re-renders in full.
+
+## For agents
+
+Two ways in. Both expose the same three capabilities: render HTML to PDF, check
+a PDF that already exists, and say what a finding code means.
+
+### The model context protocol
+
+`letterpress mcp` serves the [Model Context Protocol](https://modelcontextprotocol.io)
+over stdio — JSON-RPC, one message per line. Point a client at it:
+
+```json
+{
+  "mcpServers": {
+    "letterpress": {
+      "command": "bun",
+      "args": ["/path/to/letterpress/src/cli.ts", "mcp"]
+    }
+  }
+}
+```
+
+Three tools: `render_html`, `validate_pdf`, `list_findings`. A render returns
+the path the PDF was written to, the findings, and what the finished file turned
+out to be; `includePdf: true` adds the bytes themselves as an embedded
+resource.
+
+The server speaks both eras of the protocol. The current revision is stateless
+— every request carries its version in `_meta`, and `server/discover` says what
+the server supports. The revisions before it open with an `initialize`
+handshake and a negotiated version. What differs is small but real: a modern
+result carries `resultType`, and a modern `tools/list` carries a cache
+lifetime, and a legacy client gets neither.
+
+### WebMCP, in the browser
+
+The viewer page offers the same two useful tools to whatever agent is in the
+browser tab: `render_html` and `list_findings`. Nothing to configure beyond a
+Chromium with the flag on:
+
+```bash
+chromium --enable-blink-features=WebMCP http://127.0.0.1:8787/
+```
+
+Measured on Chromium 154, because each of these was a way to get nothing back:
+
+- The API is `document.modelContext`, not `navigator.modelContext`. The
+  navigator spelling is `undefined`.
+- It is absent without `--enable-blink-features=WebMCP`.
+- It needs a secure context. `about:blank` does not count; `http://127.0.0.1`
+  does, which is where the viewer is served from.
+- `executeTool` takes its arguments as a JSON **string** and answers with one.
+  An object where a string belongs fails with "Failed to parse input
+  arguments", which names the symptom rather than the mistake.
+
+The page checks for the API and registers nothing when it is not there, so a
+browser without WebMCP gets a working viewer and no error.
 
 ## Right-to-left text
 

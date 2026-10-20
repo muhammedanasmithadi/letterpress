@@ -19,7 +19,7 @@
  * comment markers inside it.
  */
 import * as ts from 'typescript-api';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const BASELINE = new URL('../waivers/baseline.comments.json', import.meta.url);
@@ -88,6 +88,15 @@ for (const root of ROOTS) {
       total += n;
     }
   }
+}
+
+// `--write` lowers the baseline to what is there now. It is how a removal
+// commits: the count in the file is the count in the code, and the next
+// removal lowers it again.
+if (process.argv.includes('--write')) {
+  writeFileSync(BASELINE, JSON.stringify({ files: current, total }, null, 2) + '\n');
+  console.log(`comments: ${total} across ${Object.keys(current).length} files (baseline written)`);
+  process.exit(0);
 }
 
 const problems = [];

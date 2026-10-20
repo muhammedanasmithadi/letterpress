@@ -2,7 +2,6 @@
   "files": {
     "src/tounicode.ts": 13,
     "src/verify.ts": 4,
-    "src/selection.ts": 75,
     "src/browser.ts": 8,
     "src/server.ts": 2,
     "src/fontdesc.ts": 31,
@@ -67,7 +66,8 @@
     "tools/quality.ts": 2,
     "tools/fuzz.ts": 3,
     "tools/fuzzpdf.ts": 3,
-    "tools/lint-comments.mjs": 5
+    "tools/strip-comments.mjs": 5,
+    "tools/lint-comments.mjs": 7
   },
-  "total": 653
+  "total": 586
 }

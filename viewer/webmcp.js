@@ -38,6 +38,21 @@ const TOOLS = [
         },
       },
     },
+    async execute(args) {
+      const body = await renderForTool(args);
+      if (!body) {
+        throw new Error('the render failed; the page says why in its status line');
+      }
+      const findings = body.findings ?? [];
+      const errors = findings.filter((f) => f.severity === 'error').length;
+      const head =
+        `${body.pages} page${body.pages === 1 ? '' : 's'}, ${body.bytes} bytes, ${body.ms}ms` +
+        (errors ? `, ${errors} error-severity finding(s)` : ', no errors');
+      const lines = findings.map(findingLine);
+      return {
+        content: [{ type: 'text', text: lines.length ? `${head}\n\n${lines.join('\n')}` : head }],
+      };
+    },
   },
   {
     name: 'list_findings',
@@ -55,6 +70,15 @@ const TOOLS = [
         },
       },
     },
+    async execute(args) {
+      const data = await findingsManifest();
+      const wanted =
+        typeof args.severity === 'string'
+          ? data.findings.filter((f) => f.severity === args.severity)
+          : data.findings;
+      const text = wanted.map((f) => `${f.severity}: ${f.code} -- ${f.summary}`).join('\n');
+      return { content: [{ type: 'text', text }] };
+    },
   },
 ];
 
@@ -71,34 +95,6 @@ async function findingsManifest() {
   return manifest;
 }
 
-const EXECUTE = {
-  async render_html(args) {
-    const body = await renderForTool(args);
-    if (!body) {
-      throw new Error('the render failed; the page says why in its status line');
-    }
-    const findings = body.findings ?? [];
-    const errors = findings.filter((f) => f.severity === 'error').length;
-    const head =
-      `${body.pages} page${body.pages === 1 ? '' : 's'}, ${body.bytes} bytes, ${body.ms}ms` +
-      (errors ? `, ${errors} error-severity finding(s)` : ', no errors');
-    const lines = findings.map(findingLine);
-    return {
-      content: [{ type: 'text', text: lines.length ? `${head}\n\n${lines.join('\n')}` : head }],
-    };
-  },
-
-  async list_findings(args) {
-    const data = await findingsManifest();
-    const wanted =
-      typeof args.severity === 'string'
-        ? data.findings.filter((f) => f.severity === args.severity)
-        : data.findings;
-    const text = wanted.map((f) => `${f.severity}: ${f.code} -- ${f.summary}`).join('\n');
-    return { content: [{ type: 'text', text }] };
-  },
-};
-
 export async function registerWebMcpTools() {
   const api = document.modelContext;
   if (!api || typeof api.registerTool !== 'function') {
@@ -109,7 +105,7 @@ export async function registerWebMcpTools() {
       name: tool.name,
       description: tool.description,
       inputSchema: tool.inputSchema,
-      execute: async (args) => EXECUTE[tool.name](args ?? {}),
+      execute: (args) => tool.execute(args ?? {}),
     });
   }
   return { registered: true, count: TOOLS.length };

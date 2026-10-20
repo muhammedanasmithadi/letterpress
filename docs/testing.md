@@ -353,6 +353,12 @@ consumed inside the frame before the pager was reached.
 `order` reorders paint, not the focus sequence. The actions must precede
 the settings row in the DOM, and no `order` value may put them back.
 
+## The agent surfaces
+
+The listing and the implementation of a tool are one structure, so a tool
+cannot be advertised without a way to run it. The check is that the names
+agree, in case the two are ever split again.
+
 ## The flags
 
 `--margin` took the next argv entry unconditionally, so `--margin --json

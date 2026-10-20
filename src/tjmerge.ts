@@ -20,7 +20,7 @@ const EPSILON = 1e-4;
 
 const PLACES = 6;
 
-export type MergeStats = {
+type MergeStats = {
   blocks: number;
   merged: number;
   refused: number;

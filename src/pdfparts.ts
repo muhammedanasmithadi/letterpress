@@ -8,7 +8,7 @@ export function objsByNum(parts: Parts): Map<number, Obj> {
 export const LATIN1 = 'latin1' as BufferEncoding;
 const NEWLINE = Buffer.from('\n', LATIN1);
 
-export function asBuffer(pdf: Uint8Array): Buffer {
+function asBuffer(pdf: Uint8Array): Buffer {
   return Buffer.isBuffer(pdf) ? pdf : Buffer.from(pdf.buffer, pdf.byteOffset, pdf.byteLength);
 }
 

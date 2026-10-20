@@ -4,7 +4,7 @@ export const MODERN_VERSION = '2026-07-28';
 
 export const LEGACY_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 
-export const SERVER_INFO = { name: 'letterpress', version: '0.1.0' };
+const SERVER_INFO = { name: 'letterpress', version: '0.1.0' };
 
 const INSTRUCTIONS =
   'Render HTML to PDF through Chromium own print engine, and check PDFs that already exist. ' +
@@ -29,8 +29,6 @@ type Reply =
     };
 
 export type Session = {
-  legacyVersion?: string;
-  initialized: boolean;
   context: McpContext;
 };
 
@@ -55,12 +53,12 @@ function metaOf(msg: Message): Json {
   return meta && typeof meta === 'object' ? (meta as Json) : {};
 }
 
-export function declaredVersion(msg: Message): string | null {
+function declaredVersion(msg: Message): string | null {
   const version = metaOf(msg)[META_VERSION];
   return typeof version === 'string' ? version : null;
 }
 
-export function isModern(msg: Message): boolean {
+function isModern(msg: Message): boolean {
   return declaredVersion(msg) !== null;
 }
 
@@ -102,7 +100,7 @@ export async function handle(session: Session, msg: Message): Promise<Reply | nu
     return fail(id, -32602, `a modern request must carry ${META_CLIENT_CAPS} in _meta`);
   }
 
-  if (msg.method === 'initialize') return initialize(session, id, msg);
+  if (msg.method === 'initialize') return initialize(id, msg);
   if (msg.method === 'ping') return ok(id, isModern(msg) ? modernResult({}) : {});
   if (msg.method === 'tools/list') return listTools(id, msg);
   if (msg.method === 'tools/call') return callToolRequest(session, id, msg);
@@ -123,10 +121,8 @@ function discover(id: string | number): Reply {
   );
 }
 
-function initialize(session: Session, id: string | number, msg: Message): Reply {
+function initialize(id: string | number, msg: Message): Reply {
   const version = agreedVersion((msg.params as Json | undefined)?.['protocolVersion']);
-  session.legacyVersion = version;
-  session.initialized = true;
   return ok(id, {
     protocolVersion: version,
     capabilities: { tools: {} },
@@ -180,7 +176,7 @@ async function callToolRequest(
 }
 
 export async function newSession(): Promise<Session> {
-  return { initialized: false, context: await makeContext() };
+  return { context: await makeContext() };
 }
 
 export async function serve(session: Session): Promise<void> {

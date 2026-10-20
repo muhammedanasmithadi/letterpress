@@ -223,7 +223,7 @@ function setProbe(opts: Options, argv: string[], i: number, a: string): Step {
   return consumedValue();
 }
 
-export const PROBES = ['gaps', 'fonts'] as const;
+const PROBES = ['gaps', 'fonts'] as const;
 export type ProbeName = (typeof PROBES)[number];
 
 function setJson(opts: Options): Step {
@@ -272,7 +272,7 @@ export function flagNames(): string[] {
   return [...HANDLERS.keys()].filter((k) => k.startsWith('--'));
 }
 
-export function applyFlag(opts: Options, argv: string[], i: number, a: string): Step {
+function applyFlag(opts: Options, argv: string[], i: number, a: string): Step {
   const handler = HANDLERS.get(a);
   if (handler) return handler(opts, argv, i, a);
   if (a.startsWith('-') && a !== '-') return { kind: 'error', error: `unknown option "${a}"` };

@@ -1,6 +1,6 @@
-export type FindingSeverity = 'error' | 'warn' | 'info';
+type FindingSeverity = 'error' | 'warn' | 'info';
 
-export type FindingSpec = {
+type FindingSpec = {
   severity: FindingSeverity;
   summary: string;
 };

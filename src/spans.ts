@@ -12,7 +12,7 @@ import {
 } from './pdfparts.ts';
 import { cmapStreams, fontsByContent, type FontTable } from './textfont.ts';
 
-export type SpanStats = {
+type SpanStats = {
   seen: number;
   stripped: number;
   kept: number;

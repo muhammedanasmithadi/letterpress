@@ -7,7 +7,7 @@ const MAX_FLOW = 0.6;
 const NEGATIVE = -0.2;
 const VERTICAL = 0.25;
 
-export type TextFlow = {
+type TextFlow = {
   glyphs: number;
   gaps: number;
   breaks: number;

@@ -68,7 +68,7 @@ class ServerStopping extends Error {
   }
 }
 
-export type ServerOptions = {
+type ServerOptions = {
   port?: number;
 
   browserArgs?: string[];
@@ -76,7 +76,7 @@ export type ServerOptions = {
   onReady?: (browser: Browser) => void;
 };
 
-export type RenderBody = {
+type RenderBody = {
   html?: string;
 
   path?: unknown;

@@ -42,7 +42,7 @@ export function xmlText(value: string): string {
   return out;
 }
 
-export type DocInfo = {
+type DocInfo = {
   title?: string;
   author?: string;
   subject?: string;

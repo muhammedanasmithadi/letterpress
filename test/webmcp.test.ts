@@ -104,6 +104,14 @@ describe('the page offers tools to an agent', () => {
     expect(text).toContain('1 page');
   }, 120_000);
 
+  test('every tool that is registered can also be called', async () => {
+    const result = await evaluate(
+      `const t = await document.modelContext.getTools();
+       return JSON.stringify(t.map(x => x.name).sort());`,
+    );
+    expect(JSON.parse(result as string)).toEqual(['list_findings', 'render_html']);
+  });
+
   test('a render with a problem says so, rather than returning nothing', async () => {
     const text = await callTool('render_html', {
       html: '<!doctype html><html><head><style>@page{size:A4;margin:10mm}</style></head><body><img src="missing.png"><p>x</p></body></html>',

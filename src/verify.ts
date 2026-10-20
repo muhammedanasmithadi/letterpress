@@ -10,7 +10,7 @@ import {
 
 const LATIN1 = 'latin1' as BufferEncoding;
 
-export type Verification = { ok: boolean; failures: string[] };
+type Verification = { ok: boolean; failures: string[] };
 
 function index(pdf: Uint8Array): Map<number, string> {
   const out = new Map<number, string>();

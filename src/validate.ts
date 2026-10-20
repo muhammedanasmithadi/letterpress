@@ -12,12 +12,12 @@ import {
 } from './pdfparts.ts';
 import { finalCheckFinding, selectionFinding } from './render.ts';
 
-export type Validation = {
+type Validation = {
   findings: Finding[];
   ok: boolean;
 };
 
-export type McidCensus = {
+type McidCensus = {
   present: string[];
   named: Set<string>;
   role: Map<string, string>;

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { handle, newSession, LEGACY_VERSIONS, MODERN_VERSION, type Session } from '../src/mcp.ts';
+import { TOOLS } from '../src/mcptools.ts';
 import { closeContext } from '../src/mcptools.ts';
 
 const MODERN_META = {
@@ -166,6 +167,16 @@ describe('the tools', () => {
     const modernContent = (resultOf(modernReply)['content'] ?? []) as Array<{ text: string }>;
     const legacyContent = (resultOf(legacyReply)['content'] ?? []) as Array<{ text: string }>;
     expect(modernContent[0]!.text).toBe(legacyContent[0]!.text);
+  });
+
+  test('every tool that is listed can also be called', async () => {
+    for (const tool of TOOLS) {
+      expect(typeof tool.execute, tool.name).toBe('function');
+    }
+    const listed = resultOf(await legacy(1, 'tools/list')) as unknown as {
+      tools: Array<{ name: string }>;
+    };
+    expect(listed.tools.map((t) => t.name).sort()).toEqual(TOOLS.map((t) => t.name).sort());
   });
 
   test('a tool nobody has heard of is a protocol error', async () => {

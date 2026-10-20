@@ -255,9 +255,9 @@ export function confinedTo(dir: string, name: string): boolean {
   return join(dir, name).startsWith(dir + '/');
 }
 
-export type RefusalReason = 'outside-root' | 'document';
+type RefusalReason = 'outside-root' | 'document';
 
-export type RefusedRef = { ref: string; abs: string; why: RefusalReason };
+type RefusedRef = { ref: string; abs: string; why: RefusalReason };
 
 function absRoot(root: string): string {
   return resolve(root.startsWith('/') ? root : `${process.cwd()}/${root}`);
@@ -437,7 +437,7 @@ export function hasRelativeAssets(html: string): boolean {
   return false;
 }
 
-export async function drainStream(
+async function drainStream(
   tab: Tab,
   handle: string,
   { chunkSize = 262_144, timeoutMs }: { chunkSize?: number; timeoutMs: number },

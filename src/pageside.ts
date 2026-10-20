@@ -1,4 +1,4 @@
-export type ImageMeasurement = {
+type ImageMeasurement = {
   at: number;
   from: number;
   to: number;
@@ -6,7 +6,7 @@ export type ImageMeasurement = {
   url: string;
 };
 
-export type ImageReplacement = { at: number; url: string };
+type ImageReplacement = { at: number; url: string };
 
 export function measureImages(MAX: number): string {
   const report: ImageMeasurement[] = [];

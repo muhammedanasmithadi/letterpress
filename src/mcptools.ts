@@ -9,19 +9,12 @@ import { inspect } from './pdf.ts';
 import { render, type Format, type RenderRequest } from './render.ts';
 import { validate } from './validate.ts';
 
-export type ToolContent = { type: 'text'; text: string } | { type: 'resource'; resource: unknown };
+type ToolContent = { type: 'text'; text: string } | { type: 'resource'; resource: unknown };
 
-export type ToolResult = {
+type ToolResult = {
   content: ToolContent[];
   structuredContent?: unknown;
   isError?: boolean;
-};
-
-export type ToolDefinition = {
-  name: string;
-  title: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
 };
 
 const FORMATS = ['a3', 'a4', 'a5', 'legal', 'letter', 'tabloid'] as const;
@@ -137,7 +130,15 @@ const FINDINGS_SCHEMA = {
   },
 } as const;
 
-export const TOOLS: ToolDefinition[] = [
+export type Tool = {
+  name: string;
+  title: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  execute: (args: Record<string, unknown>, ctx: McpContext) => Promise<ToolResult>;
+};
+
+export const TOOLS: Tool[] = [
   {
     name: 'render_html',
     title: 'Render HTML to PDF',
@@ -146,6 +147,7 @@ export const TOOLS: ToolDefinition[] = [
       'Returns the path the pdf was written to, the findings, and what the finished file turned out to be. ' +
       'A finding of severity error means the pdf is not the document you asked for.',
     inputSchema: RENDER_SCHEMA as unknown as Record<string, unknown>,
+    execute: (args, ctx) => renderHtml(args, ctx),
   },
   {
     name: 'validate_pdf',
@@ -154,14 +156,16 @@ export const TOOLS: ToolDefinition[] = [
       'Check a pdf that already exists, without a browser: structure, tagged navigation, fonts, and the ' +
       'same findings a render would report. Use this on a file from anywhere, including one another tool wrote.',
     inputSchema: VALIDATE_SCHEMA as unknown as Record<string, unknown>,
+    execute: (args) => validatePdf(args),
   },
   {
     name: 'list_findings',
     title: 'List the finding codes',
     description:
-      'Every finding code this tool can report, with its severity and what it means. Call this when a code ' +
-      'appears in a result and you need to know whether it is a fault in the document or a note about it.',
+      'Every finding code the renderer can report, with its severity and what it means. Call this when a ' +
+      'code appears in a result and you need to know whether it is a fault in the document or a note about it.',
     inputSchema: FINDINGS_SCHEMA as unknown as Record<string, unknown>,
+    execute: (args) => listFindings(args),
   },
 ];
 
@@ -195,10 +199,9 @@ export async function callTool(
   args: Record<string, unknown>,
   ctx: McpContext,
 ): Promise<ToolResult | null> {
-  if (name === 'render_html') return renderHtml(args, ctx);
-  if (name === 'validate_pdf') return validatePdf(args);
-  if (name === 'list_findings') return listFindings(args);
-  return null;
+  const tool = TOOLS.find((t) => t.name === name);
+  if (!tool) return null;
+  return tool.execute(args, ctx);
 }
 
 function findingLine(f: { severity: string; code: string; message: string }): string {
@@ -350,7 +353,7 @@ async function validatePdf(args: Record<string, unknown>): Promise<ToolResult> {
   };
 }
 
-function listFindings(args: Record<string, unknown>): ToolResult {
+async function listFindings(args: Record<string, unknown>): Promise<ToolResult> {
   const severity = typeof args.severity === 'string' ? args.severity : undefined;
   if (severity !== undefined && !['error', 'warn', 'info'].includes(severity)) {
     return failure(`severity must be error, warn or info, got "${severity}".`);

@@ -14,7 +14,7 @@ export class TemplateError extends Error {
   }
 }
 
-export class TemplateMissingError extends TemplateError {
+class TemplateMissingError extends TemplateError {
   constructor(missing: string[]) {
     super(missing, { missing: true });
     this.name = 'TemplateMissingError';
@@ -131,14 +131,14 @@ export function invoiceTotals(
   };
 }
 
-export function escapeHtml(s: string): string {
+function escapeHtml(s: string): string {
   return s.replace(
     /[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
   );
 }
 
-export function escapeCssValue(s: string): string {
+function escapeCssValue(s: string): string {
   return s.replace(/[^\w\s#%.,()\-/]/g, (c) => `\\${c}`);
 }
 

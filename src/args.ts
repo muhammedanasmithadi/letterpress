@@ -1,7 +1,3 @@
-/**
- * Command-line argument parsing, shared by the render command and the
- * subcommands that do not render.
- */
 export type Options = {
   input?: string;
   out?: string;
@@ -39,7 +35,6 @@ function wholeNumber(v: string): number | undefined {
 
 export type ParseResult = { opts: Options; error?: string };
 
-/** What handling one argv token produced: how far to advance, or the error that stopped. */
 type Step =
   | { kind: 'next'; consumed: number }
   | { kind: 'rest'; value: string; consumed: number }
@@ -47,12 +42,10 @@ type Step =
 
 type Handler = (opts: Options, argv: string[], i: number, a: string) => Step;
 
-/** Throw a usage error, caught by `main` and printed with the usage text. */
 function fail(m: string): never {
   throw new UsageError(m);
 }
 
-/** The value after a flag, or a usage error naming the flag. */
 function valueAfter(argv: string[], i: number, flag: string): string {
   const v = argv[i + 1];
   if (v === undefined || v.startsWith('-')) fail(`option ${flag} needs a value`);
@@ -105,15 +98,7 @@ function setLandscape(opts: Options): Step {
 }
 
 function setMargin(opts: Options, argv: string[], i: number): Step {
-  // `argv[i + 1]`, like every other option that takes a value. This read `a[i + 1]`,
-  // and `a` is the flag itself, so it indexed into the string "--margin" and returned
-  // "r". `--margin 15mm` set the margin to "r", silently, and `--margin --json` looked
-  // like a valid value too. The flag had never worked.
   const v = argv[i + 1];
-  // A flag starts with a dash; a negative length does not. `--margin -5mm` is a value
-  // the renderer then rejects with a proper message, and a test has said so since
-  // before this was found -- calling it a missing argument would replace a useful
-  // error with a confusing one.
   const looksLikeFlag = v !== undefined && v.startsWith('-') && !/^-[.\d]/.test(v);
   if (v === undefined || looksLikeFlag) {
     return { kind: 'error', error: 'option --margin needs a value' };
@@ -208,17 +193,8 @@ function setBeforePrint(opts: Options, argv: string[], i: number, a: string): St
   return consumedValue();
 }
 
-/**
- * `--page-ranges`, checked here rather than left to fail inside the engine.
- *
- * Chromium's `printToPDF` takes this string and validates it itself, but the
- * error arrives as a rejected protocol call several hundred milliseconds into a
- * render, after a browser has been launched, and reads as a transport failure.
- * The grammar is small and it is stated in the message either way.
- */
 function setPageRanges(opts: Options, argv: string[], i: number, a: string): Step {
   const v = valueAfter(argv, i, a);
-  // A comma-separated list of single pages and ranges: `1`, `1-3`, `1,4-6`.
   const part = /^[1-9]\d*(-[1-9]\d*)?$/;
   const parts = v.split(',').map((p) => p.trim());
   const bad = parts.filter((p) => !part.test(p));
@@ -234,17 +210,6 @@ function setPageRanges(opts: Options, argv: string[], i: number, a: string): Ste
   return consumedValue();
 }
 
-/**
- * `--probe <name>`, chosen from the probes that exist rather than written by the
- * caller.
- *
- * A raw-JS flag would be a remote code execution surface on a tool that renders
- * whatever it is handed, and it would be useless anyway: the expression runs in
- * the page, where nothing from this module exists, so `--probe "document.title"`
- * works and `--probe "wideGaps()"` is a ReferenceError. The functions are
- * named here, shipped by `Function.prototype.toString`, and can only be invoked
- * the way they were written to be.
- */
 function setProbe(opts: Options, argv: string[], i: number, a: string): Step {
   const v = valueAfter(argv, i, a);
   const known = PROBES as readonly string[];
@@ -258,7 +223,6 @@ function setProbe(opts: Options, argv: string[], i: number, a: string): Step {
   return consumedValue();
 }
 
-/** The named page-side probes `--probe` can ask for. */
 export const PROBES = ['gaps', 'fonts'] as const;
 export type ProbeName = (typeof PROBES)[number];
 
@@ -304,12 +268,10 @@ const HANDLERS: Map<string, Handler> = new Map([
   ['--quiet', setQuiet],
 ]);
 
-/** Every long flag the parser accepts, for the help-text parity test. */
 export function flagNames(): string[] {
   return [...HANDLERS.keys()].filter((k) => k.startsWith('--'));
 }
 
-/** Apply the token at `argv[i]`, or classify it as a positional argument. */
 export function applyFlag(opts: Options, argv: string[], i: number, a: string): Step {
   const handler = HANDLERS.get(a);
   if (handler) return handler(opts, argv, i, a);
@@ -317,7 +279,6 @@ export function applyFlag(opts: Options, argv: string[], i: number, a: string): 
   return { kind: 'rest', value: a, consumed: 1 };
 }
 
-/** Resolve the positional input, or the error that explains why it cannot be. */
 function resolveInput(opts: Options, rest: string[]): string | undefined {
   if (!rest.length) {
     if (opts.template) return undefined;
@@ -329,7 +290,6 @@ function resolveInput(opts: Options, rest: string[]): string | undefined {
   return undefined;
 }
 
-/** Validate the parsed options once every argument has been seen. */
 function finish(opts: Options, rest: string[]): ParseResult {
   if (rest.length > 1) {
     return { opts, error: `expected one input, got ${rest.length}: ${rest.join(', ')}` };
@@ -354,17 +314,6 @@ export function parseArgs(argv: string[]): ParseResult {
   return finish(opts, rest);
 }
 
-/**
- * The token loop on its own, without the rules about what the command as a
- * whole must look like.
- *
- * `validate` and `page` take the same flags and mean the same things by them,
- * but the rules `finish` enforces -- one input, `--data` needs `--template`,
- * `--margin` needs `--format` -- are the render's, and a check of an existing
- * pdf has no template and no html. Handing them the same tokens without the
- * same verdicts is the point; copying the loop to get it was 15 duplicated
- * lines that would have drifted the first time a flag was added.
- */
 export function tokenize(argv: string[]): {
   opts: Options;
   rest: string[];

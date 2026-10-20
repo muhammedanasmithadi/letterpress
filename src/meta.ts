@@ -126,9 +126,6 @@ export function readDocInfo(pdf: Uint8Array): DocInfo {
 }
 
 export function setDocTitle(pdf: Uint8Array, title: string): Uint8Array {
-  // The Info strings of an encrypted file are ciphertext: writing a literal
-  // title beside them plants plaintext inside an encrypted file and breaks
-  // the invariant every string but the Encrypt dict is encrypted.
   if (isEncrypted(pdf)) return pdf;
   const parts = trySplit(pdf);
   if (!parts) return pdf;
@@ -205,14 +202,7 @@ export function addMetadata(
   };
   const parts = trySplit(pdf);
   if (!parts) return pdf;
-  // An unencrypted metadata stream inside an encrypted file violates the
-  // encryption dictionary, so the packet is not added: same decline as above.
   if (isEncrypted(pdf)) return pdf;
-  // No early return when nothing is declared. A tagged PDF without an XMP packet fails
-  // veraPDF's PDF/UA-1 clause 7.1 (Catalog shall contain Metadata) on every document,
-  // declared or not -- measured across the sweep, where every author-less render failed
-  // it. The packet below carries only what the file already says (title, creator,
-  // producer, dates); author fields stay absent rather than written empty.
 
   const packetInfo: DocInfo = {
     ...readDocInfo(pdf),
@@ -221,11 +211,6 @@ export function addMetadata(
     keywords: wanted.Keywords,
   };
 
-  // Honour SOURCE_DATE_EPOCH here rather than leaving it to the later in-place rewrite.
-  // That rewrite matched the packet as plain text, which stopped working when the packet
-  // became compressed: the dates came out as wall-clock time and two runs of the same
-  // document stopped being byte-identical. Setting them now also makes the packet and the
-  // information dictionary agree by construction.
   const epoch = process.env.SOURCE_DATE_EPOCH;
   if (epoch && /^\d+$/.test(epoch)) {
     const d = new Date(Number(epoch) * 1000);

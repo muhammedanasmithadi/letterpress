@@ -45,10 +45,6 @@ function substitute(template: string, data: TemplateData, missing: Set<string>):
         if (Array.isArray(raw)) return raw.map((v) => String(v)).join('\n    ');
         return String(raw);
       }
-      // A `_css` suffix asks for a bare CSS value slot rather than markup or a CSS string,
-      // handled here rather than by the caller building a second key for it. The invoice
-      // template has three such slots and had all three on the markup escaper; making the
-      // caller remember a fourth key per slot is how the first three were missed.
       let key = textKey!;
       let cssValue = false;
       if (key.endsWith('_css') && !key.endsWith('__css')) {
@@ -142,23 +138,6 @@ export function escapeHtml(s: string): string {
   );
 }
 
-/**
- * Escape a value for a bare CSS slot -- `--accent: {{accent}}`, `size: {{paper}}`.
- *
- * `escapeHtml` is not enough and neither is `escapeCss`. Neither escapes a semicolon or a
- * closing brace, so a JSON value could end the declaration and open a rule of its own:
- * an invoice whose `accent` was
- *
- *     red; } body { display: none } :root { --accent: red
- *
- * printed with no body at all, one page, exit 0, and no finding. Escaping only what a
- * *string* needs to be safe leaves the value free to leave the declaration.
- *
- * Everything outside the set a CSS value legitimately uses is backslash-escaped, which is
- * what makes `;` `{` `}` `:` `"` `'` `<` `>` `@` inert. Inside a comment this is noise, but
- * the invoice template already carries several and a backslash inside one cannot terminate
- * the following rule.
- */
 export function escapeCssValue(s: string): string {
   return s.replace(/[^\w\s#%.,()\-/]/g, (c) => `\\${c}`);
 }

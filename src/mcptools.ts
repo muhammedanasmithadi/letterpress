@@ -1,19 +1,3 @@
-/**
- * The tools an MCP server exposes, and what they do.
- *
- * Three of them, on purpose. A tool's name, description and schema all go into
- * the model's context, and a catalogue of twenty tools is worse than three
- * that are clear: the model spends its attention choosing, and a wrong choice
- * costs more than a missing tool. The three here answer the three questions a
- * caller actually has -- make me a PDF, check this PDF, tell me what can go
- * wrong.
- *
- * The findings manifest is the third one, and it is why the manifest is data
- * rather than a list in the README: an agent that has just been handed
- * `font-fallback` has no way to know what that means unless something tells
- * it. The codes are the tool's own vocabulary, and this is the tool that
- * explains them.
- */
 import { readFile } from 'node:fs/promises';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -42,14 +26,12 @@ export type ToolDefinition = {
 
 const FORMATS = ['a3', 'a4', 'a5', 'legal', 'letter', 'tabloid'] as const;
 
-/** The PDF as an embedded resource, for a client that wants the bytes. */
 const PDF_RESOURCE_LIMIT = 4 * 1024 * 1024;
 
 function text(value: string): ToolContent {
   return { type: 'text', text: value };
 }
 
-/** A tool call that failed in a way the model can act on. */
 function failure(message: string): ToolResult {
   return { content: [text(message)], isError: true };
 }
@@ -183,10 +165,8 @@ export const TOOLS: ToolDefinition[] = [
   },
 ];
 
-/** The browser the render tool uses, launched on first use and kept open. */
 export type McpContext = {
   browser: () => Promise<Browser>;
-  /** A directory the tool may write into, cleaned up when the server stops. */
   workDir: string;
 };
 
@@ -210,7 +190,6 @@ export async function closeContext(ctx: McpContext): Promise<void> {
   await rm(ctx.workDir, { recursive: true, force: true }).catch(() => {});
 }
 
-/** Run a tool by name. Unknown names are a protocol error, not a tool error. */
 export async function callTool(
   name: string,
   args: Record<string, unknown>,
@@ -222,35 +201,24 @@ export async function callTool(
   return null;
 }
 
-/** The one-line reading of a finding, for a human or a model reading prose. */
 function findingLine(f: { severity: string; code: string; message: string }): string {
   return `${f.severity}: ${f.code} -- ${f.message}`;
 }
 
-/** A string argument, or nothing. */
 function stringArg(args: Record<string, unknown>, key: string): string | undefined {
   const v = args[key];
   return typeof v === 'string' ? v : undefined;
 }
 
-/** A number argument, or nothing. */
 function numberArg(args: Record<string, unknown>, key: string): number | undefined {
   const v = args[key];
   return typeof v === 'number' ? v : undefined;
 }
 
-/** A boolean argument, or false. */
 function boolArg(args: Record<string, unknown>, key: string): boolean {
   return args[key] === true;
 }
 
-/**
- * The render request the arguments describe, or the reason there is not one.
- *
- * The checks live here rather than in the tool body so that the body reads as
- * what it does -- print, write, report -- and the arguments read as what they
- * must be.
- */
 function renderRequestFrom(args: Record<string, unknown>): {
   request: RenderRequest;
   error?: string;

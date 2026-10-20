@@ -9,15 +9,6 @@ import { EMPTY_INPUT_MESSAGE, FORMATS, render, type Format } from './render.ts';
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 const LOOPBACK_HOST = /^(?:127\.0\.0\.1|\[::1\]|localhost)(?::\d+)?$/i;
 
-/**
- * A limit from the environment, or the default when it is absent or unusable.
- *
- * `Number('abc')` is NaN, and every comparison against NaN is false. So a typo did not
- * disable one limit loudly -- it disabled it silently: `active < NaN` is never true, the
- * queue grew without bound, and neither the 429 nor the page-limit message ever appeared.
- * The page limit was the worst, because the 413 body still quoted "the 6000-page limit"
- * while no such limit was being enforced.
- */
 const warnToStderr = (message: string): void => {
   process.stderr.write(`${message}\n`);
 };
@@ -32,8 +23,6 @@ export function limitFromEnv(
   if (raw === undefined || raw.trim() === '') return fallback;
   const value = Number(raw);
   if (!Number.isFinite(value) || value < min) {
-    // Loudly, because the alternative is a limit that is not there and a message saying it
-    // is. Falling back silently is what this function exists to stop.
     warn(
       `letterpress: ${name}=${JSON.stringify(raw)} is not a number of at least ${min}; ` +
         `using ${fallback}`,
@@ -72,12 +61,6 @@ function normalizeAuth(raw: unknown): { username: string; password: string } | u
   return undefined;
 }
 
-/**
- * Thrown into a queued render when the server stops before it could be given a slot.
- *
- * Not exported: the request handler catches it and turns it into a 503, so it never
- * escapes this module and nothing outside has a reason to name it.
- */
 class ServerStopping extends Error {
   constructor() {
     super(STOPPING_MESSAGE);
@@ -121,10 +104,6 @@ function originAllowed(request: Request, port: number): boolean {
   const origin = request.headers.get('origin');
 
   if (origin !== null) {
-    // Any loopback spelling the server answers on, at the port it is listening on.
-    // Comparing against one fixed spelling meant a viewer opened at http://localhost:PORT
-    // -- which hostAllowed accepts on purpose, and which server.test.ts asserts returns
-    // 200 -- was refused by its own POST, with a message about "other web pages".
     let parsed: URL;
     try {
       parsed = new URL(origin);
@@ -153,13 +132,6 @@ function hostAllowed(host: string | null): boolean {
   return /^\d{1,5}$/.test(port) && Number(port) <= 65535;
 }
 
-/**
- * Every field check on a render body, in the order the handler answers them.
- *
- * Order is load-bearing: the first failure wins, and tests assert specific errors
- * for bodies wrong in several ways at once. One function per field group keeps each
- * under the complexity ratchet; invalidBody below runs them in order.
- */
 function checkPathHtml(body: RenderBody): string | null {
   if (body.path !== undefined) return 'path is not accepted. send the html.';
   if (typeof body.html !== 'string') return 'send html as a string';
@@ -167,9 +139,6 @@ function checkPathHtml(body: RenderBody): string | null {
 }
 
 function checkEmpty(body: RenderBody): string | null {
-  // Blank input is a request defect, answered 400 here. render() itself still
-  // throws the shared message for callers without validation, so the CLI and
-  // library behavior do not change.
   if (typeof body.html === 'string' && !body.html.trim()) return EMPTY_INPUT_MESSAGE;
   return null;
 }
@@ -255,19 +224,12 @@ function checkMeta(body: RenderBody): string | null {
   return null;
 }
 
-/** Clamp an optional numeric field into [0, max], leaving it unset when absent. */
 function clamp(value: unknown, max: number, fallback: number | undefined): number | undefined {
   const n = typed(value);
   if (typeof n !== 'number' || !Number.isFinite(n)) return fallback;
   return Math.min(Math.max(n, 0), max);
 }
 
-// A deadline below a millisecond is not a deadline. `timeoutMs: 0` is a number, so
-// it passed the numeric check, and `render` reads it with `?? DEFAULT`, which keeps
-// the 0. The deadline expired on the next tick and the caller got a 500 about a cdp
-// socket, while the CLI refused the same input with a usage error. Clamping to 1ms
-// would be no better -- still a deadline that cannot be met -- so a value that small
-// falls back to the default rather than pretending otherwise.
 function deadline(value: unknown): number | undefined {
   const n = typed(value);
   if (typeof n !== 'number' || !Number.isFinite(n) || n < 1) return undefined;
@@ -275,8 +237,6 @@ function deadline(value: unknown): number | undefined {
 }
 
 function invalidBody(body: RenderBody): string | null {
-  // First failure wins, in listed order. A loop, not a ?? chain: the chain's
-  // branch count tripped the complexity ratchet at ten helpers.
   const checks = [
     checkPathHtml,
     checkEmpty,
@@ -295,11 +255,6 @@ function invalidBody(body: RenderBody): string | null {
   return null;
 }
 
-/**
- * The PDF-byte response: headers carry the report because the body cannot.
- * The status stays 200 for error findings -- the PDF is real and was asked for;
- * x-letterpress-errors is how a client tells a clean render from a failed one.
- */
 function pdfResponse(result: {
   pdf: Uint8Array;
   info: { pages: number; tagged: boolean };
@@ -338,10 +293,6 @@ async function readCapped(
   cap: number,
 ): Promise<{ text: string } | { tooBig: number } | { broken: string }> {
   const declared = Number(request.headers.get('content-length') ?? 0);
-  // Trusted only to reject early. A header is the caller's claim, and quoting it back as
-  // though it were the size is how a ten-byte body with `Content-Length: 99999999999`
-  // answered "document is 95367.4MB, over the 8MB limit". Below, the rejection is by
-  // measurement and reports the measured total.
   if (Number.isFinite(declared) && declared > cap) return { tooBig: declared };
 
   if (!request.body) return { text: '' };
@@ -381,8 +332,6 @@ export async function startServer(opts: ServerOptions = {}) {
   const waiters: Array<() => void> = [];
 
   const acquire = (): Promise<void> | null => {
-    // A slot handed out after shutdown begins is a render racing a browser that is
-    // closing. Reject rather than grant, and let the caller turn it into a 503.
     if (stopping) return Promise.reject(new ServerStopping());
     if (active < MAX_CONCURRENT_RENDERS) {
       active++;
@@ -451,10 +400,6 @@ export async function startServer(opts: ServerOptions = {}) {
         }
 
         if (url.pathname === '/findings') {
-          // The manifest, as data. The codes are the vocabulary the findings
-          // use, and a caller that has been handed one has no way to know
-          // what it means unless something says so. The page asks for this
-          // when it is asked what a code means.
           return Response.json(
             {
               findings: FINDING_CODES.map((code) => ({ code, ...FINDINGS[code]! })),
@@ -566,10 +511,6 @@ export async function startServer(opts: ServerOptions = {}) {
         if (invalid) return badRequest(invalid);
         const format = typed(body.format);
 
-        // Clamped to at least 1ms. `timeoutMs: 0` is a number, so it passed the numeric
-        // check, and `render` reads it with `?? DEFAULT`, which keeps the 0. The deadline then
-        // expired on the next tick and the caller got a 500 about a cdp socket. The CLI
-        // refuses the same input with a usage error, so the two disagreed as well.
         const slot = acquire();
         if (!slot) {
           return Response.json(
@@ -584,8 +525,6 @@ export async function startServer(opts: ServerOptions = {}) {
         try {
           await slot;
         } catch (e) {
-          // The only rejection acquire() produces is ServerStopping, and the only reason
-          // to reject is that shutdown began while this request sat in the queue.
           if (!(e instanceof ServerStopping)) throw e;
           return Response.json(
             { ok: false, error: STOPPING_MESSAGE },
@@ -702,15 +641,6 @@ export async function startServer(opts: ServerOptions = {}) {
 
   const stop = async () => {
     stopping = true;
-    // Release the queue first, before the drain. These waiters no longer grant a slot --
-    // stopping is set, so each one rejects its request -- which means every queued client
-    // is told the truth while the connections are still open, and none of them starts a
-    // render against a browser that is about to close.
-    //
-    // Previously this ran after the drain and the waiters granted their slots, so a queued
-    // render began, and then had its socket closed mid-flight. The client saw "The socket
-    // connection was closed unexpectedly" -- a transport error, not a status code, and with
-    // nothing in it to say the server had said goodbye on purpose.
     for (const waiter of waiters.splice(0)) waiter();
 
     if (inFlight.size) {

@@ -110,9 +110,6 @@ function defaultOut(input: string): string {
     return `${name.replace(/\.html?$/i, '') || 'index'}.pdf`;
   } catch {
     const base = input.split('/').filter(Boolean).pop() ?? 'out';
-    // `|| 'out'` for the same reason the url branch has it: a file literally named `.html`
-    // strips to the empty string, and `'' + '.pdf'` is a hidden `.pdf` in the cwd. The url
-    // branch guarded this and this one did not.
     return (base.replace(/\.html?$/i, '') || 'out') + '.pdf';
   }
 }
@@ -185,22 +182,6 @@ function killBrowserByProfile(profile: string): void {
   } catch {}
 }
 
-/**
- * The named probe `--probe` asked for, or nothing.
- *
- * `pageProbe` takes the function itself rather than a name, and the function
- * has to be one this module holds: it is shipped into the page by
- * `Function.prototype.toString`, where anything written as source text would be
- * free to reference names that do not exist there. That constraint is why the
- * flag names probes instead of accepting an expression.
- */
-/**
- * Parse `user:password` into credentials, or undefined when nothing was given.
- *
- * A colon is required so a typo does not silently become a username with an
- * empty password. The password may itself contain colons, so only the first
- * colon separates.
- */
 function parseAuth(raw: string | undefined): { username: string; password: string } | undefined {
   if (raw === undefined || raw.trim() === '') return undefined;
   const i = raw.indexOf(':');
@@ -209,18 +190,11 @@ function parseAuth(raw: string | undefined): { username: string; password: strin
 }
 
 function probeFor(name: ProbeName | undefined): (() => unknown) | undefined {
-  // The function itself, never a wrapper around it. `() => wideGaps()` is a
-  // `ReferenceError` in the page -- the arrow is shipped by toString and the
-  // name it closes over is not, because it lives in this module and the page
-  // has never heard of it. Measured, and the `page-probe-failed` finding said so
-  // plainly rather than returning nothing. Both probes take no required
-  // arguments, which is what makes passing them bare possible.
   if (name === 'gaps') return wideGaps;
   if (name === 'fonts') return fontProbe;
   return undefined;
 }
 
-/** The document to render, built from whichever input option was given. */
 async function requestFor(opts: Options): Promise<RenderRequest> {
   if (opts.template && opts.data) {
     return { html: await fillBundledTemplate(opts.template, opts.data) };
@@ -237,7 +211,6 @@ async function requestFor(opts: Options): Promise<RenderRequest> {
   return { path: opts.input! };
 }
 
-/** Read the JSON data file and fill the bundled template it names. */
 async function fillBundledTemplate(template: string, dataPath: string): Promise<string> {
   const raw = await Bun.file(dataPath).text();
   let data: Record<string, unknown>;
@@ -253,7 +226,6 @@ async function fillBundledTemplate(template: string, dataPath: string): Promise<
   return fillTemplate(await Bun.file(tplPath).text(), buildTemplateData(data));
 }
 
-/** Close the browser, sweep temp profiles, and exit with the signal's code. */
 function sweepAndExit(
   signal: NodeJS.Signals,
   profile: string,
@@ -264,10 +236,6 @@ function sweepAndExit(
   killBrowserByProfile(profile);
 
   try {
-    // Both prefixes, because `render` makes `letterpress-<pid>-n` work directories and
-    // this function makes its own profile with an `letterpress-cli-` mkdtemp name. Sweeping only
-    // first left every crashed run's profile behind for ever, which is the exact thing a
-    // sweep is for.
     const mine = [`letterpress-${process.pid}-`, 'letterpress-cli-'];
     for (const entry of readdirSync(tmpdir())) {
       if (mine.some((p) => entry.startsWith(p)))
@@ -279,7 +247,6 @@ function sweepAndExit(
   process.exit(128 + (signal === 'SIGINT' ? 2 : signal === 'SIGTERM' ? 15 : 1));
 }
 
-/** Write to a sibling and rename, so an interrupted run cannot leave a truncated file. */
 async function writeAtomic(outPath: string, pdf: Uint8Array): Promise<void> {
   const partial = `${outPath}.${process.pid}.part`;
   try {
@@ -291,7 +258,6 @@ async function writeAtomic(outPath: string, pdf: Uint8Array): Promise<void> {
   }
 }
 
-/** Print the findings and the result, and return the process exit code. */
 function reportOutcome(opts: Options, result: RenderResult, outPath: string): number {
   for (const f of result.findings) process.stderr.write(`${report(f)}\n`);
   const contradicted = result.findings.some((f) => f.severity === 'error');
@@ -307,10 +273,6 @@ function reportOutcome(opts: Options, result: RenderResult, outPath: string): nu
           source: result.source,
           blocked: result.blocked,
           ...result.info,
-          // The page probe's return value, when one was given. Nothing in the
-          // engine reads it -- it exists so a caller can ask the page a question
-          // of its own and get the answer back in the same document as
-          // everything else, instead of driving a second browser.
           probe: result.probe,
           findings: result.findings,
         },
@@ -334,21 +296,9 @@ function reportOutcome(opts: Options, result: RenderResult, outPath: string): nu
   return result.findings.some((f) => f.code === 'url-render-blocked') ? 1 : 0;
 }
 
-/**
- * A leading word that names a command which does not render, or null.
- *
- * Kept out of `main` so the orchestrator stays about the render path, and out of
- * the parse step because these commands are not the render command with a
- * different argument: `validate` reads a pdf, so none of the rules about html,
- * templates or `--margin` needing `--format` apply to it. Imported lazily so
- * the render path does not pay for a command it will not run.
- */
 async function subcommand(argv: string[]): Promise<number | null> {
   const name = argv[0];
   if (name === 'mcp') {
-    // The Model Context Protocol server. It speaks JSON-RPC on stdin and
-    // stdout, so it owns both: the protocol forbids anything else on stdout,
-    // and this tool prints its findings to stderr.
     const { runMcp } = await import('./mcp.ts');
     return runMcp();
   }
@@ -383,7 +333,6 @@ export async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
-  // Validate --auth early so a bad value is a usage error, not a render failure.
   let auth: { username: string; password: string } | undefined;
   try {
     auth = parseAuth(opts.auth ?? process.env.LETTERPRESS_AUTH);
@@ -456,7 +405,6 @@ export async function listTemplates(): Promise<string[]> {
   return names.sort();
 }
 
-/** The VAT rate from the data, defaulting to the British standard rate. */
 function vatRateOf(data: Record<string, unknown>): number {
   const rateInput = data.vat_rate ?? data.vatRate ?? 0.2;
   const vatRate = Number(rateInput);
@@ -469,7 +417,6 @@ function vatRateOf(data: Record<string, unknown>): number {
   return vatRate;
 }
 
-/** The item rows, checked for the numeric fields `invoiceTotals` needs. */
 function lineItemsOf(items: Array<Record<string, unknown>>): LineItem[] {
   const lineItems = items.map((i, at) => {
     const qty = Number(i.qty ?? i.quantity ?? 1);
@@ -493,7 +440,6 @@ function lineItemsOf(items: Array<Record<string, unknown>>): LineItem[] {
   return lineItems;
 }
 
-/** Refuse a supplied subtotal, vat or total that disagrees with the computed one. */
 function reconcileTotals(
   data: Record<string, unknown>,
   totals: ReturnType<typeof invoiceTotals>,
@@ -525,7 +471,6 @@ function reconcileTotals(
   }
 }
 
-/** Copy the free-text and multi-line fields, escaping what lands in the template. */
 function copyTextFields(data: Record<string, unknown>, out: TemplateData): void {
   for (const k of ['company', 'invoice_no', 'company_secondary', 'note', 'currency']) {
     if (typeof data[k] === 'string') out[`${k}_text`] = escapeCss(data[k] as string);

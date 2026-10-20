@@ -1,12 +1,3 @@
-/**
- * Subcommands that do not render.
- *
- * `letterpress` renders, and that is the thing it is for. These two are about
- * a file that already exists: `validate` checks it, `page` explains what the
- * tool made of its `@page` rules before it ever printed anything. Both run
- * without a browser, which is the whole reason they are separate commands rather
- * than flags on the render path.
- */
 import { readFile } from 'node:fs/promises';
 
 import { tokenize } from './args.ts';
@@ -113,17 +104,6 @@ export async function runPage(argv: string[]): Promise<number> {
   return 0;
 }
 
-/**
- * What `--landscape` does to this document, in one line.
- *
- * Four cases, and the first two are the ones a single boolean gets wrong.
- * `transposePageSize` returns null for both a document that declares no paper
- * and one that declares `size: auto`, and they are opposites: with no
- * declaration the flag goes straight to the print engine and works, while
- * `size: auto` is refused with an error finding and the sheet stays portrait.
- * Reporting the second reason for the first is how a correct flag gets called
- * broken.
- */
 function landscapeOutcome(size: string | null, orientation: string | null): string {
   if (!size) {
     return 'passed straight to chromium: the document declares no paper, so there is nothing to transpose';

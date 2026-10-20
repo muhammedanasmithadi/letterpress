@@ -1,16 +1,5 @@
 {
   "files": {
-    "src/template.ts": 5,
-    "src/browser.ts": 27,
-    "src/server.ts": 47,
-    "src/meta.ts": 15,
-    "src/validate.ts": 19,
-    "src/subcommands.ts": 2,
-    "src/args.ts": 21,
-    "src/cli.ts": 33,
-    "src/findings.ts": 5,
-    "src/mcp.ts": 30,
-    "src/mcptools.ts": 11,
     "test/api.test.ts": 2,
     "test/pdfparts.test.ts": 26,
     "test/template.test.ts": 6,
@@ -65,5 +54,5 @@
     "tools/lint-comments.mjs": 6,
     "tools/comment-ranges.mjs": 2
   },
-  "total": 1265
+  "total": 1050
 }

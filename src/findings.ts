@@ -1,29 +1,7 @@
-/**
- * Every finding code this tool can report, and what it means.
- *
- * The codes were string literals scattered across eleven source files, which is
- * fine right up to the moment something needs to know the whole set: a server
- * that advertises them, a tool that lets a caller ask "what can go wrong here",
- * a test that checks the documentation against the code. Enumerating them by
- * reading the source is a chore, and it goes stale the day one is added.
- *
- * This table is that list, and a test holds the source to it in both
- * directions -- a code emitted but not listed here fails the build, and so does
- * a code listed here that nothing emits. The severity here is the severity the
- * code is reported at, read out of the source rather than trusted, so the two
- * cannot drift apart.
- *
- * The summaries are the findings table of the README, word for word. The README
- * is where a human reads them; this is where a program reads them, and the test
- * checks that the two still say the same thing.
- */
-
 export type FindingSeverity = 'error' | 'warn' | 'info';
 
 export type FindingSpec = {
-  /** The severity this code is reported at. */
   severity: FindingSeverity;
-  /** What the code means, in one line. */
   summary: string;
 };
 
@@ -222,10 +200,8 @@ export const FINDINGS: Record<string, FindingSpec> = {
   },
 };
 
-/** Every code, sorted, so a listing does not depend on the order they were written. */
 export const FINDING_CODES: string[] = Object.keys(FINDINGS).sort();
 
-/** The codes reported at one severity. */
 export function codesAt(severity: FindingSeverity): string[] {
   return FINDING_CODES.filter((c) => FINDINGS[c]!.severity === severity);
 }

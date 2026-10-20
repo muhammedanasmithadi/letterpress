@@ -164,13 +164,6 @@ export class Browser {
     );
 
     this.#proc = proc;
-    // Both of the awaits below can throw, and the caller has no handle on `proc` to clean
-    // up with: `Browser.launch` discards the instance on rejection and `cli.ts` then
-    // `rm -rf`s the profile the orphan is still using. So the cleanup is here, where the
-    // process handle is. A Chromium that starts but never prints its DevTools line -- a
-    // stale lock in a reused --user-data-dir, a sandbox without the namespaces it needs --
-    // used to leave a headless Chromium and its children running for the life of the
-    // machine. That is where a long afternoon of orphaned processes came from.
     try {
       this.#port = await readDevToolsPort(proc, 30_000);
       await this.#awaitSession();
@@ -196,12 +189,6 @@ export class Browser {
       } catch (e) {
         last = e;
       } finally {
-        // Closed here rather than on the success path only. `newTab` registers the tab
-        // before `Page.enable` is attempted, so a rejected enable left it open and still
-        // counted -- one renderer target and one live CDP socket per retry, for as many
-        // retries as the deadline allowed. And the leaking case is the designed-for one:
-        // this loop exists because the endpoint can appear before the socket will serve a
-        // command, so a slow Chromium leaks on every ordinary startup.
         if (tab) await this.closeTab(tab).catch(() => {});
       }
       await Bun.sleep(150);
@@ -258,12 +245,6 @@ export class Browser {
     if (!proc) return;
 
     try {
-      // Timeouts, because this is the cleanup path and it must not be the thing that hangs.
-      // `alive()` uses AbortSignal.timeout for the identical fetch and this did not, so a
-      // wedged-but-listening Chromium made `close()` await forever -- and the SIGKILL
-      // escalation below sits after it, so the one thing guaranteed to work was the one
-      // thing that could not be reached. `server.ts` awaits this on shutdown and inherits
-      // the hang.
       const version = await (
         await fetch(`http://127.0.0.1:${this.#port}/json/version`, {
           signal: AbortSignal.timeout(3_000),
@@ -308,10 +289,6 @@ export async function readDevToolsPort(proc: Subprocess, timeoutMs: number): Pro
 
   try {
     while (Bun.nanoseconds() < deadline) {
-      // Raced against the remaining budget, not checked only between reads. A Chromium
-      // that starts, holds stderr open and writes nothing parks in `reader.read()` for ever,
-      // so the deadline above never got looked at again and the error went on claiming a
-      // wait it had not performed. This is the first thing that runs on every launch.
       const remaining = deadline - Bun.nanoseconds();
       const read = await Promise.race([
         reader.read(),
@@ -323,10 +300,6 @@ export async function readDevToolsPort(proc: Subprocess, timeoutMs: number): Pro
       buf += decoder.decode(value, { stream: true });
       const m = buf.match(/DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)\//);
       if (m) {
-        // Keep draining. Chromium's children inherit this pipe, and nobody reads it again
-        // once the port is known, so a full 64 KB buffer blocks the writer -- and with it
-        // the browser -- for the life of the process. Silent by design; nothing here is
-        // looked at again.
         void (async () => {
           try {
             for (;;) {

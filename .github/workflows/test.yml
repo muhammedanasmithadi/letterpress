@@ -37,6 +37,7 @@ jobs:
       - run: bun run spell
       - run: bun run ratchet
         env: { LIZARD_BIN: lizard }
+      - run: bun run comments
       - run: bunx commitlint --from HEAD~1 --to HEAD
   semgrep:
     runs-on: ubuntu-24.04

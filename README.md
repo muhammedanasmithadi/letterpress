@@ -637,11 +637,19 @@ escaped and printed.
 ## Development
 
 ```bash
-bun test          # 667 tests across 35 files
+bun test          # 778 tests across 39 files
 bun tools/selection.ts ~/Documents/a.html   # what a browser will do when a selection is dragged across it
 bun run bench     # cold start, concurrency and footprint, cross-runtime
 bun run typecheck
+bun run cleanup   # kill the browsers a killed run left behind
 ```
+
+`bun test` sweeps up after itself: each test file launches a Chromium and a
+server, and a run that is interrupted — a timeout, a closed shell — leaves them
+running, idle and headless, so nothing complains and the next run starts on a
+machine with a dozen stale browsers on it. `tools/cleanup.sh` matches on the
+profile directory rather than the binary, so it never touches a browser that is
+not ours.
 
 Tests assert against independent implementations rather than against this
 renderer's own parser, because every real defect found so far came from one of

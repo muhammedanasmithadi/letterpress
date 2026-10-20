@@ -49,6 +49,7 @@ describe('the mcp endpoint', () => {
     const body = (await r.json()) as { result: { tools: Array<{ name: string }> } };
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
       'list_findings',
+      'page_rules',
       'render_html',
       'validate_pdf',
     ]);

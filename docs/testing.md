@@ -353,6 +353,18 @@ consumed inside the frame before the pager was reached.
 `order` reorders paint, not the focus sequence. The actions must precede
 the settings row in the DOM, and no `order` value may put them back.
 
+## Waiting for the page, not the clock
+
+Registration happens when the page's module is evaluated, which is after the
+navigation resolves and not at the same moment, so a fixed sleep is a race
+with the page and loses on a loaded machine. The test polls for the count it
+expects instead, which is what the test means.
+
+The crash event has the same problem from the other side: a renderer that
+dies under memory pressure takes longer to say so, and a ten-second budget is
+not enough on a machine with less than a gigabyte free. The budget is twenty
+seconds, and the test's own timeout is thirty.
+
 ## The agent surfaces
 
 The listing and the implementation of a tool are one structure, so a tool

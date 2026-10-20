@@ -437,10 +437,14 @@ over stdio — JSON-RPC, one message per line. Point a client at it:
 }
 ```
 
-Three tools: `render_html`, `validate_pdf`, `list_findings`. A render returns
-the path the PDF was written to, the findings, and what the finished file turned
-out to be; `includePdf: true` adds the bytes themselves as an embedded
-resource.
+Four tools: `render_html`, `validate_pdf`, `page_rules`, `list_findings`. A
+render returns the path the PDF was written to, the findings, and what the
+finished file turned out to be; `includePdf: true` adds the bytes themselves
+as an embedded resource. `render_html` also takes a `probe` — `gaps` names the
+element behind a wide gap and the CSS that caused it, `fonts` says which
+families the document asked for. `page_rules` says what the renderer would
+make of a document's own `@page` rules, which is worth knowing before a
+render rather than after.
 
 The server speaks both eras of the protocol. The current revision is stateless
 — every request carries its version in `_meta`, and `server/discover` says what

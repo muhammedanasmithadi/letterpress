@@ -35,6 +35,23 @@ async function evaluate(expression: string): Promise<unknown> {
   return r?.result?.value;
 }
 
+async function waitForTools(count: number): Promise<Array<{ name: string }>> {
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    const tools = JSON.parse(
+      (await evaluate(
+        `const t = await document.modelContext.getTools();
+         return JSON.stringify(t.map(x => x.name));`,
+      )) as string,
+    ) as string[];
+    if (tools.length >= count) return tools.map((name) => ({ name }));
+    if (Date.now() > deadline) {
+      throw new Error(`the page registered ${tools.length} tools, expected ${count}`);
+    }
+    await Bun.sleep(100);
+  }
+}
+
 async function callTool(name: string, args: unknown): Promise<string> {
   return (await evaluate(
     `const t = await document.modelContext.getTools();
@@ -64,6 +81,7 @@ describe('the page offers tools to an agent', () => {
   }, 60_000);
 
   test('the two tools are registered, with the names and the schemas', async () => {
+    await waitForTools(2);
     const tools = JSON.parse(
       (await evaluate(
         `const t = await document.modelContext.getTools();
@@ -101,13 +119,9 @@ describe('the page offers tools to an agent', () => {
   }, 120_000);
 
   test('every tool that is registered can also be called', async () => {
-    const result = await evaluate(
-      `const t = await document.modelContext.getTools();
-       return JSON.stringify(t.map(x => x.name).sort());`,
-    );
-    expect(JSON.parse(result as string)).toEqual(['list_findings', 'render_html']);
+    const tools = await waitForTools(2);
+    expect(tools.map((t) => t.name).sort()).toEqual(['list_findings', 'render_html']);
   });
-
   test('a render with a problem says so, rather than returning nothing', async () => {
     const text = await callTool('render_html', {
       html: '<!doctype html><html><head><style>@page{size:A4;margin:10mm}</style></head><body><img src="missing.png"><p>x</p></body></html>',

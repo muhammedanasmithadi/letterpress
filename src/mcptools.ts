@@ -7,7 +7,9 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { Browser } from './browser.ts';
 import { FINDINGS, FINDING_CODES } from './findings.ts';
 import { inspect } from './pdf.ts';
+import { fontProbe, wideGaps } from './pageside.ts';
 import { render, type Format, type RenderRequest } from './render.ts';
+import { pageAnalysis } from './subcommands.ts';
 import { validate } from './validate.ts';
 
 type ToolContent = { type: 'text'; text: string } | { type: 'resource'; resource: unknown };
@@ -101,6 +103,14 @@ const RENDER_SCHEMA = {
       description:
         'where to write the PDF. defaults to a temporary file, whose path comes back in the result.',
     },
+    probe: {
+      type: 'string',
+      enum: ['gaps', 'fonts'],
+      description:
+        'ask the loaded page a question of its own and get the answer in the result. ' +
+        'gaps: where a browser will break a text selection, with the element and the cause. ' +
+        'fonts: the families the document asked for.',
+    },
     includePdf: {
       type: 'boolean',
       description:
@@ -164,6 +174,32 @@ export const TOOLS: Tool[] = [
     execute: (args, ctx) => validatePdf(args, ctx),
   },
   {
+    name: 'page_rules',
+    title: 'Explain the paper rules',
+    description:
+      'Say what the renderer would make of a document own @page rules: the paper and margin it ' +
+      'declares, what --landscape would do to them, and what --format and --margin would change. ' +
+      'Use this before rendering when the paper matters, and after when a document did not come out ' +
+      'on the sheet you expected.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        html: { type: 'string', description: 'the document to read the page rules out of.' },
+        format: {
+          type: 'string',
+          enum: ['a3', 'a4', 'a5', 'legal', 'letter', 'tabloid'],
+          description: 'the paper to ask about, as if it were requested.',
+        },
+        margin: {
+          type: 'string',
+          description: 'the margin to ask about, as if it were requested.',
+        },
+      },
+      required: ['html'],
+    },
+    execute: (args) => Promise.resolve(pageRules(args)),
+  },
+  {
     name: 'list_findings',
     title: 'List the finding codes',
     description:
@@ -213,6 +249,41 @@ export async function callTool(
   const tool = TOOLS.find((t) => t.name === name);
   if (!tool) return null;
   return tool.execute(args, ctx);
+}
+
+function probeFor(name: string | undefined): (() => unknown) | undefined {
+  if (name === 'gaps') return wideGaps;
+  if (name === 'fonts') return fontProbe;
+  return undefined;
+}
+
+function pageRules(args: Record<string, unknown>): ToolResult {
+  const html = stringArg(args, 'html');
+  if (html === undefined) return failure('page_rules needs the html to read.');
+  const analysis = pageAnalysis(
+    html,
+    'the document',
+    stringArg(args, 'format'),
+    stringArg(args, 'margin'),
+  );
+  const declared = analysis['declared'] as {
+    size: string | null;
+    margin: string | null;
+    orientation: string | null;
+    rules: string[];
+  };
+  const lines = [
+    `declared size: ${declared.size ?? '(none)'}`,
+    `declared margin: ${declared.margin ?? '(none)'}`,
+    `declared orientation: ${declared.orientation ?? '(none)'}`,
+    `@page rules: ${declared.rules.length}`,
+    ...declared.rules.map((r) => `  ${r}`),
+    `with --landscape: ${analysis['landscape']}`,
+  ];
+  return {
+    content: [{ type: 'text', text: lines.join('\n') }],
+    structuredContent: analysis,
+  };
 }
 
 function findingLine(f: { severity: string; code: string; message: string }): string {
@@ -298,6 +369,7 @@ function renderRequestFrom(args: Record<string, unknown>): {
       html,
       path,
       url,
+      pageProbe: probeFor(stringArg(args, 'probe')),
       format: format as Format | undefined,
       landscape: boolArg(args, 'landscape'),
       margin,
@@ -344,6 +416,9 @@ async function renderHtml(args: Record<string, unknown>, ctx: McpContext): Promi
   const content: ToolContent[] = [
     text(lines.length ? `${summary}\n\n${lines.join('\n')}` : summary),
   ];
+  if (result.probe !== undefined) {
+    content.push(text(`probe: ${JSON.stringify(result.probe)}`));
+  }
 
   const structured = {
     ok: errors.length === 0,
@@ -354,6 +429,7 @@ async function renderHtml(args: Record<string, unknown>, ctx: McpContext): Promi
     tagged: result.info.tagged,
     pageSizes: result.info.pageSizes,
     findings: result.findings,
+    ...(result.probe === undefined ? {} : { probe: result.probe }),
   };
 
   if (boolArg(args, 'includePdf') && result.pdf.byteLength <= PDF_RESOURCE_LIMIT) {

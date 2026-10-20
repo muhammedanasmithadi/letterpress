@@ -60,18 +60,7 @@ export async function runPage(argv: string[]): Promise<number> {
     return fail(`cannot read ${path}: ${e instanceof Error ? e.message : e}`);
   }
 
-  const rules = pageRules(html);
-  const size = declaredPageSize(html);
-  const margin = declaredPageMargin(html);
-  const orientation = declaredPageOrientation(html);
-
-  const analysis: Record<string, unknown> = {
-    path,
-    declared: { size, margin, orientation, rules },
-    landscape: landscapeOutcome(size, orientation),
-    format: opts.format ? injectPageRule(html, `size: ${opts.format}`) : null,
-    marginOverride: opts.margin ? injectPageRule(html, `margin: ${opts.margin}`) : null,
-  };
+  const analysis = pageAnalysis(html, path, opts.format, opts.margin);
 
   if (opts.json) {
     process.stdout.write(`${JSON.stringify(analysis, null, 2)}\n`);
@@ -79,6 +68,16 @@ export async function runPage(argv: string[]): Promise<number> {
   }
 
   if (!opts.quiet) {
+    const declared = analysis['declared'] as {
+      size: string | null;
+      margin: string | null;
+      orientation: string | null;
+      rules: string[];
+    };
+    const size = declared.size;
+    const margin = declared.margin;
+    const orientation = declared.orientation;
+    const rules = declared.rules;
     process.stdout.write(`${path}\n`);
     process.stdout.write(`  declared size         ${size ?? '(none)'}\n`);
     process.stdout.write(`  declared margin       ${margin ?? '(none)'}\n`);
@@ -104,7 +103,26 @@ export async function runPage(argv: string[]): Promise<number> {
   return 0;
 }
 
-function landscapeOutcome(size: string | null, orientation: string | null): string {
+export function pageAnalysis(
+  html: string,
+  path: string,
+  format?: string,
+  margin?: string,
+): Record<string, unknown> {
+  const rules = pageRules(html);
+  const size = declaredPageSize(html);
+  const declaredMargin = declaredPageMargin(html);
+  const orientation = declaredPageOrientation(html);
+  return {
+    path,
+    declared: { size, margin: declaredMargin, orientation, rules },
+    landscape: landscapeOutcome(size, orientation),
+    format: format ? injectPageRule(html, `size: ${format}`) : null,
+    marginOverride: margin ? injectPageRule(html, `margin: ${margin}`) : null,
+  };
+}
+
+export function landscapeOutcome(size: string | null, orientation: string | null): string {
   if (!size) {
     return 'passed straight to chromium: the document declares no paper, so there is nothing to transpose';
   }

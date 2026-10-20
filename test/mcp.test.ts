@@ -126,10 +126,15 @@ describe('the handshake', () => {
 });
 
 describe('the tools', () => {
-  test('there are three of them, each with a name, a description and a schema', async () => {
+  test('there are four of them, each with a name, a description and a schema', async () => {
     const reply = await legacy(1, 'tools/list');
     const tools = (resultOf(reply) as unknown as { tools: Array<Record<string, unknown>> }).tools;
-    expect(tools.map((t) => t['name'])).toEqual(['render_html', 'validate_pdf', 'list_findings']);
+    expect(tools.map((t) => t['name'])).toEqual([
+      'render_html',
+      'validate_pdf',
+      'page_rules',
+      'list_findings',
+    ]);
     for (const tool of tools) {
       expect(typeof tool['description']).toBe('string');
       expect((tool['description'] as string).length).toBeGreaterThan(40);
@@ -178,6 +183,42 @@ describe('the tools', () => {
     };
     expect(listed.tools.map((t) => t.name).sort()).toEqual(TOOLS.map((t) => t.name).sort());
   });
+
+  test('page_rules says what the paper would be without rendering it', async () => {
+    const reply = await legacy(1, 'tools/call', {
+      name: 'page_rules',
+      arguments: {
+        html: '<!doctype html><style>@page{size:A4;margin:15mm}</style><p>x</p>',
+      },
+    });
+    const result = resultOf(reply) as unknown as {
+      content: Array<{ text: string }>;
+      structuredContent: { declared: { size: string; margin: string; rules: string[] } };
+    };
+    expect(result.structuredContent.declared.size).toBe('a4');
+    expect(result.structuredContent.declared.margin).toBe('15mm');
+    expect(result.structuredContent.declared.rules.length).toBe(1);
+    expect(result.content[0]!.text).toContain('declared size: a4');
+  });
+
+  test('a render can ask the page a question of its own', async () => {
+    const reply = await legacy(2, 'tools/call', {
+      name: 'render_html',
+      arguments: {
+        html:
+          '<!doctype html><html lang="en"><head><style>@page{size:A4;margin:12mm}' +
+          'body{font:12pt serif}.row{display:flex;gap:24px}</style></head>' +
+          '<body><div class="row"><span>a</span><span>b</span></div></body></html>',
+        probe: 'gaps',
+        outputPath: join(dir, 'probed.pdf'),
+      },
+    });
+    const result = resultOf(reply) as unknown as {
+      structuredContent: { probe: Array<{ cause: string; em: number }> };
+    };
+    expect(result.structuredContent.probe.length).toBeGreaterThan(0);
+    expect(result.structuredContent.probe[0]!.cause).toBe('flex-gap');
+  }, 120_000);
 
   test('a tool nobody has heard of is a protocol error', async () => {
     const reply = await legacy(1, 'tools/call', { name: 'make_coffee', arguments: {} });
@@ -351,7 +392,7 @@ describe('the server as a process', () => {
     expect(replies.length, `only got ${lines.length} lines`).toBe(2);
     expect(replies[0]!.id).toBe(1);
     expect(replies[1]!.id).toBe(2);
-    expect((replies[1]!.result as { tools: unknown[] }).tools.length).toBe(3);
+    expect((replies[1]!.result as { tools: unknown[] }).tools.length).toBe(TOOLS.length);
 
     await proc.stdin.end();
     const code = await proc.exited;

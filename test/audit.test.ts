@@ -693,7 +693,7 @@ test('a crashed tab is reported rather than waited out', async () => {
   expect(crashed).toBe(false);
 
   void tab.send('Page.crash', {}, 2_000).catch(() => {});
-  for (let i = 0; i < 40 && !crashed; i++) {
+  for (let i = 0; i < 80 && !crashed; i++) {
     await new Promise((r) => setTimeout(r, 250));
   }
   expect(crashed).toBe(true);

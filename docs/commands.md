@@ -54,6 +54,30 @@ works, while `size: auto` is refused with an error finding and the sheet
 stays portrait. Reporting the second reason for the first is how a correct
 flag gets called broken.
 
+## The tools an agent gets
+
+Four, and the number is the point: a tool's name, description and schema all
+go into the model's context, and a catalogue of twenty is worse than three
+that are clear. The model spends its attention choosing, and a wrong choice
+costs more than a missing tool.
+
+`render_html` prints HTML to PDF and reports what the document got wrong. It
+also takes a `probe`: `gaps` names the element behind a wide gap and the CSS
+that caused it, and `fonts` says which families the document asked for. A
+finding says a gap is too wide; the probe says which one and why.
+
+`validate_pdf` checks a PDF that already exists, by path or by sending the
+bytes. It reads the file and nothing else, so it costs milliseconds against the
+~1s a render takes.
+
+`page_rules` says what the renderer would make of a document's own `@page`
+rules: the paper and margin it declares, what `--landscape` would do to them,
+and what `--format` and `--margin` would change. The question is worth
+asking before a render, and a render does not answer it on its own.
+
+`list_findings` returns every code with its severity and what it means, so
+the codes in a result can be read.
+
 ## The model context protocol over HTTP
 
 The server answers the model context protocol on `/mcp`, the same tools the

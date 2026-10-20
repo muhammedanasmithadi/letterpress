@@ -31,27 +31,12 @@ function dictClose(window: string): number {
   return -1;
 }
 
-/**
- * Whether the trailer declares encryption: every string and stream in the file
- * is ciphertext except the trailer itself, so a repair that reads content --
- * glyphs, spans, font programs -- would reason about random bytes, and one
- * that writes trailer keys would plant plaintext inside an encrypted file.
- * Repairs decline such files whole, the way they decline what split() only
- * partly sees. Trailer-only on purpose: `/Encrypt` inside a content stream is
- * document text or ciphertext, not a declaration.
- */
 export function isEncrypted(pdf: Uint8Array): boolean {
   const parts = trySplit(pdf);
   if (!parts) return false;
   return /\/Encrypt\b/.test(maskStrings(parts.trailer.toString(LATIN1)));
 }
 
-/**
- * Whether object headers appear at or past the first trailer: trailing garbage,
- * a concatenated file, or a linearized later revision. split() only sees what
- * precedes the trailer, so a repair that rewrites from its objects would drop
- * the rest. Repairs that rebuild the file check this first and decline whole.
- */
 export function hasPostTrailerObjects(pdf: Uint8Array): boolean {
   const text = asBuffer(pdf).toString(LATIN1);
   const trailerAt = text.indexOf('\ntrailer\n');
@@ -59,7 +44,6 @@ export function hasPostTrailerObjects(pdf: Uint8Array): boolean {
   return /(?:^|\n)\d+ \d+ obj\b/.test(text.slice(trailerAt));
 }
 
-/** The bytes of one object, from its header to its end keyword or the next header. */
 function sliceObject(text: string, raw: Buffer, num: number, from: number, next: number): Obj {
   const window = text.slice(from, next);
   const marker = maskStrings(window).match(/stream\r?\n/);
@@ -95,14 +79,6 @@ export function split(raw: Buffer): Parts {
   const trailerAt = text.indexOf('\ntrailer\n');
   const first = starts[0];
   if (first === undefined || trailerAt === -1) throw new Error('not a linear pdf');
-  // Object headers at or past the trailer are not objects of this revision: trailing
-  // garbage after %%EOF, or a second file concatenated behind the first, both match
-  // the header pattern. Reading them as objects gave the last one an end before its
-  // start (its "next" is the trailer behind it), so it round-tripped as empty bytes
-  // while join still wrote its xref entry -- and every repair using split/join turned
-  // a verifying file into one whose table points at the wrong object. Found by
-  // mutation fuzzing: `file.pdf` + `42 0 obj...` past %%EOF verifies, then breaks.
-  // Bytes past the trailer never reach the output; no PDF parser reads past %%EOF.
   const bodyStarts = starts.filter((s) => s.at < trailerAt);
   if (bodyStarts.length === 0) throw new Error('no objects before the trailer');
   const objs: Obj[] = [];

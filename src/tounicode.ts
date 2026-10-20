@@ -56,19 +56,6 @@ function writeDest(text: string): string {
 export function fixCMap(cmap: string): string | undefined {
   let changed = false;
 
-  // Only inside a `beginbfchar` block.
-  //
-  // A `bfchar` entry is `<src> <dst>`. A `bfrange` line is `<lo> <hi> <dst>` and a
-  // `codespacerange` line is `<lo> <hi>`, and the old pattern could not tell them apart:
-  // its `\s*` between the operands matched a newline and its lookahead accepted the `<` that
-  // begins the next line, so `<0041>` on one line paired with `<FB00>` on the next. The
-  // result declared `2 beginbfrange` and supplied six operands on one line -- not a valid
-  // `bfrange` at all -- and turned a codespace declaration into a three-byte destination.
-  // `verify` cannot see inside a CMap, so both passed the gate and the report then said the
-  // font was clean.
-  //
-  // Entries inside a block may still be one per line, so the separator is `[ \t]*` and the
-  // lookahead accepts a line end -- a newline is now never consumed as a separator.
   const fixBlock = (body: string): string =>
     body.replace(
       /<([0-9A-Fa-f]+)>[ \t]*<([0-9A-Fa-f]{4})>(?=[ \t]*(?:<|\r?\n|$))/g,

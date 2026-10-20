@@ -61,7 +61,6 @@ export function parseSfnt(font: Buffer): Sfnt | undefined {
   return out;
 }
 
-/** The sfnt magic number, whether big-endian CFF (`OTTO`) or TrueType (`true`/`0x00010000`). */
 function isSfntTag(font: Buffer): boolean {
   return (
     font.readUInt32BE(0) === 0x00010000 ||
@@ -70,7 +69,6 @@ function isSfntTag(font: Buffer): boolean {
   );
 }
 
-/** The table directory, keeping only tables whose extent lies inside the file. */
 function readTableDirectory(font: Buffer, numTables: number): Map<string, Table> {
   const tables = new Map<string, Table>();
   for (let i = 0; i < numTables; i++) {
@@ -83,25 +81,13 @@ function readTableDirectory(font: Buffer, numTables: number): Map<string, Table>
   return tables;
 }
 
-/** Italic angle and fixed-pitch flag from the `post` table, when it is long enough. */
 function readPost(font: Buffer, post: Table, out: Sfnt): void {
   if (post.length < 16) return;
-  // isFixedPitch sits at offset 12 in every post format, including 3.0, which omits
-  // everything after the 32-byte header. It is a Fixed 16.16: 0 means proportional, and
-  // both 0x00010000 and the legacy 0xFFFFFFFF mean monospaced.
-  //
-  // The old code read it unsigned and set the field only for values other than 0 and
-  // 0xFFFFFFFF, so the legacy "yes" was treated as "no" and `fixedPitch` could only ever
-  // be true. That meant flagsFrom() could set the FixedPitch bit but never clear it: a
-  // descriptor wrongly claiming a proportional font was monospaced was never repaired.
-  // An explicit 0 from the font is data, not absence -- absence is a short table, which
-  // still leaves the field undefined and the descriptor's bit untouched.
   const raw = font.readInt32BE(post.offset + 12);
   out.italicAngle = i16(font, post.offset + 4) / 65536;
   out.fixedPitch = raw !== 0;
 }
 
-/** Whether the `cmap` table names a Unicode platform/encoding pair. */
 function hasUnicodeCmap(font: Buffer, cmap: Table | undefined): boolean {
   if (!cmap || cmap.length < 4) return false;
   const n = u16(font, cmap.offset + 2);
@@ -155,7 +141,6 @@ export function fixFontDescriptors(pdf: Uint8Array): Uint8Array {
   return wanted.size ? applyDescriptorFixes(parts, wanted) : pdf;
 }
 
-/** The FontDescriptor numbers that CID/TrueType/Type3 fonts point at. */
 function referencedDescriptors(objs: Obj[]): Set<number> {
   const nums = new Set<number>();
   for (const o of objs) {
@@ -167,7 +152,6 @@ function referencedDescriptors(objs: Obj[]): Set<number> {
   return nums;
 }
 
-/** The corrected flags/cap-height for each descriptor that needs one. */
 function fixesFor(
   descriptorNums: Set<number>,
   byNum: Map<number, Obj>,
@@ -182,12 +166,10 @@ function fixesFor(
   return wanted;
 }
 
-/** The number captured by the first match of `re` in `text`, or `fallback` when absent. */
 function numFrom(text: string, re: RegExp, fallback: number): number {
   return Number(text.match(re)?.[1] ?? fallback);
 }
 
-/** The CapHeight a descriptor should carry, where the font's own metrics improve on it. */
 function capHeightFix(sfnt: Sfnt, cap: number): number | undefined {
   if (sfnt.sCapHeight > 0 && sfnt.os2Version >= 2 && (!Number.isFinite(cap) || cap <= 0)) {
     return Math.round((sfnt.sCapHeight / sfnt.unitsPerEm) * 1000);
@@ -195,7 +177,6 @@ function capHeightFix(sfnt: Sfnt, cap: number): number | undefined {
   return undefined;
 }
 
-/** New flags/cap-height for one descriptor, or undefined when nothing changes. */
 function descriptorFix(text: string, byNum: Map<number, Obj>): DescriptorFix | undefined {
   const fileRef = text.match(/\/FontFile2\s+(\d+) 0 R/);
   if (!fileRef) return negativeCapHeightFix(text);
@@ -208,12 +189,6 @@ function descriptorFix(text: string, byNum: Map<number, Obj>): DescriptorFix | u
   if (!sfnt) return undefined;
 
   const flags = numFrom(text, /\/Flags\s+(\d+)/, NaN);
-  // A descriptor with no /Flags key is still worth repairing. The old code returned
-  // undefined for anything that was not a finite number, so one missing key skipped the
-  // whole descriptor -- taking the CapHeight fix with it, even when the embedded font
-  // had supplied everything needed to compute both. The PDF spec's default for an absent
-  // /Flags is 0; flagsFrom() then derives what the font supports from there, and the
-  // missing key is written back by applyDescriptorFixes rather than silently omitted.
   const current = Number.isFinite(flags) ? flags : 0;
   const newFlags = flagsFrom(sfnt, current);
   const capHeight = capHeightFix(sfnt, numFrom(text, /\/CapHeight\s+(-?\d+)/, NaN));
@@ -223,7 +198,6 @@ function descriptorFix(text: string, byNum: Map<number, Obj>): DescriptorFix | u
   return next;
 }
 
-/** A descriptor with no embedded font, where a negative CapHeight exceeds XHeight. */
 function negativeCapHeightFix(text: string): DescriptorFix | undefined {
   const cap = numFrom(text, /\/CapHeight\s+(-?\d+)/, NaN);
   const xHeight = numFrom(text, /\/XHeight\s+(-?\d+)/, NaN);
@@ -233,12 +207,7 @@ function negativeCapHeightFix(text: string): DescriptorFix | undefined {
   return { flags: numFrom(text, /\/Flags\s+(\d+)/, 0), capHeight: -cap };
 }
 
-/** Set a numeric key in a descriptor: replace it when present, insert it when absent. */
 function setDescriptorKey(text: string, key: string, value: number): string {
-  // A replace that matches nothing changes nothing, so a key the producer never wrote --
-  // which is exactly the case a repair exists to fix -- stayed absent while the value
-  // travelled through the whole repair and was thrown away at the last step. A viewer
-  // reads the missing key as "unknown", not as "wrong".
   const re = new RegExp(`/${key}\\s+-?\\d+`);
   return re.test(text)
     ? text.replace(re, `/${key} ${value}`)

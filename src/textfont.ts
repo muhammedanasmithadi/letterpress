@@ -1,13 +1,3 @@
-/**
- * What a page font tells a reader about a glyph: how far it advances the pen, and what
- * character it stands for.
- *
- * Both facts are needed in more than one place and neither is cheap to get right. The
- * `/W` grammar has two forms and reading only one leaves glyphs with no width at all --
- * see `parseW`. And a reader decides whether a gap is a space by looking at the character,
- * not at the geometry, so a caller that wants to know which glyphs are invisible has to
- * ask the ToUnicode map rather than guess.
- */
 import { inflateSync } from 'node:zlib';
 import {
   LATIN1,
@@ -20,26 +10,11 @@ import {
 } from './pdfparts.ts';
 
 export type FontTable = {
-  /**
-   * Bytes per code. One for a simple font or a Type 3 subset, two for a CID font, and it
-   * cannot be inferred from the bytes themselves: `<70>` is one glyph in a simple font and
-   * half of one in a CID font.
-   */
   codeBytes: 1 | 2;
-  /** Advance in thousandths of an em for a code. */
   widthOf: (code: number) => number;
-  /** The character the code stands for; empty when the font does not say. */
   unicodeOf: (code: number) => string;
 };
 
-/**
- * The body of the dictionary at `/Key <<`, to its matching `>>`.
- *
- * A resource dictionary carries several sub-dictionaries that look alike --
- * `/ExtGState <</G3 3 0 R>> /XObject <</X22 22 0 R>> /Font <</F4 4 0 R>>` -- so finding
- * one by hand needs the same balanced scan, and a greedy or lazy search for the next
- * `>>` lands inside whichever dictionary came first.
- */
 function subDictOf(dict: string, key: string): string {
   const at = new RegExp(`/${key}\\s*<<`).exec(dict);
   if (!at) return '';

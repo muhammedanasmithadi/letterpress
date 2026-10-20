@@ -5,13 +5,21 @@ dictionaryDefinitions: []
 ignorePaths: ['node_modules/**', '.git/**']
 words:
   [
+    'Annots',
     'bfchar',
+    'tjmerge',
+    'tounicode',
+    'fontdesc',
     'baselined',
     'bfrange',
+    'beginbfrange',
+    'untransformable',
+    'codespacerange',
     'bunx',
     'bidi',
     'cmap',
     'cmaps',
+    'textfont',
     'cutoff',
     'dejavu',
     'endobj',

@@ -1,7 +1,5 @@
 const dec = new TextDecoder('latin1');
 
-// pdfparts imports nothing, so this direction is acyclic: pdf.ts reads the
-// trailer through it rather than growing a second, weaker `/Encrypt` probe.
 import { isEncrypted, trySplit, walkObjects, type Parts } from './pdfparts.ts';
 
 export type PdfInfo = {
@@ -22,15 +20,6 @@ export type PdfInfo = {
   tagged: boolean;
   outlineTitles: string[];
 
-  /**
-   * Whether the file declares `/Encrypt` in its trailer.
-   *
-   * Said here because six repair modules decline such files whole -- `figrole`,
-   * `fontdesc`, `linkdesc`, `meta`, `spans`, `tjmerge`, `tounicode` all return
-   * their input untouched -- and until now the only sign of it was that a repair
-   * had quietly done nothing. An unreadable font descriptor in a file the caller
-   * believed had been fixed is worse than a declared refusal.
-   */
   encrypted: boolean;
 };
 
@@ -352,7 +341,6 @@ export function injectPageRule(html: string, declarations: string): string {
 
 const COMMENT_OR_STRING = String.raw`\/\*[\s\S]*?\*\/|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'`;
 
-/** An `@page` rule, or a comment or string that must survive untouched. */
 const PAGE_RULE_OR_LITERAL = new RegExp(`${COMMENT_OR_STRING}|@page[^{]*\\{[^}]*\\}`, 'gi');
 
 /** A `size` declaration, or a comment or string that must survive untouched. */
@@ -393,7 +381,7 @@ export function pageRules(html: string): string[] {
       .join('\n')
       // Comments before strings, for the same reason the HTML comments go first above:
       // the comment is the outer container, and an apostrophe inside one is not a
-      // delimiter. Stripping the other way round, `/* it's fine */` opened a string at
+      // delimiter. Stripping the other way round, `` opened a string at
       // the apostrophe and closed it at the next quote anywhere in the document, which
       // swallowed the `@page` rule whole. Nothing below could then match it, so
       // `declaredPageSize` answered null, `preferCSSPageSize` was turned off, and a

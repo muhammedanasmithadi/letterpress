@@ -44,7 +44,6 @@ export function contentPayloads(pdf: Uint8Array): string[] {
   return out;
 }
 
-/** Check the framing markers: exactly one `startxref` and one `%%EOF`. */
 function checkMarkers(text: string, failures: string[]): void {
   const pointers = text.match(/startxref/g);
   if (!pointers) {
@@ -94,22 +93,6 @@ function checkCrossRef(text: string, failures: string[]): void {
   }
 }
 
-/**
- * Check every indirect reference against the set of objects the file defines.
- *
- * Scanned: every object dictionary, and the trailer. Not scanned: the payload of a
- * stream, because `dictCode` stops at `stream`. Measured: on a Chromium-produced file,
- * dropping any one of its 27 objects is caught, because all 27 are referenced from a
- * dictionary. A hand-built file whose content stream says `/Annots 5 0 R`, with object 5
- * deleted, passes this gate -- and no other check in this file sees it either, since
- * `checkPreserved` compares content streams by payload and the payload is simply absent
- * from both sides.
- *
- * That gap is not reachable from the render path: `repairOrKeep` always passes the
- * original, and `checkPreserved` refuses any repair that changed a content stream at all,
- * so no repair can put a reference inside one. It is written down because `verify()` reads
- * like a total check and is not one.
- */
 function checkReferences(
   pdf: Uint8Array,
   parts: ReturnType<typeof trySplit>,
@@ -122,8 +105,6 @@ function checkReferences(
     ? [...parts.objs.map((o) => dictCode(o)), maskStrings(parts.trailer.toString(LATIN1))]
     : [maskStrings(text)];
   for (const region of codeRegions) {
-    // The generation is part of the reference and can be anything, so a match on `0 R`
-    // alone leaves `9 1 R` unchecked and a dangling reference passes the gate.
     for (const m of region.matchAll(/(?:^|[^0-9])(\d+) \d+ R\b/g)) {
       if (!defined.has(Number(m[1]))) {
         failures.push(`a reference to object ${m[1]} that does not exist`);

@@ -1,16 +1,8 @@
 {
   "files": {
-    "src/tounicode.ts": 13,
-    "src/verify.ts": 4,
     "src/browser.ts": 8,
     "src/server.ts": 2,
-    "src/fontdesc.ts": 31,
     "src/lint.ts": 3,
-    "src/pdf.ts": 5,
-    "src/textfont.ts": 5,
-    "src/pdfparts.ts": 11,
-    "src/tjmerge.ts": 33,
-    "src/spans.ts": 37,
     "src/render.ts": 24,
     "src/pageside.ts": 12,
     "src/validate.ts": 18,
@@ -69,5 +61,5 @@
     "tools/strip-comments.mjs": 5,
     "tools/lint-comments.mjs": 7
   },
-  "total": 586
+  "total": 447
 }

@@ -114,10 +114,14 @@ const VALIDATE_SCHEMA = {
   properties: {
     path: {
       type: 'string',
-      description: 'the pdf to check. a local file path.',
+      description: 'the pdf to check, as a local file path.',
+    },
+    pdf: {
+      type: 'string',
+      description:
+        'the pdf to check, as base64. use this rather than a path when the file is not on the server machine.',
     },
   },
-  required: ['path'],
 } as const;
 
 const FINDINGS_SCHEMA = {
@@ -368,22 +372,33 @@ async function renderHtml(args: Record<string, unknown>, ctx: McpContext): Promi
 
 async function validatePdf(args: Record<string, unknown>, ctx: McpContext): Promise<ToolResult> {
   const path = typeof args.path === 'string' ? args.path : undefined;
-  if (!path) return failure('validate_pdf needs a path to a pdf file.');
-  const confined = confineRead(path, ctx);
-  if (confined !== null) return failure(confined);
+  const encoded = typeof args.pdf === 'string' ? args.pdf : undefined;
+  if (!path && !encoded)
+    return failure('validate_pdf needs a path to a pdf file, or the pdf itself as base64.');
 
   let bytes: Uint8Array;
-  try {
-    bytes = new Uint8Array(await readFile(path));
-  } catch (e) {
-    return failure(`cannot read ${path}: ${e instanceof Error ? e.message : String(e)}`);
+  if (encoded !== undefined) {
+    try {
+      bytes = new Uint8Array(Buffer.from(encoded, 'base64'));
+    } catch (e) {
+      return failure(`the pdf is not base64: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  } else {
+    const confined = confineRead(path!, ctx);
+    if (confined !== null) return failure(confined);
+    try {
+      bytes = new Uint8Array(await readFile(path!));
+    } catch (e) {
+      return failure(`cannot read ${path}: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   const result = validate(bytes);
   const info = inspect(bytes);
   const lines = result.findings.map(findingLine);
+  const name = path ?? 'the pdf';
   const summary =
-    `${path} -- ${result.findings.length} finding${result.findings.length === 1 ? '' : 's'}, ` +
+    `${name} -- ${result.findings.length} finding${result.findings.length === 1 ? '' : 's'}, ` +
     `${result.ok ? 'ok' : 'not ok'}, ${info.pages} page${info.pages === 1 ? '' : 's'}` +
     (info.tagged ? ', tagged' : ', untagged');
 
@@ -391,7 +406,7 @@ async function validatePdf(args: Record<string, unknown>, ctx: McpContext): Prom
     content: [text(lines.length ? `${summary}\n\n${lines.join('\n')}` : summary)],
     structuredContent: {
       ok: result.ok,
-      path,
+      path: path ?? null,
       bytes: bytes.byteLength,
       pages: info.pages,
       tagged: info.tagged,

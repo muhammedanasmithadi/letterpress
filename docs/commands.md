@@ -95,7 +95,9 @@ think it had what it asked for.
 
 Reading a file is the same privilege as writing one, so `validate_pdf` is
 confined the same way — and it agrees with the server's own render endpoint,
-which accepts no path at all.
+which accepts no path at all. A caller that holds a file of its own sends the
+bytes instead, as base64, which grants nothing: the server parses what it was
+given and answers.
 
 The check resolves the path, so `../` cannot get out and neither can a
 symbolic link whose target is elsewhere. A link is followed by hand rather

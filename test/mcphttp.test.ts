@@ -187,18 +187,32 @@ describe('the mcp endpoint', () => {
     }
   }, 120_000);
 
-  test('a pdf outside the server own directory cannot be read', async () => {
-    const r = await modern({
+  test('a pdf is checked by its bytes, and not by a path outside the directory', async () => {
+    const pdf = Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n').toString('base64');
+
+    const byPath = await modern({
       jsonrpc: '2.0',
       id: 10,
       method: 'tools/call',
       params: { name: 'validate_pdf', arguments: { path: '/etc/passwd' } },
     });
-    const body = (await r.json()) as {
+    const refused = (await byPath.json()) as {
       result: { isError?: boolean; content: Array<{ text: string }> };
     };
-    expect(body.result.isError).toBe(true);
-    expect(body.result.content[0]!.text).toContain('can be read');
+    expect(refused.result.isError).toBe(true);
+    expect(refused.result.content[0]!.text).toContain('can be read');
+
+    const byBytes = await modern({
+      jsonrpc: '2.0',
+      id: 11,
+      method: 'tools/call',
+      params: { name: 'validate_pdf', arguments: { pdf } },
+    });
+    const checked = (await byBytes.json()) as {
+      result: { isError?: boolean; content: Array<{ text: string }> };
+    };
+    expect(checked.result.isError).toBeFalsy();
+    expect(checked.result.content[0]!.text).toContain('finding');
   }, 60_000);
 
   test('a request from another web page is refused', async () => {

@@ -253,15 +253,12 @@ describe('addMetadata', () => {
   });
 
   test('a minimal packet is written even when nothing is declared', () => {
-    // Was: byte-identical input. A tagged PDF without XMP fails veraPDF clause 7.1, so
-    // the packet is now always emitted; what stays unwritten are the undeclared fields.
     const input = pdfFixture();
     const out = addMetadata(input, {});
     expect(sameBytes(out, input)).toBe(false);
     expect(readXmp(out).present).toBe(true);
     expect(readDocInfo(out).author).toBeUndefined();
     expect(readXmpPacket(out)).not.toContain('dc:creator');
-    // And blank strings are still nothing declared, not empty values.
     expect(readXmpPacket(addMetadata(input, { author: '  ' }))).not.toContain('dc:creator');
     expect(readXmpPacket(addMetadata(input, { subject: '' }))).not.toContain('dc:description');
   });
@@ -362,11 +359,6 @@ describe('rendered output', () => {
   });
 
   test('a document declaring nothing still carries an XMP packet', async () => {
-    // addMetadata used to return the file untouched when no author/subject/keywords were
-    // declared. A tagged PDF without an XMP packet fails veraPDF's PDF/UA-1 clause 7.1
-    // (Catalog shall contain Metadata) -- measured on every author-less sweep render.
-    // The packet carries only what the file already says; undeclared fields stay absent
-    // rather than written empty.
     const r = await render(browser, {
       html: `<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:15mm}</style><h1>T</h1><p>Body.</p>`,
     });

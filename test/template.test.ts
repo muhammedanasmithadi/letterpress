@@ -127,18 +127,12 @@ test('totals are computed, not hand-written', () => {
 });
 
 test('a value in a bare CSS slot cannot end the declaration and open a rule', async () => {
-  // `{{accent}}` sits in `--accent: {{accent}};` with nothing around it. The markup escaper
-  // does not touch a semicolon or a brace, so a JSON value could close the declaration and
-  // write a rule of its own. This one printed an invoice with no body at all, reported one
-  // page, and exited 0.
   const html = document([{ description: 'Consulting', qty: 2, unit: 100 }], {
     accent: 'red; } body { display: none } :root { --accent: red',
   });
 
   const r = await render(browser, { html, author: 't' });
   const text = await pdfText(r.pdf);
-  // Asserted on the rendered text, not on the escaper: the escaper can be correct and the
-  // slot still wrong, and only the page knows.
   expect(text).toContain('Consulting');
   expect(text).toContain('Northwind Instruments');
   expect(text).toContain('2026-014');

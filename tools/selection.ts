@@ -1,12 +1,3 @@
-/**
- * What a browser will do when a selection is dragged across each of these documents, and
- * what to change about the document to make it do something else.
- *
- * The renderer already reports this per document as a finding. A finding is a sentence in a
- * log; this is the list of edits, per file, with the measurement that justifies each one.
- * The gaps are the layout's, so nothing here repairs the PDF -- it says which piece of CSS
- * produced which gap.
- */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -71,10 +62,6 @@ for (const file of files) {
     continue;
   }
 
-  // Whether a cause is named at all depends on the document containing it. The first
-  // version of this said "text-align: justify" for a gap in a document with no
-  // `text-align: justify` anywhere in it, which is the worst thing a report can do: send
-  // whoever reads it to change a rule that is not there.
   const html = readFileSync(file, 'utf8');
   const has = (what: string): boolean => new RegExp(`${what}\\s*:`, 'i').test(html);
 
@@ -93,9 +80,6 @@ for (const file of files) {
           `blocks or inline items (a flex or grid gap, a margin, a table cell), not a ` +
           `stretched word space.`,
       );
-      // The measurement says how many and how wide. This says which elements, because
-      // "eight gaps, widest 0.67 em" is not something anyone can act on and the answer is a
-      // `gap` three rules away from the element that carries it.
       const gaps = (r.probe as WideGap[] | undefined) ?? [];
       if (gaps.length) {
         for (const g of gaps) {
@@ -131,10 +115,6 @@ for (const file of files) {
     );
   }
   if (flow.spans > 0) {
-    // Says what these are, not what they are usually assumed to be. Chromium emits these
-    // around ligatures and the repair removes the ones /ToUnicode already describes, so any
-    // reaching this report are the ones it had to keep -- which is worth saying, because
-    // "nothing in the document changes that" was both wrong and the reason it was said.
     advice.push(
       `${flow.spans} marked-content spans carrying /ActualText survived the repair, because ` +
         `the font does not map their glyphs to the same characters and the span is therefore ` +

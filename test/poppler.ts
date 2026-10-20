@@ -50,16 +50,8 @@ export async function pdfFonts(bytes: Uint8Array): Promise<string> {
   return withPdf(bytes, async (path) => await Bun.$`pdffonts ${path}`.quiet().text());
 }
 
-/** One word as poppler places it, to three decimals. */
 export type PdfWord = { xMin: number; yMin: number; xMax: number; yMax: number; text: string };
 
-/**
- * Where poppler thinks every word sits.
- *
- * Text extraction alone will not notice a glyph that moved: poppler reads the word and
- * reports it correctly whatever the coordinates. Comparing the boxes is what catches a
- * position that is wrong while the characters are right.
- */
 export async function pdfWords(bytes: Uint8Array): Promise<PdfWord[]> {
   const xml = await withPdf(bytes, async (path) => {
     const proc = Bun.spawn(['pdftotext', '-bbox', path, '-'], { stdout: 'pipe', stderr: 'ignore' });

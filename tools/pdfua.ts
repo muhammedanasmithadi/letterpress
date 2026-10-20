@@ -2,10 +2,6 @@ import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { $ } from 'bun';
 
-// veraPDF is not vendored (33MB of Java), so this points at an install: the XDG
-// data dir, where `java -jar verapdf-installer.jar -options` puts it, or
-// $VERA_PDF for anywhere else. An earlier default aimed at a scratch dir that
-// survives no reboot; a wrong path here fails loudly below, by design.
 const VERA_PDF =
   process.env.VERA_PDF ?? join(process.env.HOME ?? '~', '.local', 'share', 'verapdf', 'verapdf');
 

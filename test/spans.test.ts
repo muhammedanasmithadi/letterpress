@@ -21,7 +21,6 @@ afterAll(async () => {
   await closeTestBrowser(t);
 }, 20_000);
 
-/** Every inflated content stream in a file, concatenated: the text an operator runs on. */
 function streams(pdf: Uint8Array): string {
   let out = '';
   for (const o of trySplit(pdf)!.objs) {
@@ -39,7 +38,6 @@ function streams(pdf: Uint8Array): string {
 
 const squashText = (s: string): string => s.replace(/\s+/g, ' ').trim();
 
-/** Counts across a whole file, so a test says what it means once. */
 function marked(pdf: Uint8Array): { bdc: number; emc: number; actualText: number } {
   const text = streams(pdf);
   const count = (re: RegExp): number => (text.match(re) ?? []).length;
@@ -55,8 +53,6 @@ const PROSE = `<!doctype html><style>@page{size:A4;margin:15mm}
   <p>${'Body text that fills a line and wraps with specific workflows. '.repeat(18)}</p>`;
 
 test('the repair removes the spans and changes no character', async () => {
-  // Kept, so this exercises the repair on bytes the pipeline has not touched. The
-  // default path strips them before the caller ever sees the file.
   const r = await render(browser, {
     html: PROSE,
     author: 'spans',
@@ -72,17 +68,11 @@ test('the repair removes the spans and changes no character', async () => {
   expect(out.stats.stripped).toBeGreaterThan(0);
   expect(verify(out.pdf).ok).toBe(true);
 
-  // The assertion the gate could not make. Whitespace is collapsed because line breaking in
-  // the extraction follows item boundaries, which is exactly what the repair changes.
   const squash = (s: string): string => s.replace(/\s+/g, ' ').trim();
   expect(squash(await pdfText(out.pdf))).toBe(squash(before));
 }, 240_000);
 
 test('marked content is left balanced', async () => {
-  // A content stream with one BDC against nineteen EMC is malformed, and poppler says so and
-  // carries on. Skipping the EMC removals passed verify() and every structural check.
-  // Kept, so this exercises the repair on bytes the pipeline has not touched. The
-  // default path strips them before the caller ever sees the file.
   const r = await render(browser, {
     html: PROSE,
     author: 'spans',
@@ -90,17 +80,11 @@ test('marked content is left balanced', async () => {
     timeoutMs: 120_000,
   });
   const out = stripRedundantSpans(r.pdf);
-  // A stream with one BDC against nineteen EMC is malformed. poppler says so and carries on,
-  // and verify() passes it, because the gate checks structure and not text.
   const counts = marked(out.pdf);
   expect({ bdc: counts.bdc, emc: counts.emc }).toEqual({ bdc: counts.bdc, emc: counts.bdc });
 }, 240_000);
 
 test('a span whose text the font does not also give is kept', async () => {
-  // The guard that makes the default safe. A span is the only copy of its text when the
-  // glyphs inside do not resolve to the same characters, and removing it would lose them.
-  // Kept, so this exercises the repair on bytes the pipeline has not touched. The
-  // default path strips them before the caller ever sees the file.
   const r = await render(browser, {
     html: PROSE,
     author: 'spans',
@@ -108,7 +92,6 @@ test('a span whose text the font does not also give is kept', async () => {
     timeoutMs: 120_000,
   });
   const out = stripRedundantSpans(r.pdf);
-  // Everything removed was provably redundant; anything left is kept on purpose.
   expect(marked(out.pdf).actualText).toBe(out.stats.kept);
 }, 240_000);
 
@@ -126,7 +109,6 @@ test('the pipeline strips them, and keepLigatureSpans opts out', async () => {
   expect(says!.message).toMatch(/removed \d+ of \d+/);
   expect(kept.findings.map((f) => f.code)).not.toContain('ligature-spans');
 
-  // The finding is the only difference in what the caller is told, and both files still read.
   expect(squashText(await pdfText(stripped.pdf))).toBe(squashText(await pdfText(kept.pdf)));
 }, 240_000);
 
@@ -135,8 +117,6 @@ describe('ciphertext is not content', () => {
     const pdf = encryptedFixture();
     const out = stripRedundantSpans(pdf);
     expect(Buffer.from(out.pdf).equals(Buffer.from(pdf))).toBe(true);
-    // The census runs before the font check, so a repair that looked past
-    // the declaration would still report the span it refused to cut.
     expect(out.stats).toEqual({ seen: 0, stripped: 0, kept: 0 });
   });
 });

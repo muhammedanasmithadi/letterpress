@@ -1,8 +1,3 @@
-/**
- * One PDF assembler for the four suites that built fixtures by hand, with the two
- * real variations (a binary stream payload, a custom trailer) as parameters.
- * Byte-identical to the inline builders it replaced.
- */
 import { expect } from 'bun:test';
 import { deflateSync, inflateSync } from 'node:zlib';
 import { streamRange, trySplit } from '../src/pdfparts.ts';
@@ -17,18 +12,6 @@ export function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
 
 export type PdfObj = string | { dict: string; payload: Buffer };
 
-/**
- * Numbered objects, a correct xref table, and a trailer.
- *
- * A plain string becomes `N 0 obj\nBODY` followed by `endobj`; a {dict, payload}
- * pair becomes a stream object with the raw bytes spliced between `stream` and
- * `endstream`. The trailer defaults to `<</Size N /Root 1 0 R>>`.
- *
- * `endobj` defaults to `endobj\n`, glued to the body the way the historic inline
- * builders wrote it. meta's builder put a newline between them (`\nendobj\n`); pass
- * that explicitly rather than normalising, because fixtures must stay byte-identical
- * to what the tests were written against.
- */
 export function assemblePdf(
   objs: PdfObj[],
   opts: {
@@ -69,19 +52,10 @@ export function assemblePdf(
   return Buffer.concat(chunks);
 }
 
-/** The deflated-then-assembled round trip every font/CMap fixture needs. */
 export function deflated(data: string | Buffer): Buffer {
   return deflateSync(typeof data === 'string' ? Buffer.from(data, LATIN1) : data);
 }
 
-/**
- * The decoded body of one stream object, so a fixture can be checked rather than assumed.
- *
- * A fixture that quietly differs from the one the test was written against passes for a
- * reason that has nothing to do with the thing under test, and a test that asserts against
- * the wrong fixture is worse than no test. `FlateDecode` is detected from the first bytes of
- * the object rather than from a flag, because the flag is what is being faked here.
- */
 export function streamText(pdf: Uint8Array, num: number): string {
   const o = trySplit(pdf)!.objs.find((x) => x.num === num)!;
   const range = streamRange(o.bytes)!;
@@ -91,12 +65,6 @@ export function streamText(pdf: Uint8Array, num: number): string {
   );
 }
 
-/**
- * The xref table points every live entry at its object header, in one table.
- * Shared because the same eighteen lines sat in two suites word for word, and
- * the failure messages below name the exact break -- which a boolean helper
- * would swallow.
- */
 export function expectSoundXref(text: string): void {
   expect(text.match(/startxref/g)).toHaveLength(1);
   const at = Number(text.match(/startxref\s+(\d+)/)![1]);
@@ -117,10 +85,6 @@ export function expectSoundXref(text: string): void {
   expect(text).not.toContain('endobjxref');
 }
 
-/**
- * Every stream's declared /Length matches its payload bytes. Returns the
- * streams checked; the caller asserts the count its document promises.
- */
 export function expectSoundLengths(text: string): number {
   let streams = 0;
   for (const m of text.matchAll(/(?:^|[^0-9])(\d+) 0 obj([\s\S]*?)endobj/g)) {
@@ -137,19 +101,6 @@ export function expectSoundLengths(text: string): number {
   return streams;
 }
 
-/**
- * A file whose trailer declares encryption, with a content stream that parses.
- *
- * Repairs assume plaintext PDF structures from Chromium and must decline such
- * files whole: strings and streams are ciphertext, so a span pattern matched
- * inside one is random bytes agreeing with a regex, and trailer keys written
- * beside them plant plaintext inside an encrypted file. The stream carries a
- * span-shaped sequence on purpose, with no resolvable font behind it, so a
- * repair that looked past the declaration would still act observably (its
- * span census counts before the font check); the Info dictionary carries no
- * title, so a title repair would insert one. Byte-identical output is the
- * assertion, on every repair.
- */
 export function encryptedFixture(): Buffer {
   return assemblePdf(
     [

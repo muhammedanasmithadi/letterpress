@@ -21,11 +21,6 @@ import { assemblePdf, encryptedFixture } from './fixtures.ts';
 
 describe('objects past the trailer', () => {
   test('trailing garbage matching the object pattern is not parsed as an object', () => {
-    // Found by mutation fuzzing: `file.pdf` plus `42 0 obj…` past %%EOF verifies, but
-    // split() read the junk as object 42 with an end before its start (its "next" is
-    // the trailer behind it), so it round-tripped as empty bytes while join still
-    // wrote its xref entry -- and every repair using split/join turned a verifying
-    // file into one whose table points at the wrong object.
     const pdf = build('BT /F1 12 Tf 10 100 Td (hi) Tj ET');
     expect(verify(pdf).ok).toBe(true);
     const junk = Buffer.from('42 0 obj\n<< /Type /Junk >>\nendobj\n', LATIN1);
@@ -522,23 +517,16 @@ describe('encryption declared in the trailer', () => {
   test('is detected, and only from the trailer', () => {
     expect(isEncrypted(encryptedFixture())).toBe(true);
     expect(isEncrypted(assemblePdf(['<< /Type /Catalog /Pages 2 0 R >>']))).toBe(false);
-    // The word inside a content stream is document bytes, not a declaration.
     const decoy = assemblePdf([
       '<< /Type /Catalog /Pages 2 0 R >>',
       { dict: '<< /Length 8 >>', payload: Buffer.from('/Encrypt', LATIN1) },
     ]);
     expect(isEncrypted(decoy)).toBe(false);
-    // Not a linear file at all: undeterminable, not encrypted.
     expect(isEncrypted(new Uint8Array([1, 2, 3]))).toBe(false);
   });
 });
 
 describe('inspect says whether a file is encrypted', () => {
-  // Six repair modules decline an encrypted file whole -- figrole, fontdesc,
-  // linkdesc, meta, spans, tjmerge and tounicode all return their input
-  // untouched -- and until now the only sign of that was a repair that had
-  // quietly done nothing. A caller reading `fontFiles` on a file it believed
-  // had been fixed had no way to know the fixes were skipped.
   test('a declared /Encrypt is reported', () => {
     expect(inspect(new Uint8Array(encryptedFixture())).encrypted).toBe(true);
   });
@@ -550,8 +538,6 @@ describe('inspect says whether a file is encrypted', () => {
   });
 
   test('the word inside a content stream is not a declaration', () => {
-    // Same rule the repairs use: /Encrypt in the trailer is a declaration,
-    // and anywhere else it is document bytes.
     const decoy = assemblePdf([
       '<< /Type /Catalog /Pages 2 0 R >>',
       { dict: '<< /Length 8 >>', payload: Buffer.from('/Encrypt', LATIN1) },
@@ -561,11 +547,6 @@ describe('inspect says whether a file is encrypted', () => {
 });
 
 describe('pageSizes follows the page tree, not the order objects appear in', () => {
-  // Chromium writes page objects in reading order, so for a document this tool
-  // produced, file order and page order agree and a test on real output cannot
-  // tell them apart. This file disagrees on purpose: `/Kids` names object 5
-  // before object 3, so the tree and the file say opposite things about which
-  // page comes first. Legal, and the reason the tree exists.
   const shuffled = assemblePdf([
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [5 0 R 3 0 R] /Count 2 >>',
@@ -576,7 +557,6 @@ describe('pageSizes follows the page tree, not the order objects appear in', () 
 
   test('the first entry is the first page in the tree', () => {
     const info = inspect(new Uint8Array(shuffled));
-    // File order would answer 111x222 first, because object 3 comes first.
     expect(info.pageSizes).toEqual(['/MediaBox [0 0 333 444]', '/MediaBox [0 0 111 222]']);
   });
 
@@ -585,9 +565,6 @@ describe('pageSizes follows the page tree, not the order objects appear in', () 
   });
 
   test('a file with no page tree falls back to file order rather than to nothing', () => {
-    // No `/Kids` anywhere, so there is no tree to walk. Reporting nothing would
-    // be indistinguishable from a document whose pages have no MediaBox, and
-    // the first is a broken file while the second is not.
     const tree = assemblePdf([
       '<< /Type /Catalog /Pages 2 0 R >>',
       '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 111 222] >>',
@@ -600,9 +577,6 @@ describe('pageSizes follows the page tree, not the order objects appear in', () 
   });
 
   test('every page reports a box, including one that declares none', () => {
-    // Chromium's /MediaBox can be inherited from an ancestor node rather than
-    // written on the page itself, which is legal. The entry is still there, so
-    // "which page is this" lines up with the page count; it just says nothing.
     const inherited = assemblePdf([
       '<< /Type /Catalog /Pages 2 0 R >>',
       '<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 595 842] >>',

@@ -1,38 +1,12 @@
-/**
- * Comments in code, counted and gated.
- *
- * The rule this enforces is from the coding guidelines: code reads by reading
- * it, and a comment that explains what the code does is the same sentence
- * twice. What survives in a comment is only a machine directive -- `noqa`,
- * `pragma`, `prettier-ignore`, and the like -- because those are instructions
- * to a tool rather than prose about the code.
- *
- * Rationale that must not be lost does not go into a comment; it goes into
- * docs/. This gate only counts what is in the source today, and the count is
- * a ratchet: the number may fall but not rise, and a file that had none may
- * not acquire some. That is the same shape as the duplication and complexity
- * gates, and it is why removing a comment is a change the gate can see.
- *
- * The comments come from the parser rather than from a scanner -- see
- * `tools/comment-ranges.mjs` for why that matters and what it cost to get
- * wrong.
- */
+import * as ts from 'typescript-api';
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-
-import { commentRanges } from './comment-ranges.mjs';
 
 const BASELINE = new URL('../waivers/baseline.comments.json', import.meta.url);
 
 const ROOTS = ['src', 'test', 'viewer', 'tools'];
 const EXT = new Set(['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs']);
 
-/**
- * A comment that is an instruction to a tool, not prose.
- *
- * Same list as the guidelines' own tree check, plus `nosemgrep` and `cspell:`,
- * which this repository uses.
- */
 const DIRECTIVE =
   /(?:\/\/|\/\*)\s*(?:noqa\b|eslint-disable|eslint-enable|oxlint-disable(?:-next-line|-line)?|prettier-ignore|@ts-|nosemgrep|cspell:|istanbul\s+ignore|v8\s+ignore|c8\s+ignore|go:|fmt:|isort:|#\s*(?:noqa|pragma|type:|fmt:|isort:))/;
 
@@ -46,9 +20,22 @@ function files(dir) {
   return out;
 }
 
-/**
- * The comments in a file that are not machine directives.
- */
+function commentRanges(file, text) {
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const found = new Map();
+  const visit = (node) => {
+    for (const r of ts.getLeadingCommentRanges(text, node.getFullStart()) ?? []) {
+      found.set(r.pos, [r.pos, r.end]);
+    }
+    for (const r of ts.getTrailingCommentRanges(text, node.getEnd()) ?? []) {
+      found.set(r.pos, [r.pos, r.end]);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return [...found.values()].sort((a, b) => a[0] - b[0]);
+}
+
 function commentsIn(file, text) {
   let count = 0;
   for (const [start, end] of commentRanges(file, text)) {
@@ -71,9 +58,6 @@ for (const root of ROOTS) {
   }
 }
 
-// `--write` lowers the baseline to what is there now. It is how a removal
-// commits: the count in the file is the count in the code, and the next
-// removal lowers it again.
 if (process.argv.includes('--write')) {
   writeFileSync(BASELINE, JSON.stringify({ files: current, total }, null, 2) + '\n');
   console.log(`comments: ${total} across ${Object.keys(current).length} files (baseline written)`);

@@ -1,29 +1,3 @@
-/**
- * Compare a letterpress PDF against reference PDFs on the axes that decide whether text
- * behaves in a reader.
- *
- * Written because everything measurable had been checked on documents this project chose,
- * which is a sample of one author's imagination. A reference PDF is the outside opinion.
- *
- *   bun tools/quality.ts <file.pdf> [<file.pdf> ...]
- *   bun tools/quality.ts --ours <file.html> <reference.pdf> ...
- *
- * With `--ours`, the HTML is rendered first and its output compared against the
- * references, which is the case worth running: the same words through two producers.
- *
- * What it measures, and why each one matters for selecting text:
- *
- *   embedded  a font the reader must substitute cannot be measured for a selection box,
- *             and substituted metrics put the highlight somewhere other than the glyphs
- *   subset    a full font costs size for nothing; a broken subset costs glyphs
- *   ToUnicode copying selected text runs through it. A font without one extracts as
- *             nothing, or as the glyph index
- *   tagged    structure is what a screen reader navigates by, and what PDF/UA requires
- *   size      per page, against the reference rather than in the abstract
- *
- * poppler is used rather than this codebase's parser, because two of the references are
- * PDF 1.5 and up and the parser deliberately reads only classic linear layout.
- */
 import { statSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -33,11 +7,6 @@ import { render } from '../src/render.ts';
 
 type Font = { name: string; type: string; emb: string; sub: string; uni: string };
 
-/**
- * pdffonts columns are variable width -- a type of "CID TrueType" and an encoding of
- * "Identity-H" are each two words -- so the fixed columns are read from the right, where
- * the five trailing fields always are.
- */
 function parseFonts(out: string): Font[] {
   return out
     .split('\n')
@@ -105,10 +74,6 @@ if (oursAt !== -1) {
   }
   const dir = await mkdtemp(join(tmpdir(), 'letterpress-quality-'));
   const browser = await Browser.launch({ profile: dir });
-  // Close and sweep on every path out: a render throw used to skip both, leaving
-  // a browser and a profile behind for a typo'd filename. No process.exit inside
-  // try/finally: it kills the loop before the awaits run, which leaks the same
-  // way -- so the failure is recorded, cleanup runs, and only then the exit.
   let failed = false;
   try {
     const result = await render(browser, { path: htmlPath, author: 'quality' });

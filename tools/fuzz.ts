@@ -1,21 +1,3 @@
-/**
- * Differential fuzzing for the render pipeline: random documents in, invariants out.
- *
- * Every document asserts the same contract, whatever its shape:
- *   1. render() resolves (no throw, no hang past its deadline);
- *   2. the bytes start with %PDF- and carry at least one page;
- *   3. verify() accepts the output structurally;
- *   4. every finding is well-formed (known severity, non-empty code and message).
- *
- * Deterministic: mulberry32 with an explicit seed, so a failure replays exactly.
- * A failing document is shrunk block-wise (drop half, keep if still failing) and
- * written to the out dir with its seed, which is the fastest route from "the
- * fuzzer found something" to a minimal repro.
- *
- * Run deep: `bun tools/fuzz.ts --count 200 --seed 7 --out /tmp/opencode/fuzz`
- * The suite runs a small fixed-seed batch as a regression gate.
- */
-
 import { mkdir, writeFile } from 'node:fs/promises';
 import type { Browser } from '../src/browser.ts';
 import { render } from '../src/render.ts';
@@ -41,7 +23,6 @@ export type FuzzResult = {
   shrunk?: string;
 };
 
-/** Deterministic PRNG: the same seed is the same documents, every machine. */
 export function rng(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
@@ -117,9 +98,6 @@ function block(r: () => number, depth: number): string {
   const kind = r();
   const text = words(r, 3 + Math.floor(r() * 25));
   if (kind < 0.3) return `<p>${text}</p>`;
-  // Mismatched open/close tags below are deliberate: browsers tolerate them, and the
-  // pipeline must too. Each pair rolls its own level so <h2>…</h5> and <th>…</td>
-  // both occur.
   if (kind < 0.4)
     return `<h${1 + Math.floor(r() * 5)}>${words(r, 4)}</h${1 + Math.floor(r() * 5)}>`;
   if (kind < 0.5) {
@@ -143,7 +121,7 @@ function block(r: () => number, depth: number): string {
       items += `<li>${words(r, 6)}${depth < 2 && r() < 0.25 ? `<ul><li>${words(r, 5)}</li></ul>` : ''}</li>`;
     }
     const tag = r() < 0.5 ? 'ul' : 'ol';
-    const close = r() < 0.5 ? 'ul' : 'ol'; // rolls again: mismatches occur, see above
+    const close = r() < 0.5 ? 'ul' : 'ol';
     return `<${tag}>${items}</${close}>`;
   }
   if (kind < 0.64) {
@@ -179,7 +157,6 @@ function block(r: () => number, depth: number): string {
   return `<p>${text}<br>${words(r, 8)}</p>`;
 }
 
-/** One random document. Blocks join between a head and tail so shrinking can split them. */
 export function document(
   seed: number,
   index: number,
@@ -217,7 +194,6 @@ export function checkFindings(findings: Finding[]): string | undefined {
   return undefined;
 }
 
-/** Render one document and check the contract. Never throws: failures are values. */
 export async function fuzzOne(
   browser: Browser,
   seed: number,
@@ -230,7 +206,6 @@ export async function fuzzOne(
   try {
     out = await render(browser, {
       html,
-      // The metadata, paper and page-range paths all reshape the checked output.
       ...(r() < 0.2 ? {} : { author: 'fuzz' }),
       ...(r() < 0.15 ? { format: 'a4' as const, landscape: r() < 0.5 } : {}),
       ...(r() < 0.1 ? { pageRanges: '1-1' } : {}),
@@ -254,7 +229,6 @@ export async function fuzzOne(
   };
 }
 
-/** Drop half the blocks while the failure reproduces, a few rounds. */
 export async function shrink(
   browser: Browser,
   seed: number,

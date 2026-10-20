@@ -1,9 +1,3 @@
-/**
- * Render a set of documents that exercise what the engine does, so the output can be
- * looked at rather than asserted about. Each page is chosen to make a different thing
- * visible: spacing under justification, hairlines in a table, script coverage beyond
- * Latin, page furniture, and the copy-paste path.
- */
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

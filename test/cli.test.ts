@@ -178,10 +178,6 @@ test('bad usage exits 2 without launching a browser', async () => {
 }, 30_000);
 
 test('an option does not swallow the flag after it', async () => {
-  // `--margin` took the next argv entry unconditionally, so `--margin --json doc.html`
-  // consumed `--json` and threw it away. The error named the margin and never mentioned the
-  // flag that had just been lost, so the obvious next move -- retyping the command -- fails
-  // the same way.
   for (const flag of ['--json', '--landscape', '--format']) {
     const r = await run([join(dir, 'doc.html'), '--margin', flag]);
     expect(r.code, `${flag} after --margin`).toBe(2);
@@ -190,8 +186,6 @@ test('an option does not swallow the flag after it', async () => {
 }, 60_000);
 
 test('a document named .html does not write a hidden .pdf', async () => {
-  // `'.html'.replace(/\.html?$/i, '')` is the empty string, and `'' + '.pdf'` is a file named
-  // `.pdf` in the current directory. The url branch guarded this and the file branch did not.
   const cwd = await mkdtemp(join(tmpdir(), 'letterpress-cwd-'));
   try {
     const doc = join(cwd, '.html');
@@ -243,10 +237,6 @@ test('--root lets a document in a subdirectory reach its assets', async () => {
 }, 60_000);
 
 describe('what exit code 1 means', () => {
-  // The usage text said "1 render failed". Two of the three things that return 1
-  // happen after a complete PDF has been written, so a script that trusted the
-  // documented line and cleaned up on a non-zero status threw away the file it had
-  // just been given.
   test('an error finding exits 1 and leaves a complete pdf on disk', async () => {
     const src = join(dir, 'contradicted.html');
     const out = join(dir, 'contradicted.pdf');
@@ -261,7 +251,6 @@ describe('what exit code 1 means', () => {
     expect(r.code, 'the finding is an error, so the status must be non-zero').toBe(1);
     expect(existsSync(out), 'exit 1 does not mean there is no pdf').toBe(true);
     expect(Bun.file(out).size).toBeGreaterThan(1000);
-    // And it really is a readable PDF, not a truncated write.
     expect((await pdfInfo(new Uint8Array(await Bun.file(out).arrayBuffer()))).pages).toBe(1);
   }, 60_000);
 
@@ -283,13 +272,10 @@ describe('what exit code 1 means', () => {
       (await run(['--json', '--out', join(dir, 'j2.pdf'), src])).stdout,
     ) as Record<string, unknown>;
 
-    // A machine can separate them; the bare status cannot.
     expect(okJson.error, 'a failure must say so').toBeString();
     expect(badJson.error, 'a contradiction is not a failure').toBeUndefined();
     expect(Array.isArray(badJson.findings)).toBe(true);
 
-    // And the documented contract must not claim otherwise. If someone tightens the
-    // wording, this test is the thing that notices.
     const help = await run(['--help']);
     expect(help.stdout).not.toMatch(/1\s+render failed/);
     expect(help.stdout).toMatch(/no pdf was written/);
@@ -313,8 +299,6 @@ describe('argument parsing names the problem without launching a browser', () =>
   });
 
   test('a missing option value throws a usage error', () => {
-    // valueAfter throws rather than returning an error: main catches it for
-    // exit 2, so the contract holds end to end, but parseArgs itself throws.
     expect(() => parseArgs(['-o'])).toThrow(/option -o needs a value/);
     expect(() => parseArgs(['--template', '--json'])).toThrow(/needs a value/);
   });
@@ -347,22 +331,17 @@ describe('argument parsing names the problem without launching a browser', () =>
     expect(
       parseArgs(['-q', '--json', '--no-background', '--landscape', 'p.html']).opts,
     ).toMatchObject({ quiet: true, json: true, background: false, landscape: true });
-    // A URL implies remote traffic is wanted.
     expect(parseArgs(['https://example.com']).opts.allowNetwork).toBe(true);
   });
 });
 
 test('help documents every parsed flag, and every documented flag parses', async () => {
-  // Help text and the HANDLERS table drift apart silently: a flag added to one
-  // and not the other is either undiscoverable or rejected. Both directions.
   const help = await run(['--help']);
   const documented = new Set([...help.stdout.matchAll(/--[a-z][a-z-]*/g)].map((m) => m[0]));
   for (const flag of flagNames()) {
     expect(documented.has(flag), `${flag} parses but --help never mentions it`).toBe(true);
   }
   for (const flag of documented) {
-    // A documented flag may still need a value or conflict, but it must never
-    // be an unknown option.
     const { error } = parseArgs([flag, 'x']);
     expect(error ?? '', `${flag} is documented but the parser rejects it`).not.toMatch(
       /unknown option/,
@@ -371,10 +350,6 @@ test('help documents every parsed flag, and every documented flag parses', async
 });
 
 describe('what --json carries', () => {
-  // The summary fields were always there. These are the ones that were computed
-  // and then thrown away, and two of them were wrong before this: `pageSizes`
-  // returned `[""]` for every page of every document, and `outlineTitles` listed
-  // the bookmarks in reverse.
   const DOC =
     `<!doctype html><html lang="en"><head><style>@page{size:A4;margin:12mm}@page :first{size:Letter}` +
     `body{font-family:"DejaVu Sans",sans-serif}p{page-break-before:always}</style></head>` +
@@ -416,14 +391,10 @@ describe('what --json carries', () => {
     expect(got.tagged).toBe(true);
     expect(got.encrypted).toBe(false);
     expect(got.fontFiles).toBeGreaterThan(0);
-    // A font with no ToUnicode map cannot be selected or searched.
     expect(got.toUnicodeMaps).toBeGreaterThan(0);
   });
 
   test('pageSizes says which page is which size, in page order', () => {
-    // The reason this field exists next to `mediaBoxes`: mediaBoxes is a set of
-    // distinct boxes, so it can say a document is mixed but not where the change
-    // happens. The first page is Letter because `@page :first` says so.
     const sizes = got.pageSizes as string[];
     expect(sizes).toHaveLength(got.pages as number);
     expect(sizes[0]).toContain('612 792');
@@ -431,9 +402,6 @@ describe('what --json carries', () => {
   });
 
   test('outlineTitles is the order a reader sees, not the order in the file', () => {
-    // Chromium serialises an outline parent-first and backwards, so the file
-    // order of this document is document, Three, Two, One. A consumer building
-    // a table of contents from file order emits it reversed.
     expect(got.outlineTitles).toEqual(['One', 'Two', 'Three']);
   });
 
@@ -566,9 +534,6 @@ describe('--before-print', () => {
 });
 
 describe('--page-ranges', () => {
-  // The engine and the HTTP API have had this since before the cli did; the
-  // flag was the missing piece, so these pin the parts a caller cannot see from
-  // the parser alone.
   const paged = (n: number) =>
     `<!doctype html><html lang="en"><head><style>` +
     `@page { size: A4; margin: 12mm; @bottom-center { content: "page " counter(page) " of " counter(pages); font: 9pt sans-serif } }` +
@@ -609,14 +574,7 @@ describe('--page-ranges', () => {
   }, 180_000);
 
   test('page numbers in a footer keep counting the whole document', async () => {
-    // The reason this is worth stating: an extract renumbered from 1 would make
-    // "page 1 of 2" out of two pages of a four-page document, which is a
-    // different document. Chromium keeps the document's own numbering.
     const out = join(dir, 'ranges-counters.pdf');
-    // The total is read from the full render rather than written down: a
-    // hardcoded page count is a test that fails when the fixture's markup
-    // changes rather than when the behaviour does. Measured 6, not the 5 the
-    // fixture's five sections suggest.
     const whole = join(dir, 'ranges-whole.pdf');
     await run(['-o', whole, '-q', src]);
     const total = (await pdfInfo(await bytesOf(whole))).pages;
@@ -636,8 +594,6 @@ describe('--page-ranges', () => {
   }, 120_000);
 
   test('a spec it cannot read is refused before a browser is launched', async () => {
-    // The alternative is Chromium rejecting the string a few hundred ms into a
-    // render, as a protocol error naming the transport rather than the input.
     for (const spec of ['0-3', 'abc', '1,,2', '1-', '']) {
       const { code, stdout } = await run(['-o', join(dir, 'bad.pdf'), src, '--page-ranges', spec]);
       expect(code, spec).toBe(2);
@@ -695,8 +651,6 @@ describe('letterpress validate', () => {
   });
 
   test('a missing file is a usage error, not a failed check', async () => {
-    // Exit 2, distinct from 1: nothing was inspected, so a script cannot mistake
-    // "I could not look" for "I looked and it is wrong".
     const { code, stdout } = await run(['validate', join(dir, 'absent.pdf')]);
     expect(stdout).not.toContain('not ok');
     expect(code).toBe(2);
@@ -728,10 +682,6 @@ describe('letterpress page', () => {
   });
 
   test('--landscape is explained per document, and the two null cases are opposites', async () => {
-    // A document declaring no paper passes the flag straight to chromium and it
-    // works; `size: auto` is refused and the sheet stays portrait. Both are
-    // `transposePageSize` returning null, and reporting the second reason for
-    // the first is how a working flag gets called broken.
     const none = await run(['page', await write('nopage.html', 'body{color:red}')]);
     expect(none.stdout).toContain('passed straight to chromium');
 

@@ -111,8 +111,6 @@ ${Array.from({ length: 6 }, (_, i) => `<div class="s">PAGE_${i + 1}</div>`).join
   });
 
   test('rejects blank html as a client error, not a 500', async () => {
-    // Battle-tested: blank input fell through validation into render(), which
-    // throws, and every throw answered 500. Same message, right code.
     for (const html of ['', '   ']) {
       const r = await post({ html });
       expect(r.status, JSON.stringify(html)).toBe(400);
@@ -218,10 +216,6 @@ describe('loopback boundary', () => {
   }, 120_000);
 
   test('accepts an Origin at every loopback spelling, not just 127.0.0.1', async () => {
-    // The Host check above deliberately answers every loopback spelling, and the viewer is
-    // reached by whichever one the user typed. Origin was compared against one fixed string,
-    // so a viewer opened at http://localhost:PORT -- or [::1]:PORT -- was refused by its own
-    // POST with a message about "other web pages".
     for (const host of ['localhost', '[::1]', '127.0.0.1']) {
       const r = await post({ html: DOC }, { host, origin: `http://${host}:${s.port}` });
       expect(r.status, `Origin: ${host}`).toBe(200);
@@ -229,8 +223,6 @@ describe('loopback boundary', () => {
   }, 120_000);
 
   test('refuses an Origin on a different port or a different scheme', async () => {
-    // The loopback check is not the whole answer: same machine, different service is still
-    // another origin, and http://localhost:PORT over the wrong scheme is not this server.
     const port = s.port ?? 0;
     for (const bad of [`http://localhost:${port + 1}`, `http://127.0.0.1:${port - 1}`]) {
       const r = await post({ html: DOC }, { origin: bad });
@@ -330,10 +322,6 @@ describe('response format', () => {
   }, 90_000);
 
   test('a pdf response names its error findings, not just their number', async () => {
-    // A document with a surviving placeholder is an error-severity finding and still a
-    // structurally perfect PDF, so the response is a 200 with real bytes in it. Before
-    // x-letterpress-errors existed the only signal was x-letterpress-findings, a count, and
-    // a client reading it could not tell a clean render from a failed one.
     const r = await post({
       html: `<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:15mm}</style>
         <h1>Report</h1><p>{{leftover}}</p>`,
@@ -356,8 +344,6 @@ describe('response format', () => {
   }, 90_000);
 
   test('the pdf header agrees with the json body about which findings are errors', async () => {
-    // One render, two shapes of the same answer. If these ever disagree, the pdf form is
-    // the one nobody checks, which is how it drifted in the first place.
     const body = {
       html: `<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:15mm}</style>
         <h1>Report</h1><p>{{leftover}}</p>`,
@@ -421,11 +407,6 @@ describe('response format', () => {
 });
 
 describe('a limit that cannot be read', () => {
-  // `Number('abc')` is NaN and every comparison against NaN is false, so a typo did not
-  // disable a limit loudly. It disabled it silently: the queue grew without bound and
-  // neither the 429 nor the page-limit message ever appeared, while the 413 body still
-  // quoted "the 6000-page limit". The limits are read once at import, so this exercises the
-  // reader directly rather than standing up a server under a different environment.
   test('an unreadable limit falls back and says so', () => {
     const seen: string[] = [];
     const warn = (m: string) => seen.push(m);
@@ -436,8 +417,6 @@ describe('a limit that cannot be read', () => {
       expect(seen.join('\n')).toMatch(/HTML2PDF_MAX_PAGES="abc" is not a number/);
       expect(seen.join('\n')).toMatch(/using 6000/);
 
-      // Zero and negatives are no better than NaN: they are numbers, so nothing above
-      // catches them, and a concurrency limit of 0 admits nothing at all.
       seen.length = 0;
       process.env.HTML2PDF_MAX_PAGES = '0';
       expect(limitFromEnv('HTML2PDF_MAX_PAGES', 6000, 1, warn)).toBe(6000);
@@ -465,8 +444,6 @@ describe('a limit that cannot be read', () => {
   });
 
   test('author, subject and keywords are type-checked like every other field', async () => {
-    // Every other field is checked and answers 400. These three were the exception, so
-    // `{"author": 123}` returned 200, wrote no author, and reported nothing.
     for (const key of ['author', 'subject', 'keywords']) {
       const r = await post({ html: DOC, [key]: 123 });
       expect(r.status, key).toBe(400);
@@ -475,9 +452,6 @@ describe('a limit that cannot be read', () => {
   }, 60_000);
 
   test('timeoutMs of 0 falls back rather than becoming a zero deadline', async () => {
-    // It is a number, so it passed the numeric check, and `render` reads it with `?? DEFAULT`
-    // which keeps the 0. The deadline expired on the next tick and the caller got a 500
-    // about a cdp socket, while the CLI refuses the same input with a usage error.
     expect((await post({ html: DOC, timeoutMs: 0 })).status).toBe(200);
   }, 60_000);
 });

@@ -1,20 +1,3 @@
-/**
- * The manifest of finding codes, held against the source and the README.
- *
- * A finding code is a promise: a caller writes `if (code === 'js-error')`, and
- * that string has to keep meaning the same thing. Nothing enforced that. A
- * code could be renamed in the source and left in the README, or documented
- * and never emitted, and the only symptom was a caller that stopped matching
- * a failure it used to handle.
- *
- * So the manifest is checked in three directions: every code the source emits
- * is listed with the severity it is emitted at, every code the manifest lists
- * is emitted, and every code in the README's findings table says the same
- * thing here. The source is read as text rather than imported, because the
- * codes live in two shapes -- object literals in the render path and `add(...)`
- * calls inside the page-side audit script, which is a string of source that
- * runs in the browser.
- */
 import { describe, expect, test } from 'bun:test';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -24,10 +7,8 @@ import { FINDINGS, FINDING_CODES, codesAt } from '../src/findings.ts';
 const SRC = join(import.meta.dir, '..', 'src');
 const README = join(import.meta.dir, '..', 'README.md');
 
-/** A code emitted as an object literal: `{ code: 'js-error', severity: 'warn' }`. */
 const LITERAL = /code:\s*['"]([a-z0-9-]+)['"],\s*\n\s*severity:\s*['"]([a-z]+)['"]/g;
 
-/** A code emitted inside the page-side audit, which is a string of source. */
 const ADDED = /add\(\s*['"]([a-z0-9-]+)['"],\s*['"](error|warn|info)['"]/g;
 
 async function sourceFiles(): Promise<string[]> {
@@ -35,7 +16,6 @@ async function sourceFiles(): Promise<string[]> {
   return names.filter((n) => n.endsWith('.ts')).map((n) => join(SRC, n));
 }
 
-/** Every code the source emits, with the severity it is emitted at. */
 async function emitted(): Promise<Map<string, Set<string>>> {
   const found = new Map<string, Set<string>>();
   const add = (code: string, severity: string) => {
@@ -50,7 +30,6 @@ async function emitted(): Promise<Map<string, Set<string>>> {
   return found;
 }
 
-/** The findings table of the README, as code -> description. */
 async function documented(): Promise<Map<string, string>> {
   const lines = (await readFile(README, 'utf8')).split('\n');
   const start = lines.findIndex((l) => l.startsWith('| code '));
@@ -90,8 +69,6 @@ describe('the findings manifest', () => {
   });
 
   test('no code is emitted at two severities', async () => {
-    // A code that means one thing cannot be a warning in one place and an
-    // error in another: a caller that treats it as fatal would miss the other.
     const found = await emitted();
     const split = [...found].filter(([, s]) => s.size > 1).map(([c, s]) => `${c}: ${[...s]}`);
     expect(split).toEqual([]);

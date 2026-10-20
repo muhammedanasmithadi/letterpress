@@ -1,23 +1,15 @@
-// Cold-start and concurrency bench for the print service.
-// Runs unmodified on Bun, Deno and Node. Prints one JSON line per phase.
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const CHROME = process.env.CHROME ?? 'chromium';
-// The probe documents are generated, not assumed: an earlier default pointed at a
-// scratch file that did not exist, so every phase quietly measured rendering a
-// missing file (the error page) plus the fixed settle sleep below.
 const DIR = process.env.BENCH_DIR ?? join(tmpdir(), 'letterpress-bench');
 const SMALL = process.env.SMALL_DOC ?? join(DIR, 'probe.html');
 const BIG = process.env.BIG_DOC ?? join(DIR, 'big.html');
 const PROFILE = join(DIR, 'profile');
 
 function fixtures() {
-  // Generated only for the defaults: an explicit SMALL_DOC/BIG_DOC is the caller's,
-  // URL or path, and touching it would surprise. existsSync on a file:// URL always
-  // fails, so overrides skip generation entirely, exactly as before.
   mkdirSync(DIR, { recursive: true });
   if (!process.env.SMALL_DOC && !existsSync(SMALL)) {
     writeFileSync(
@@ -41,8 +33,6 @@ function fixtures() {
 
 fixtures();
 
-// Navigate targets are file URLs; the *_DOC overrides keep working because they
-// were URLs already, and the generated defaults are converted here.
 const smallUrl = SMALL.startsWith('file:') ? SMALL : `file://${SMALL}`;
 const bigUrl = BIG.startsWith('file:') ? BIG : `file://${BIG}`;
 
@@ -89,8 +79,6 @@ function connect(wsUrl) {
       pend.delete(m.id);
     }
   };
-  // timeout is per call, never per connection: a short probe timeout must not
-  // poison a long-lived client that is reused for later renders.
   const send = (method, params = {}, timeout = 120000) =>
     new Promise((res, rej) => {
       const n = ++id;
@@ -108,9 +96,6 @@ function connect(wsUrl) {
   });
 }
 
-// Chromium prints the DevTools endpoint before a page session will accept
-// commands, so a first connect can open and then never be answered. Poll until
-// a trivial command actually round-trips.
 async function waitForPageSession(port, deadlineMs = 30000) {
   const started = Date.now();
   let lastErr;
@@ -160,7 +145,6 @@ function rss() {
 }
 const RT = process.env.RT ?? '?';
 
-// ---- Phase 1: cold start, spawn to first PDF bytes in hand ----
 let t0 = performance.now();
 const { proc, port, spawned } = await launch();
 const endpointMs = performance.now() - spawned;
@@ -177,7 +161,6 @@ console.log(
   }),
 );
 
-// ---- Phase 2: warm single, 5 renders of a small doc ----
 {
   const t = performance.now();
   const times = [];
@@ -197,7 +180,6 @@ console.log(
   );
 }
 
-// ---- Phase 3: concurrency, N tabs printing the same small doc at once ----
 for (const N of [2, 4, 8]) {
   const tabs = await Promise.all(Array.from({ length: N }, () => newTab(port)));
   const clients = await Promise.all(tabs.map((t) => connect(t.webSocketDebuggerUrl)));
@@ -223,7 +205,6 @@ for (const N of [2, 4, 8]) {
   await Promise.all(tabs.map((t) => fetch(`http://127.0.0.1:${port}/json/close/${t.id}`)));
 }
 
-// ---- Phase 4: one big render, the serial worst case ----
 {
   const a = performance.now();
   const n = await render(c0, bigUrl);
@@ -238,10 +219,6 @@ for (const N of [2, 4, 8]) {
   );
 }
 
-// Chromium spawns zygote, renderer, gpu and network children. Killing only the
-// parent leaks them: a single SIGTERM to the parent left 27 orphaned processes
-// across three bench runs, roughly 1GB of resident memory. Signal the whole
-// process group instead, which measured a clean 0 processes afterwards.
 try {
   process.kill(-proc.pid, 'SIGTERM');
 } catch {}

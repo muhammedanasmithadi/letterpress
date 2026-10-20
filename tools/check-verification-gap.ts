@@ -1,17 +1,3 @@
-/**
- * The gap between structural checks and content identity, demonstrated.
- *
- * xref/resolves, refs-resolve and lengths-match all pass on a file whose drawn
- * content was destroyed -- because none of them look at what the bytes draw.
- * Byte-identity against the original (repairOrKeep with it in hand) is what
- * catches content damage, and the second half below proves that too.
- *
- * An earlier version corrupted by splicing text into the raw file, but content
- * streams are Flate-compressed: its TJ-array pattern never matched anything, so
- * it "corrupted" nothing and both rows trivially agreed. Damage now goes into
- * the compressed payload at the same length, keeping every offset and Length
- * valid while the content dies.
- */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -70,10 +56,6 @@ const html = `<!doctype html><meta charset="utf-8"><title>T</title>
 <style>@page{size:A4;margin:18mm}</style><h1>Gate</h1><p>office efficient flags finished</p>`;
 const good = (await render(b, { html, author: 'A Person' })).pdf;
 
-// Same-length damage inside a compressed text payload: every offset, Length and
-// xref entry stays valid while the drawn content dies. Flipping the raw file
-// text cannot do this -- streams are Flate-compressed, so a plaintext pattern
-// never matches and the "corruption" is a no-op.
 function corruptContent(pdf: Uint8Array): Uint8Array {
   const raw = Buffer.from(pdf);
   const text = raw.toString('latin1');

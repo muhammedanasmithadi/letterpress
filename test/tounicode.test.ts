@@ -148,11 +148,6 @@ describe('fixToUnicode', () => {
   });
 
   test('a string in the stream dictionary survives the rewrite', () => {
-    // streamDict blanks the inside of every literal string so a read cannot mistake
-    // /Length 99 for a string that happens to say it. That is right for reading and it was
-    // used for writing: the repair rebuilt the dictionary from the masked text, so this
-    // file came back out as /Producer (            ), the contents gone, with no finding
-    // and no error. The file was corrupt and letterpress said it was fine.
     const src = pdfWithCMap(cmapOfRange(0x0675, 0x0677, 0xfb00), '/Producer (Acme PDF 3.0) ');
     const out = Buffer.from(fixToUnicode(src)).toString(LATIN1);
 
@@ -160,13 +155,10 @@ describe('fixToUnicode', () => {
     expect(out).toContain('/Producer (Acme PDF 3.0)');
     expect(out).not.toMatch(/\/Producer \(\s*\)/);
 
-    // And the repair still did its job: the mask must not have cost us the CMap either.
     expect(cmaps(fixToUnicode(src)).join('')).toContain('<0675> <00660066>');
   });
 
   test('the newline before stream is kept', () => {
-    // dictOf trims, so the separator has to be written back by hand. Without it the
-    // dictionary ends up glued to the keyword as `>>stream`.
     const out = Buffer.from(
       fixToUnicode(pdfWithCMap(cmapOfRange(0x0675, 0x0677, 0xfb00), '/Producer (Acme PDF 3.0) ')),
     ).toString(LATIN1);
@@ -223,11 +215,6 @@ describe('fixToUnicode', () => {
   });
 
   test('a bfrange line is never rewritten as a bfchar entry', () => {
-    // The old pattern had no notion of which block it was in: its separator matched a
-    // newline and its lookahead accepted the `<` beginning the next line, so `<0041>` paired
-    // with `<FB00>`. The result declared `2 beginbfrange` and supplied six operands on one
-    // line -- not a valid bfrange -- and `verify` cannot see inside a CMap, so it passed the
-    // gate and the report then said the font was clean.
     const cmap = '2 beginbfrange\n<0010> <0012> <0041>\n<FB00> <FB03> <0050>\nendbfrange\n';
     expect(fixCMap(cmap)).toBeUndefined();
     expect(
@@ -237,13 +224,11 @@ describe('fixToUnicode', () => {
   });
 
   test('a codespacerange line is never rewritten either', () => {
-    // `<FB00> <FB03>` is a range of two codes, not a source and a destination.
     const cmap = '1 begincodespacerange\n<FB00> <FB03>\nendcodespacerange\n';
     expect(fixCMap(cmap)).toBeUndefined();
   });
 
   test('bfchar entries are still fixed, one per line and several per line', () => {
-    // The scoping must not cost the actual work.
     const onePerLine = '2 beginbfchar\n<0041> <FB01>\n<0042> <FB02>\nendbfchar\n';
     expect(fixCMap(onePerLine)).toBe(
       '2 beginbfchar\n<0041> <00660069>\n<0042> <0066006C>\nendbfchar\n',
@@ -264,9 +249,6 @@ describe('fixToUnicode', () => {
   });
 
   test('an array-form bfrange is repaired and the repair is idempotent', () => {
-    // The checker read an array line as three operands of an incremental range -- elements
-    // one and two as lo and hi -- so it reported codepoints the map does not contain and
-    // missed ones it does. Then the repair made it worse: four unresolved became nineteen.
     for (const arr of ['[<FB00> <FB01>]', '[<FB00> <FB01> <FB02> <FB03>]']) {
       const cmap = `1 beginbfrange\n<0001> ${arr}\nendbfrange\n`;
       const input = pdfWithCMap(cmap);
@@ -274,8 +256,6 @@ describe('fixToUnicode', () => {
 
       const once = fixToUnicode(input);
       expect(unresolvedLigatures(once), `after: ${arr}`).toEqual([]);
-      // Idempotence is the property that would have caught this, and it is named as such in
-      // docs/architecture-assessment.md.
       expect(sameBytes(fixToUnicode(once), once), `twice: ${arr}`).toBe(true);
     }
   });

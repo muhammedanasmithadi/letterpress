@@ -36,10 +36,6 @@ async function hit(browser: Browser, target: number) {
 
 const profile = await mkdtemp(join(tmpdir(), 'lp-bl-'));
 const probe = await Browser.launch({ profile });
-// A dense real-world-shaped page (headings, two-column-ish flow, a table), generated
-// like every other workload here. This used to be a path inside the author's home
-// directory -- and not even the right filename -- so the tool crashed with ENOENT on
-// every machine including its own. RESUME_DOC points at a real file when one matters.
 const resumePath = process.env.RESUME_DOC;
 const resumeHtml =
   `<!doctype html><meta charset="utf-8"><title>Resume</title>` +

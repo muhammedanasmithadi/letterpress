@@ -1,8 +1,3 @@
-/**
- * The fuzzer as a regression gate: a small fixed-seed batch through the same
- * contract `tools/fuzz.ts` checks at depth. The seed is fixed so the documents
- * never change; run the tool with `--count 200` to explore beyond them.
- */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -21,9 +16,6 @@ import { render } from '../src/render.ts';
 import { assemblePdf } from './fixtures.ts';
 import { closeTestBrowser, launchTestBrowser, type TestBrowser } from './browser.ts';
 
-// Ghostscript is present here and on CI it is not (the runner installs poppler
-// and fonts only), so this gate skips loudly rather than failing there. The
-// committed fixtures in test/data pin the same contract without Ghostscript.
 const hasGhostscript = await ghostscriptOk();
 
 let t: TestBrowser;
@@ -37,9 +29,6 @@ afterAll(async () => {
 }, 20_000);
 
 test('fifteen fixed documents hold the render contract', async () => {
-  // Seed 20261013: fifteen documents, zero failures measured at introduction. If this
-  // fails, the tool prints the seed, index and reason; re-run the tool with
-  // --seed 20261013 to reproduce, and the shrunk repro lands in the out dir.
   for (let i = 0; i < 15; i++) {
     const { html } = document(20261013, i);
     const res = await fuzzOne(t.browser, 20261013, i, html);
@@ -49,9 +38,6 @@ test('fifteen fixed documents hold the render contract', async () => {
 }, 240_000);
 
 test('every repair holds its contract on mutated files', async () => {
-  // Two renders, forty mutants each across all six mutation kinds, every repair.
-  // The corpus is rendered, not synthetic: repairs behave differently on real
-  // object graphs. Mutants and repairs are pure functions, so this is CPU-bound.
   const r1 = await render(t.browser, {
     html: `<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:15mm}</style><h1>T</h1><p>The official fish fills five.</p>`,
     author: 'fuzz',
@@ -79,11 +65,6 @@ test('every repair holds its contract on mutated files', async () => {
 }, 120_000);
 
 test('exotic files pass through every repair byte-identical', async () => {
-  // Committed producer outputs (Ghostscript 10.06.0): a linearized file with a
-  // later revision the splitter cannot see, and an R3-encrypted file whose
-  // content is ciphertext. Both must survive every repair unchanged -- any
-  // rewrite from a fragment, or plaintext spliced into ciphertext, is unsound.
-  // Deep exploration lives in the tool (--exotic); these two pin the contract.
   const dir = join(import.meta.dir, 'data');
   const cases: Array<{ file: string; kind: ExoticFile['kind']; marker: RegExp }> = [
     { file: 'linearized.pdf', kind: 'linearized', marker: /\/Linearized\b/ },
@@ -128,7 +109,6 @@ describe('harness units (no browser)', () => {
       names.add(name);
     }
     expect(names.size).toBe(6);
-    // Tiny and empty inputs take the early exits, not the floor.
     expect(mutate(r, new Uint8Array(0), 0).bytes.length).toBe(0);
     expect(mutate(r, new Uint8Array(0), 3).bytes.length).toBe(0);
     expect(mutate(r, Buffer.from('x'), 1).bytes.length).toBe(1);
@@ -158,7 +138,6 @@ describe('harness units (no browser)', () => {
         return b;
       },
     };
-    // A single flipped byte breaks the xref, so a valid file in means a refusal out.
     expect(fuzzRepair(corrupting, pdf).ok).toBe(false);
     expect(fuzzRepair(corrupting, pdf).reason).toContain('corrupted a valid file');
     const keeping = { name: 'same', run: (p: Uint8Array): Uint8Array => p };
@@ -185,8 +164,6 @@ describe('harness units (no browser)', () => {
     expect(checkFindings([{ code: 'x', severity: 'warn', message: 'm' }])).toBeUndefined();
     expect(checkFindings([{ code: '', severity: 'warn', message: 'm' }])).toContain('malformed');
     expect(checkFindings([{ code: 'x', severity: 'warn', message: '' }])).toContain('malformed');
-    // Findings arrive from the page as JSON, so the severity is unknown at runtime
-    // no matter what the type says: cast through unknown to test the check itself.
     const bogus = { code: 'x', severity: 'bogus', message: 'm' } as unknown as {
       code: string;
       severity: 'error';

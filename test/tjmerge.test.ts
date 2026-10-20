@@ -1,17 +1,3 @@
-/**
- * Folding per-glyph positioning into TJ arrays must change nothing but the spelling.
- *
- * The first version of this wrote the object header twice. Every check inside the module
- * passed -- the replay said every glyph landed in the same place, because both sides were
- * wrong in the same way -- and so did verify(), which compares content streams and not the
- * header above them. The file rendered blank and extracted as nothing. What caught it was
- * rasterising both files and comparing the pixels, which is why that is the assertion here
- * rather than the replay.
- *
- * The baseline is Chromium's own output, printed here rather than through render(),
- * because render() merges on the way out and a merged file is a fixed point of the
- * transform. Comparing a merge against another merge proves nothing.
- */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -63,7 +49,6 @@ function page(name: string, css: string, body: string): string {
   return `<!doctype html><meta charset="utf-8"><title>${name}</title><style>${css}</style>${body}`;
 }
 
-/** Chromium's own bytes for this document, with nothing of ours applied. */
 async function chromiumPrint(html: string): Promise<Uint8Array> {
   const tab = await browser.newTab('about:blank');
   try {
@@ -105,17 +90,10 @@ describe('merging text runs', () => {
         const before = await chromiumPrint(page(name, css, body));
         const { pdf: after, stats } = mergeTextRuns(before);
 
-        // Assert that it happened. Without this the equality assertions below all hold
-        // while the transform quietly did nothing.
         expect([name, stats.merged]).not.toEqual([name, 0]);
         expect([name, Buffer.from(after).equals(Buffer.from(before))]).toEqual([name, false]);
 
-        // The text a reader would copy is the same, character for character.
         expect([name, await pdfText(after)]).toEqual([name, await pdfText(before)]);
-        // And so is where it sits. Reading the text proves nothing about position: poppler
-        // reports the right word whether the glyph is a hundredth of a point out or dead
-        // on. The boxes are what catch a wrong advance width, which moves every glyph after
-        // it while leaving the characters and the pixels alone.
         const before0 = await pdfWords(before);
         const words = await pdfWords(after);
         expect([name, words.map((w) => w.text)]).toEqual([name, before0.map((w) => w.text)]);
@@ -125,18 +103,14 @@ describe('merging text runs', () => {
           expect([name, i, Math.abs(word.xMin - was.xMin) < 0.01]).toEqual([name, i, true]);
           expect([name, i, Math.abs(word.xMax - was.xMax) < 0.01]).toEqual([name, i, true]);
         }
-        // The page a reader would look at is the same, pixel for pixel.
         expect([
           name,
           (await rasterise(after, dir, 'b')).equals(await rasterise(before, dir, 'a')),
         ]).toEqual([name, true]);
-        // And it is still a PDF rather than a file that happens to parse.
         expect([name, verify(after).ok]).toEqual([name, true]);
         const gs = await Bun.$`gs -o /dev/null -sDEVICE=nullpage ${join(dir, 'b.pdf')} 2>&1`.text();
         expect([name, /error/i.test(gs)]).toEqual([name, false]);
 
-        // Chromium emits one show operator per glyph; after the merge every remaining one
-        // is a TJ array.
         const profile = textRunProfile(after);
         expect([name, profile.tj]).toEqual([name, profile.showOps]);
       }
@@ -149,8 +123,6 @@ describe('merging text runs', () => {
     for (const [name, css, body] of DOCS) {
       const r = await render(browser, { html: page(name, css, body), author: 'tj' });
       const message = said(r, 'text-runs-merged');
-      // Reported for every document. A transform that stays quiet about the runs it
-      // refused is indistinguishable from one that is not running.
       expect([name, message !== undefined]).toEqual([name, true]);
       expect([name, /glyph positions verified unchanged/.test(message!)]).toEqual([name, true]);
       expect([name, /left all \d+ text blocks alone/.test(message!)]).toEqual([name, false]);
@@ -161,7 +133,6 @@ describe('merging text runs', () => {
     const before = await chromiumPrint(page('prose', DOCS[0]![1], DOCS[0]![2]));
     const once = mergeTextRuns(before).pdf;
     const twice = mergeTextRuns(once);
-    // A transform that is not a fixed point would move every glyph a second time.
     expect(Buffer.from(twice.pdf).equals(Buffer.from(once))).toBe(true);
     expect(twice.stats.merged).toBe(0);
   }, 120_000);

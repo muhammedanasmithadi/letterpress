@@ -100,8 +100,6 @@ describe('format validation', () => {
     expect(toInches('96px')).toBe(1);
     expect(toInches('6pc')).toBe(1);
     expect(toInches('0')).toBe(0);
-    // A negative length parses: the render rejects it later, where the paper
-    // it would bleed off is known, rather than in the unit conversion.
     expect(toInches('-5mm')).toBe(-5 / 25.4);
     expect(() => toInches('2em')).toThrow(/relative/);
     expect(() => toInches('10vw')).toThrow(/relative/);
@@ -112,8 +110,6 @@ describe('format validation', () => {
   });
 
   test('render refuses non-documents before touching the browser', async () => {
-    // resolveSource runs before any tab exists, so a dummy browser never
-    // gets touched: these fail in validation, not in Chromium.
     const noBrowser = null as never;
     await expect(render(noBrowser, {})).rejects.toThrow(/one of: html, path, url/);
     await expect(render(noBrowser, { html: '%PDF-1.4\n1 0 obj\n' })).rejects.toThrow(/not HTML/);
@@ -146,10 +142,6 @@ describe('a missing subresource does not kill the render', () => {
   }, 60_000);
 
   test('a missing asset is counted once, whatever the browser reports', async () => {
-    // Measured: one missing stylesheet arrived as two events under two resource
-    // types, so the finding said "3 subresources (Stylesheet, Image, Fetch)"
-    // over a document missing two files, and then listed two URLs under it. The
-    // count was counting events and the list was counting files.
     await writeFile(
       join(dir, 'counted.html'),
       `<!doctype html><html lang="en"><head><link rel="stylesheet" href="gone.css"></head>` +
@@ -159,11 +151,8 @@ describe('a missing subresource does not kill the render', () => {
     const f = r.findings.find((x) => x.code === 'subresource-failed')!;
     const listed = [...f.message.matchAll(/^ {2}\d{3} http/gm)].map((m) => m[0]);
     expect(listed).toHaveLength(2);
-    // The number in the sentence is the number of URLs under it.
     const claimed = Number(/^(\d+) subresources?/.exec(f.message)![1]);
     expect(claimed).toBe(listed.length);
-    // Chromium asks for /favicon.ico by itself; it is not something the document
-    // is missing, and it was counted here before.
     expect(f.message).not.toContain('favicon');
   }, 60_000);
 });
@@ -263,15 +252,6 @@ describe('assets reach the document without rewriting it', () => {
   }, 60_000);
 
   test('an imported stylesheet is staged and applied', async () => {
-    // `hasRelativeAssets` decides whether the staging server runs at all; when it says no,
-    // the document is printed from about:blank with nothing beside it. It read a shorter
-    // list than the stager did and had no @import on it, so a document whose only local
-    // reference was an imported stylesheet printed unstyled -- no error, no finding, one
-    // page instead of two.
-    //
-    // The page count is the assertion rather than a font size or a colour because it is the
-    // only thing here that survives compression: a single paragraph with a leading break is
-    // still one page, so the control needs two paragraphs to mean anything.
     await writeFile(join(dir, 'imported.css'), 'p+p{page-break-before:always}');
     await writeFile(
       join(dir, 'imported.html'),

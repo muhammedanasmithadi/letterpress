@@ -1,17 +1,3 @@
-/**
- * A font resource name is page-local. `/F1` on one page and `/F1` on the next are two
- * different fonts, and reading them as one table lets the last page that binds `/F1`
- * decide the advance widths for every other page.
- *
- * Nothing downstream notices. The glyphs are still drawn where the content stream puts
- * them, the page still renders identically, and the characters still extract correctly.
- * Only the numbers computed from the widths move, which is the dangerous shape: a
- * measurement that is confidently incorrect rather than one that fails.
- *
- * The fixture is built twice from the same source, differing in one thing only: whether the
- * second page reuses the name `/F1` or binds its own `/F2`. Anything the two disagree about
- * is the name collision, not the document.
- */
 import { describe, expect, test } from 'bun:test';
 import { join } from '../src/pdfparts.ts';
 import { textFlow } from '../src/selection.ts';
@@ -35,7 +21,6 @@ function file(sharedName: boolean): Uint8Array {
       ),
     };
   };
-  // Page one binds /F1, page two binds /F1 again or /F2. Same font object either way.
   const page2Font = sharedName ? '/F1 6 0 R' : '/F2 6 0 R';
   return join(
     Buffer.from('%PDF-1.4\n', 'latin1'),
@@ -59,7 +44,6 @@ function file(sharedName: boolean): Uint8Array {
   );
 }
 
-/** The text of a content stream, so the fixture can be checked rather than assumed. */
 function streamText(pdf: Uint8Array, num: number): string {
   return sharedStreamText(pdf, num);
 }
@@ -68,8 +52,6 @@ describe('font resources are page-local', () => {
   test('the fixture differs only in whether the name collides', () => {
     const shared = file(true);
     const distinct = file(false);
-    // Each page names the resource it binds. A stream that names a font its page does not
-    // bind cannot be read at all, which looks identical to a name collision and is not one.
     expect(streamText(shared, 5)).toContain('/F1 10 Tf');
     expect(streamText(shared, 8)).toContain('/F1 10 Tf');
     expect(streamText(distinct, 5)).toContain('/F1 10 Tf');
@@ -81,18 +63,12 @@ describe('font resources are page-local', () => {
     const distinct = textFlow(file(false));
     expect(shared).not.toBeNull();
     expect(distinct).not.toBeNull();
-    // Two pages, two glyphs each, one gap between the glyphs of each page.
     expect(distinct!.glyphs).toBe(4);
     expect(shared!.glyphs).toBe(distinct!.glyphs);
     expect(shared!.gaps).toBe(distinct!.gaps);
     expect(shared!.breaks).toBe(distinct!.breaks);
     expect(shared!.jump).toBe(distinct!.jump);
     expect(shared!.tooWide).toBe(distinct!.tooWide);
-    // The counts above are too coarse to see the defect: both advance widths put the gap
-    // in the same bucket, so a table read from the wrong page still counts the same number
-    // of breaks. The size of the gap does not survive that. Page one advances 100 units per
-    // glyph, so its gap is 90 minus 1, which is 8.9 em; read with page two's 1000 units it
-    // is 90 minus 10, which is 8.0 em.
     expect(shared!.widestAll).toBeCloseTo(distinct!.widestAll, 6);
     expect(distinct!.widestAll).toBeCloseTo(8.9, 6);
   });

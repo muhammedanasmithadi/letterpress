@@ -1,10 +1,3 @@
-/**
- * A browser draws one highlight per text item, and ends an item at any word gap wider than
- * 0.6 em. A justified paragraph therefore selects as a row of separate boxes, and nothing
- * in the file can change that -- the gap is what the layout produced. What the engine can do
- * is measure it and say so, so these tests hold the measurement to the behaviour that was
- * observed in Firefox rather than to the intent of the code.
- */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -39,19 +32,10 @@ describe('word gaps a browser will break a selection on', () => {
     expect(/0\.\d\d em/.test(message!)).toBe(true);
     expect(/text-align:justify/.test(message!)).toBe(true);
 
-    // The same page set ragged-right has no *word space* past the band, which is the whole
-    // difference between one highlight and one per word. It may still report ligature
-    // spans, which are a separate cause and not fixed by any of this. The measure is narrow
-    // on purpose: on a wide measure justification barely stretches anything and neither arm
-    // reports a stretched word space, which is correct rather than a failed measurement.
     expect(said(ragged) ?? '').not.toMatch(/word space/);
   }, 120_000);
 
   test('the measurement agrees with what a browser does', async () => {
-    // Firefox reports a bare whitespace item for each gap past the band, and the number it
-    // produces for a table of cells -- where the gaps are the column gutters -- is the
-    // number measured here. That agreement is the check that the geometry is being read
-    // the same way twice.
     const ROWS = 30;
     const COLS = 3;
     const r = await render(browser, {
@@ -66,19 +50,11 @@ describe('word gaps a browser will break a selection on', () => {
     });
     const flow = textFlow(r.pdf);
     expect(flow).not.toBeNull();
-    // Thirty rows of three cells have exactly sixty column gutters, and every one is a
-    // jump from the last number in a cell to the first in the next, not a stretched word
-    // space. Each must be counted, and the word gaps inside "S-12" and "12.500" must not
-    // be: those are ordinary letter fits, and counting them would point at the wrong CSS.
     expect(flow!.jump).toBe(ROWS * (COLS - 1));
     expect(flow!.tooWide).toBe(0);
   }, 120_000);
 
   test('spans are stripped by default, and reported when kept', async () => {
-    // A reader ends a text item at every marked-content span whatever the spacing is, so
-    // on a page whose every gap is inside the band the highlight is still broken. The
-    // repair removes the spans the font already describes, so this document no longer
-    // fragments and the report is right to be silent.
     const html = `<!doctype html><meta charset="utf-8">
       <style>@page{size:A4;margin:20mm}
         body{font-family:'Noto Serif',serif;font-size:11pt;text-align:left}</style>
@@ -88,11 +64,8 @@ describe('word gaps a browser will break a selection on', () => {
     const spans = r.findings.find((f) => f.code === 'ligature-spans');
     expect(spans).toBeDefined();
     expect(spans!.message).toMatch(/removed \d+ of \d+/);
-    // Nothing left for the selection report to complain about.
     expect(said(r)).toBeUndefined();
 
-    // The opt-out brings them back, and the report names them again -- as spans, not as
-    // ligatures, because not every span Chromium emits is one.
     const kept = await render(browser, { html, author: 's', keepLigatureSpans: true });
     expect(kept.findings.map((f) => f.code)).not.toContain('ligature-spans');
     expect(textFlow(kept.pdf)!.spans).toBeGreaterThan(5);

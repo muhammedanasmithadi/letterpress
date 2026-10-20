@@ -60,9 +60,6 @@ describe('the toolbar controls reach the renderer', () => {
     expect(own.mediaBoxes[0]).toContain('420');
     const a4 = (await (await post({ html: DOC, format: 'a4' })).json()) as { mediaBoxes: string[] };
 
-    // 594.96pt: the flag is written as `@page { size: a4 }` and read back by the
-    // browser, so it is the same sheet the document's own `size: a4` produces.
-    // Passed as inches it was 595.92 -- Chromium rounds that form upward.
     expect(a4.mediaBoxes[0]).toContain('594.9');
   }, 90_000);
 
@@ -77,9 +74,6 @@ describe('the toolbar controls reach the renderer', () => {
   }, 90_000);
 
   test('landscape works with no format, which is what the toolbar sends', async () => {
-    // The toolbar's Format default is "document's own @page", so this is the request the
-    // Landscape button actually makes. It used to come back portrait with
-    // `orientation-ignored`, and the control snapped back to Portrait having done nothing.
     const r = (await (await post({ html: DOC, landscape: true })).json()) as {
       mediaBoxes: string[];
       findings: Array<{ code: string; severity: string }>;
@@ -211,9 +205,6 @@ describe('the shell itself', () => {
   });
 
   test('print settings ride a second toolbar row, always visible', async () => {
-    // Eleven controls plus a wordmark never fit one row; the settings wrap
-    // onto a full-width second row instead of a dropdown. Every control keeps
-    // its id and its label.
     const page = (await html()).replace(/<!--[\s\S]*?-->/g, '');
     expect(page).not.toContain('<details');
     expect(page).toContain('class="settings-row"');
@@ -234,8 +225,6 @@ describe('the shell itself', () => {
   });
 
   test('bare shell: native controls, wired toggle, plain text actions', async () => {
-    // Orientation is a two-button native toggle; aria-pressed carries the
-    // state and a boolean carries it to the payload (no .checked anywhere).
     const page = await html();
     expect(page).toContain('aria-label="Orientation"');
     expect(page).toContain('id="portrait" aria-pressed="true">Portrait');
@@ -245,47 +234,30 @@ describe('the shell itself', () => {
     expect(js).toContain('landscape: isLandscape()');
     expect(js).not.toContain('el.landscape.checked');
     expect(js).toContain("setAttribute('aria-pressed'");
-    // A refused orientation reverts the toggle to the effective state: the control must
-    // not display a request the engine could not honour. Refusal is now rare -- a
-    // document that declares its own sheet has it transposed -- but it is still reachable
-    // when the declaration names no paper (`size: auto`), so the branch is live code and
-    // stays.
     expect(js).toContain('orientation-ignored');
     expect(js).toContain('paintOrientation');
-    // The pressed button is bold, laid side by side -- the only visual signal,
-    // and color-free per the bare shell.
     const sheet = await (await fetch(`${origin}/assets/theme.css`)).text();
     expect(sheet).toMatch(/\.segmented\s*\{[^}]*display:\s*flex/s);
     expect(sheet).toMatch(/\.segmented button\[aria-pressed='true'\]\s*\{[^}]*font-weight:\s*700/s);
-    // Plain buttons with clear names. The status opens plain.
     expect(page).toContain('id="download"');
     expect(page).toMatch(/>\s*PDF\s*</s);
     expect(page).toContain('Ready to render.');
     const css = await (await fetch(`${origin}/assets/theme.css`)).text();
     expect(css).not.toContain('text-decoration');
-    // Margin re-renders as you type, but only for committable values:
-    // intermediates must not flash server rejections.
     expect(js).toContain("el.margin.addEventListener('input'");
     expect(js).toContain('isLengthLike');
   });
 
   test('nocturne review: pane metadata, quiet icons', async () => {
-    // The source head names its line count; it exists nowhere else. Counts
-    // also live in the live status line, so pane metadata hides from
-    // assistive tech.
     const page = await html();
     expect(page).not.toContain('id="filename"');
     expect(page).not.toContain('class="contextbar"');
     expect(page).toContain('id="source-meta"');
     expect(page).not.toContain('id="preview-meta"');
     expect(page).toContain('aria-hidden="true">HTML<');
-    // No svg icons and no dropdown: quiet text throughout, settings always
-    // visible. The starter demonstrates print, set in Georgia serif.
     expect(page).not.toContain('<svg');
     expect(page).not.toContain('class="paneltitle"');
     expect(page).toContain('Georgia, serif');
-    // No unicode chevrons anywhere in the shell: markers are drawn with
-    // borders, and every svg hides itself.
     const css = await (await fetch(`${origin}/assets/theme.css`)).text();
     expect(css).not.toContain('▸');
     expect(css).not.toContain('▾');
@@ -296,23 +268,9 @@ describe('the shell itself', () => {
     expect(js).not.toContain('formatLabel()');
     expect(js).not.toContain('closeOutside');
     expect(js).toContain('el.sourceMeta.textContent = `HTML ·');
-    // File import repaints the highlight layer and gutter: a programmatic value
-    // set fires no input event, so without the repaint the editor shows the
-    // previous document while the value and preview are already the new one.
-    // Positioned with indexOf rather than a regex window: a `{0,400}` bound
-    // fails the moment an unrelated comment lands inside the handler, which is
-    // a false alarm about a real defect. Order is what matters, so order is
-    // what is asserted.
     const handler = js.slice(js.indexOf("el.file.addEventListener('change'"));
     expect(js).toContain("el.file.addEventListener('change'");
     expect(handler).toContain('renderHighlight()');
-    // The input is released right after the file is captured. A file input only
-    // fires `change` when its value differs, so without the reset, re-picking
-    // the same file runs no handler at all: no import, no repaint, no status --
-    // a viewer that looks frozen. The captured File must outlive the reset,
-    // which is why the capture comes first, and the reset precedes the await so
-    // a failed read cannot leave the input stuck on a value that will never
-    // fire again.
     expect(js).toContain("el.file.value = ''");
     expect(handler.indexOf('const file = el.file.files?.[0]')).toBeLessThan(
       handler.indexOf("el.file.value = ''"),
@@ -320,9 +278,6 @@ describe('the shell itself', () => {
     expect(handler.indexOf("el.file.value = ''")).toBeLessThan(
       handler.indexOf('await file.text()'),
     );
-    // PPI honesty: the server clamps to 1200, so the box caps there natively
-    // and the reader reflects the effective value instead of sending a number
-    // the engine silently ignores.
     expect(page).toContain('max="1200"');
     expect(js).toContain("el.ppi.value = '1200'");
   });
@@ -344,13 +299,8 @@ describe('the shell itself', () => {
       '',
     );
     expect(css).toContain('color-scheme: light dark');
-    // The meta sets UA defaults before the stylesheet loads; the CSS alone
-    // arrives too late for first-paint form controls and scrollbars.
     expect(await html()).toContain('name="color-scheme" content="light dark"');
 
-    // No authored color anywhere except the error rule: failure must not
-    // look like success, so it keeps its pair and is cut out before the scan.
-    // Warnings read in the default text -- no second color.
     const unpainted = css.replace(/\.status\[data-level='error'\]\s*\{[^}]*\}/g, '');
     expect(css).not.toMatch(/\.status\[data-level='warn'\]/s);
     const bare = [...unpainted.matchAll(/#[0-9a-f]{3,8}\b/gi)];
@@ -361,19 +311,14 @@ describe('the shell itself', () => {
     expect(css).not.toContain('@font-face');
     expect(css).not.toContain('box-shadow');
     expect(css).not.toContain('woff2');
-    // What stays is mechanics: the overlay cell, the caret that must survive
-    // transparent text, the dropdown anchor, the pager hide, keyboard ring.
     expect(css).toMatch(/#highlight,\s*#source\s*\{[^}]*padding:\s*var\(--ed-pad\)/s);
     expect(css).toContain('caret-color: CanvasText');
-    // Visible tokens without paint: bold tags, italic strings, dimmed
-    // comments -- monochrome emphasis, no colors admitted.
     expect(css).toMatch(/#highlight \.tok-tag\s*\{[^}]*font-weight:\s*700/s);
     expect(css).toMatch(/#highlight \.tok-str\s*\{[^}]*font-style:\s*italic/s);
     expect(css).toMatch(/#highlight \.tok-com\s*\{[^}]*color:\s*color-mix/s);
     expect(css).toMatch(/\.settings-row\s*\{[^}]*flex:\s*1 1 100%/s);
     expect(css).toContain('.pager[hidden]');
     expect(css).toMatch(/:focus-visible\s*\{[^}]*outline:\s*2px solid/s);
-    // Severity still reads: failure must not look like success.
     expect(css).toMatch(/\.status\[data-level='error'\]/s);
   });
 
@@ -385,10 +330,6 @@ describe('the shell itself', () => {
   });
 
   test('the editor and the preview are placed on the flex row, not auto-sized', async () => {
-    // Each pane holds three children against three grid tracks, so auto-placement put
-    // the textarea in an auto row: measured 57px tall inside a 544px pane, with the
-    // flex track going nowhere useful. The editor wrapper holds the row now
-    // that the field lives inside an overlay; both content elements need explicit rows.
     const css = (await (await fetch(`${origin}/assets/theme.css`)).text()).replace(
       /\/\*[\s\S]*?\*\//g,
       '',
@@ -410,9 +351,6 @@ describe('the shell itself', () => {
   });
 
   test('the highlight layer is paint only, over one shared set of metrics', async () => {
-    // Both layers must read every metric from the same variables; a metric set
-    // in two places drifts per line and compounds. Measured the failure first:
-    // a 57px textarea inside a 544px pane, from grid auto-placement.
     const page = await html();
     expect(page).toContain('id="editor"');
     expect(page).toContain('id="highlight" aria-hidden="true"');
@@ -429,23 +367,15 @@ describe('the shell itself', () => {
 
   test('the tokenizer escapes before it wraps, and yields on IME', async () => {
     const js = await (await fetch(`${origin}/assets/app.js`)).text();
-    // Escape-then-wrap: a mismatched tag highlights wrong at worst, never injects.
     expect(js).toContain('tok-tag');
     expect(js).toContain('tok-str');
     expect(js).toContain('tok-com');
-    // While composing, the textarea shows the composition string and the layer
-    // would show uncomposed text: doubling. It hides for the duration.
     expect(js).toContain('compositionstart');
     expect(js).toContain('compositionend');
-    // The gutter follows the code pane; the highlight layer scrolls with it by
-    // sharing its cell, so only the gutter needs syncing.
     expect(js).toContain('syncGutter');
   });
 
   test('stale claims need a render behind them, in app voice', async () => {
-    // Clearing the source before anything rendered must not claim a "last good
-    // render" that never happened. And app strings are sentence-case; renderer
-    // findings keep their lowercase voice, but the shell's own words do not.
     const js = await (await fetch(`${origin}/assets/app.js`)).text();
     expect(js).toContain('!on || !lastBytes');
     expect(js).toContain('Showing the last good render (out of date).');
@@ -457,11 +387,7 @@ describe('the shell itself', () => {
   });
 
   test('the pager navigates rendered bytes without re-rendering', async () => {
-    // Fragment-only navigation: the iframe src gains #page=N on the same blob
-    // URL, so a jump can neither disturb the editor nor trigger a render.
     const js = await (await fetch(`${origin}/assets/app.js`)).text();
-    // The object URL plus fragment, not a bare '#page=' that also matches prose:
-    // a comment broke this assertion once already.
     expect(js).toMatch(/\$\{objectUrl\}#page=/);
     expect(js).toMatch(/pager\.hidden = pageCount <= 1/);
     const page = await html();
@@ -518,20 +444,15 @@ describe('the toolbar wiring holds', () => {
   });
 
   test('the preview draws the returned bytes, not a placeholder', async () => {
-    // The preview pane used to keep a text placeholder after every render. It now holds
-    // an iframe on the same object URL Download hands out, drawn by the browser's own
-    // PDF renderer -- selectable text and real pagination with no vendored renderer.
     const js = await script();
     expect(js).toContain(`document.createElement('iframe')`);
     expect(js).toContain(`frame.title = 'PDF preview'`);
     expect(js).toContain('navigator.pdfViewerEnabled');
-    // A titled frame, because an untitled one is announced as noise.
     const page = await shell();
     expect(page).not.toContain('next phase');
   });
 
   test('a new render releases the previous object URL', async () => {
-    // Held URLs pile up: each render minted one for Download and never let go.
     const js = await script();
     expect(js).toContain('URL.revokeObjectURL(objectUrl)');
   });
@@ -540,8 +461,6 @@ describe('the toolbar wiring holds', () => {
     const sheet = await css();
     expect(sheet).toMatch(/#preview iframe\s*\{[^}]*width:\s*100%/s);
     expect(sheet).toMatch(/#preview iframe\s*\{[^}]*height:\s*100%/s);
-    // The foreign toolbar cannot be styled from outside, so the frame carries
-    // a hairline edge where paper meets pane.
     expect(sheet).toMatch(/#preview iframe\s*\{[^}]*border:\s*1px solid ButtonBorder/s);
   });
 
@@ -626,8 +545,6 @@ div{height:250px;background:#c03030}</style><div>BOX</div>`;
   test('renders are ordered, so a slow one cannot overwrite a fast one', async () => {
     const js = await script();
 
-    // The guard, whatever it returns: the render that is not the newest is
-    // dropped whole, so a slow one cannot land on top of a fast one.
     expect(js).toContain('if (mine !== seq) return');
     expect(js).toContain('controller?.abort()');
   });
@@ -643,9 +560,6 @@ div{height:250px;background:#c03030}</style><div>BOX</div>`;
   });
 
   test('the severity level lands on the element the css names', async () => {
-    // The rules are `.status[data-level=...]` and `.status` is the footer. The
-    // level used to be set on the live-region output, which carries no such
-    // class, so the colour never applied: measured, an error painted rgb(0,0,0).
     const js = await script();
     expect(js).toContain('el.statusBar.dataset.level');
     expect(js).not.toMatch(/el\.status\.dataset\.level/);
@@ -659,15 +573,11 @@ div{height:250px;background:#c03030}</style><div>BOX</div>`;
   });
 
   test('the preview frame is out of the tab order', async () => {
-    // A browser PDF viewer holds its own tab stops; measured, ~16 Tabs were
-    // consumed inside the frame before the pager was reached.
     const js = await script();
     expect(js).toContain('iframe.tabIndex = -1');
   });
 
   test('the toolbar DOM order is the visual order, so focus follows paint', async () => {
-    // `order` reorders paint, not the focus sequence. The actions must precede
-    // the settings row in the DOM, and no `order` value may put them back.
     const page = await shell();
     expect(page.indexOf('class="group actions"')).toBeLessThan(
       page.indexOf('class="settings-row"'),

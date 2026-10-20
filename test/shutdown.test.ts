@@ -2,9 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-// The render-pool limits are read from the environment when server.ts is first imported,
-// so a test that needs a pool of one has to be a process of its own. Same reason the
-// numbers here are set through the child's environment rather than through options.
 const QUEUE_PROBE = `
 process.env.HTML2PDF_MAX_RENDERS = "1";
 process.env.HTML2PDF_MAX_QUEUE = "4";
@@ -36,10 +33,6 @@ process.exit(0);
 `;
 
 describe('shutting down with a render still queued', () => {
-  // stop() used to resolve the queue waiters *after* the drain, which granted each of
-  // them a slot: the render started, and then had its socket closed while the browser
-  // shut down underneath it. The client saw "The socket connection was closed
-  // unexpectedly" -- a transport failure, with no status code and no explanation.
   test('a queued render is told the server is stopping, not dropped', async () => {
     const script = join(import.meta.dir, '..', '.queue-probe.tmp.ts');
     await writeFile(script, QUEUE_PROBE, 'utf8');
@@ -60,7 +53,6 @@ describe('shutting down with a render still queued', () => {
 
       const served = results.filter((r) => r.status === 200);
       const refused = results.filter((r) => r.status === 503);
-      // A pool of one and two requests at once: exactly one ran, exactly one was told.
       expect(served.length, JSON.stringify(results)).toBe(1);
       expect(refused.length, JSON.stringify(results)).toBe(1);
       expect(results.filter((r) => r.status === 'threw')).toEqual([]);

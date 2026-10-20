@@ -262,14 +262,6 @@ describe('the gate in the render path', () => {
   });
 
   test('dropping any single object from a rendered document is caught', async () => {
-    // The gate is what stands between a repair and a shipped file, so what matters is not
-    // that verify() is thorough in general but that it refuses the damage a repair could
-    // actually do. Every object in a Chromium-produced file is reached from a dictionary
-    // or the trailer, so every one of them is a reference this check can follow.
-    //
-    // `joinParts` rewrites the cross-reference table around whatever survived, so the
-    // result parses cleanly -- it is not a file that trips over for a second, unrelated
-    // reason. Every deletion must be refused on the missing reference alone.
     const r = await render(browser, {
       html: `<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:15mm}</style>
         <h1>Report</h1><p>Body text that wraps onto more than one line.</p>`,
@@ -413,10 +405,6 @@ describe('an indirect /Length', () => {
     );
 
   test('an indirect /Length that is correct passes', () => {
-    // The old pattern captured the object number and compared it against a byte count, so
-    // this reported "object 4 declares /Length 21 but carries 23 bytes" and a second,
-    // entirely wrong failure about a dangling reference. `/Length 9 0 R` is legal, and
-    // docs/architecture-assessment.md claims every stream /Length is checked matching.
     const pdf = mk(
       [
         {
@@ -443,7 +431,6 @@ describe('an indirect /Length', () => {
   });
 
   test('a direct /Length that lies is still caught', () => {
-    // The indirect fix must not have cost the direct check.
     const r = verify(mk([], '21'));
     expect(r.ok).toBe(false);
     expect(r.failures.join(' ')).toMatch(/declares \/Length 21 but carries 23 bytes/);

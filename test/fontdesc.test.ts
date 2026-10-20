@@ -15,18 +15,6 @@ import { render } from '../src/render.ts';
 
 type TableSpec = { tag: string; data: Buffer };
 
-/**
- * Every font descriptor in the file, with null for a key it never carried.
- *
- * This used to skip any descriptor that lacked `/Flags` or `/CapHeight`, which is a
- * reasonable-looking filter and quietly hid two defects: a descriptor the repair was
- * supposed to add a key to, and a descriptor it was supposed to rewrite, both looked
- * exactly like a descriptor the repair had never touched.
- *
- * It lives up here rather than beside the pdfWith builder below because the two files'
- * fixture builders already clone against tounicode.test.ts line for line, and a reader
- * helper sitting directly after a writer helper extends the match.
- */
 type Descriptor = { flags: number | null; cap: number | null; hasProgram: boolean };
 
 function descriptors(pdf: Uint8Array): Array<Descriptor> {
@@ -165,19 +153,11 @@ describe('parseSfnt', () => {
   });
 
   test('a proportional font reports fixedPitch false, not unknown', () => {
-    // readPost used to set the field only for a monospaced font, so it could only be true.
-    // flagsFrom() could then set the FixedPitch bit but never clear it, and a descriptor
-    // wrongly claiming a proportional font was monospaced survived the repair. An explicit
-    // 0 in the font is the font saying "proportional", which is data; a short table, which
-    // still yields undefined, is the absence of data.
     const s = parseSfnt(notoSans())!;
     expect(s.fixedPitch).toBe(false);
   });
 
   test('the legacy monospaced marker counts as monospaced', () => {
-    // Old Mac fonts wrote 0xFFFFFFFF rather than 0x00010000. The field was read unsigned
-    // and that value was excluded alongside 0, so a legacy monospaced font produced
-    // `undefined` -- "no opinion" -- instead of `true`.
     const legacy = parseSfnt(
       sfnt([head(1000, 0), os2(4, 0x00c0, 536), post(0, 0xffff_ffff), cmap(3, 1)]),
     )!;
@@ -185,8 +165,6 @@ describe('parseSfnt', () => {
   });
 
   test('a short post table leaves fixedPitch unknown', () => {
-    // The guard is unchanged: without 16 bytes there is no isFixedPitch to read, and the
-    // field stays undefined so the descriptor's bit is left alone.
     const b = Buffer.alloc(12);
     b.writeInt32BE(0, 4);
     const s = parseSfnt(
@@ -294,15 +272,6 @@ describe('fixFontDescriptors', () => {
   });
 
   test('a descriptor with no CapHeight key is given one', () => {
-    // capHeightFix() treats an absent CapHeight the same as a non-positive one -- both
-    // mean the producer had nothing to say -- and returns the font's own sCapHeight.
-    // applyDescriptorFixes() then replaced /CapHeight\s+-?\d+, which matches nothing when
-    // the key was never there. The value was computed, carried through the whole repair,
-    // and thrown away at the last step, with no finding. A viewer reads the missing key as
-    // "unknown", not as "wrong".
-    //
-    // The key is stripped from the fixture rather than omitted by the builder, so the
-    // shared builder keeps the shape the other suites clone against.
     const bare = Buffer.from(
       Buffer.from(pdfWith('FontFile2', notoSans(), {}))
         .toString(LATIN1)
@@ -312,16 +281,11 @@ describe('fixFontDescriptors', () => {
     const out = fixFontDescriptors(bare);
     const fields = descriptors(out);
     expect(fields).toEqual([{ flags: 32, cap: 536, hasProgram: true }]);
-    // And it is inside the dictionary, not merely mentioned somewhere.
     const text = Buffer.from(out).toString(LATIN1);
     expect(text).toMatch(/\/Type \/FontDescriptor[^\n]*\/CapHeight 536/);
   });
 
   test('a descriptor with no Flags key is still corrected', () => {
-    // descriptorFix() read /Flags with a NaN fallback and returned undefined for anything
-    // that was not a finite number, so a descriptor missing the one key it needed to
-    // compute flags was skipped entirely -- taking the CapHeight fix with it, even though
-    // the font had supplied everything needed to repair it.
     const bare = Buffer.from(
       Buffer.from(pdfWith('FontFile2', notoSans(), {}))
         .toString(LATIN1)
@@ -334,7 +298,6 @@ describe('fixFontDescriptors', () => {
     const text = Buffer.from(out).toString(LATIN1);
     expect(text).toMatch(/\/Flags 32/);
     expect(text).toMatch(/\/CapHeight 536/);
-    // The keys around it are untouched.
     expect(text).toContain('/StemV 80');
   });
 
@@ -398,8 +361,6 @@ describe('fixFontDescriptors', () => {
 });
 
 describe('unresolvedFontMetrics', () => {
-  // Two cases, one shape: a descriptor with a negative cap and no embedded program,
-  // differing only in whether an owning font exists to name the subtype from.
   const barePdf = (fontObj: string[]) =>
     Buffer.from(
       [
@@ -422,9 +383,6 @@ describe('unresolvedFontMetrics', () => {
 
   test('a negative CapHeight without an embedded program is reported', () => {
     const pdf = barePdf([
-      // The owning font is here so the report can name its subtype: the entry used to
-      // say nothing about which kind of font it was, while the finding in render.ts
-      // told the reader every one of them was a Type 3.
       '3 0 obj',
       '<< /Type /Font /Subtype /TrueType /BaseFont /TestFace /FontDescriptor 4 0 R >>',
       'endobj',
@@ -435,8 +393,6 @@ describe('unresolvedFontMetrics', () => {
   });
 
   test('a descriptor with no owning font is reported with an unknown subtype', () => {
-    // No /FontDescriptor reference anywhere points at it, so there is no subtype to read.
-    // The report says "unknown" rather than defaulting to the common case.
     expect(unresolvedFontMetrics(barePdf([]))).toEqual([
       { fontName: 'TestFace', capHeight: -100, subtype: 'unknown' },
     ]);
@@ -475,8 +431,6 @@ describe('rendered output', () => {
     const withProgram = descriptors(r.pdf).filter((d) => d.hasProgram);
 
     expect(withProgram.length).toBeGreaterThan(0);
-    // The descriptor helper no longer drops a descriptor for lacking a key, so this
-    // asserts the key is there instead of assuming it.
     const flagged = withProgram.filter((d) => d.flags !== null);
     expect(flagged.length, 'a rendered descriptor carries no /Flags').toBe(withProgram.length);
     for (const d of flagged) {

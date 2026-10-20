@@ -5,10 +5,6 @@ import { Browser } from '../src/browser.ts';
 import { render } from '../src/render.ts';
 import { readFileSync } from 'node:fs';
 
-// The transfer bench needs a big document; it used to read one from a scratch
-// path that exists on no machine but the author's. Generated deterministically
-// instead, with BIG_DOC as an explicit override (a missing override fails loudly
-// on the caller's own path, as before).
 function bigDoc(): string {
   if (process.env.BIG_DOC) return readFileSync(process.env.BIG_DOC, 'utf8');
   return (

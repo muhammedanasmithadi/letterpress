@@ -1,21 +1,3 @@
-/**
- * Mutation fuzzing for the repair layer: corrupt PDFs in, invariants out.
- *
- * The repairs take untrusted bytes -- any file, any damage -- so each one
- * asserts the same contract against every mutant:
- *   1. it never throws;
- *   2. its output is non-empty;
- *   3. when the input verifies and the output differs from it, the output
- *      passes verify() -- a repair must never corrupt a valid file.
- * On a broken input no verifiability is required: the pipeline runs every
- * repair through repairOrKeep, which refuses non-verifying candidates.
- *
- * Deterministic: mulberry32 with an explicit seed. Corpus is three small
- * renders plus hostile statics (empty, garbage, truncation). Mutations flip,
- * cut, duplicate and splice bytes, and corrupt lengths and xref offsets.
- *
- * Run deep: `bun tools/fuzzpdf.ts --count 300 --seed 11 --out /tmp/opencode/fuzzpdf`
- */
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixFontDescriptors } from '../src/fontdesc.ts';
@@ -44,7 +26,6 @@ export const REPAIRS: Repair[] = [
 export type ExoticKind = 'linearized' | 'encrypted';
 export type ExoticFile = { kind: ExoticKind; detail: string; bytes: Uint8Array };
 
-/** Ghostscript present and executable, the exotic producer's only requirement. */
 export async function ghostscriptOk(): Promise<boolean> {
   try {
     const proc = Bun.spawn(['gs', '--version'], { stdout: 'ignore', stderr: 'ignore' });
@@ -54,16 +35,6 @@ export async function ghostscriptOk(): Promise<boolean> {
   }
 }
 
-/**
- * Producer for files the renderer never emits but the repairs meet in the wild.
- * Ghostscript rewrites each base PDF linearized (-dFastWebView) and encrypted
- * (R2/40, R3/128 with a user password and with an empty one). R4/AES revisions
- * are beyond this Ghostscript (it says so: revisions 2 and 3 only), so those
- * stay an explicit gap rather than a silent one.
- *
- * Output bytes depend on the Ghostscript version, so everything downstream
- * asserts structure, never bytes.
- */
 export async function exoticCorpus(bases: Uint8Array[], dir: string): Promise<ExoticFile[]> {
   const out: ExoticFile[] = [];
   const run = async (
@@ -124,14 +95,6 @@ export async function exoticCorpus(bases: Uint8Array[], dir: string): Promise<Ex
 
 export type ExoticResult = { file: ExoticFile; failures: string[]; notes: string[] };
 
-/**
- * Multi-revision and encrypted inputs must pass through every repair
- * byte-identical: no repair sees the whole document (linearized later revisions
- * are invisible to the splitter) or anything at all (ciphertext), so any
- * rewrite is unsound. Plaintext metadata into an encrypted file would also leak
- * title and author around encryption the owner configured -- byte-identity
- * forbids that too, with no special case.
- */
 export function fuzzExoticFile(file: ExoticFile, repairs: Repair[] = REPAIRS): ExoticResult {
   const failures: string[] = [];
   const notes: string[] = [];
@@ -167,7 +130,6 @@ export type MutantFailure = {
   input: Uint8Array;
 };
 
-/** Corrupt a buffer. Never throws: tiny inputs take the early exits. */
 export function mutate(
   r: () => number,
   pdf: Uint8Array,
@@ -202,7 +164,6 @@ export function mutate(
       };
     }
     case 4: {
-      // Corrupt lengths and offsets: the values a parser trusts.
       let s = buf.toString('latin1');
       const which = pick(3);
       if (which === 0) s = s.replace(/\/Length\s+\d+/, '/Length 99999999');
@@ -227,7 +188,6 @@ function same(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
-/** One repair against one mutant. Never throws: failures are values. */
 export function fuzzRepair(
   repair: Repair,
   pdf: Uint8Array,
@@ -244,11 +204,6 @@ export function fuzzRepair(
   if (out.length === 0 && pdf.length !== 0) {
     return { ok: false, reason: `${repair.name} returned empty output` };
   }
-  // The verifiability clause applies only when the input verifies. On a broken input
-  // every repair may fail to produce a valid file -- the pipeline runs each one through
-  // repairOrKeep, which refuses non-verifying candidates, so junk-out-on-junk-in never
-  // ships. What no layer contains is a repair corrupting a VALID file, and that is
-  // what this checks: 285 flags on one seed all traced to already-broken inputs.
   if (!same(out, pdf) && verify(pdf).ok) {
     const v = verify(out);
     if (!v.ok) {
@@ -293,8 +248,6 @@ if (import.meta.main) {
     corpus.push(new Uint8Array(0));
     corpus.push(Buffer.from('not a pdf at all, just words', 'latin1'));
     corpus.push(Buffer.from('%PDF-1.4\ntrailer\n', 'latin1'));
-    // Compressed object streams (PDF 1.5+): trySplit only reads plain xref tables,
-    // so these exercise the early-return paths, not the repairs.
     corpus.push(
       Buffer.from(
         '%PDF-1.5\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n' +
@@ -304,7 +257,6 @@ if (import.meta.main) {
         'latin1',
       ),
     );
-    // An encryption dictionary: content is unreadable without the key.
     corpus.push(
       Buffer.from(
         '%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n' +

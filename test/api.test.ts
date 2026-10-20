@@ -63,8 +63,6 @@ test('omitting pageRanges renders every page', async () => {
 }, 60_000);
 
 test('the stream transfer produces bytes identical to base64', async () => {
-  // Pinned clock: the comparison is about the transfer, not wall-clock time, and every
-  // file carries a compressed XMP packet whose bytes breathe with the timestamp.
   const previous = process.env.SOURCE_DATE_EPOCH;
   process.env.SOURCE_DATE_EPOCH = '1700000000';
   try {

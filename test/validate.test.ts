@@ -5,16 +5,6 @@ import { mcidCensus, validate } from '../src/validate.ts';
 import { assemblePdf, encryptedFixture } from './fixtures.ts';
 import { launchTestBrowser, closeTestBrowser } from './browser.ts';
 
-/**
- * A pdf whose structure tree and page stream agree or deliberately do not.
- *
- * `stream` is what the page draws, `named` is what the structure tree points
- * at, and the two disagreeing is the whole subject: an id in only one of them
- * is unreachable from one side or the other.
- *
- * The streams are plain rather than flate on purpose. That is legal, and it is
- * what caught a real bug -- see the note in `pageContent`.
- */
 function fixture(opts: { stream: number[]; named: number[]; tagged?: boolean }): Uint8Array {
   const content = opts.stream
     .map((m) => `/P << /MCID ${m} /S /P >> BDC BT (x) Tj ET EMC`)
@@ -52,8 +42,6 @@ describe('checking a pdf that already exists', () => {
   });
 
   test('a block in the stream that no structure element names is reported', () => {
-    // The text draws. A reader navigating by structure walks past all of it,
-    // because there is nothing to walk to.
     const pdf = fixture({ stream: [0, 5], named: [0] });
     const f = validate(pdf).findings.find((x) => x.code === 'structure-orphan-mcid');
     expect(f).toBeDefined();
@@ -62,13 +50,10 @@ describe('checking a pdf that already exists', () => {
   });
 
   test('a block the tree names that is not in any stream is reported', () => {
-    // The opposite, and worse for a reader: the document says there is
-    // something there, and navigating to it lands on nothing.
     const pdf = fixture({ stream: [0], named: [0, 7] });
     const f = validate(pdf).findings.find((x) => x.code === 'structure-ghost-mcid');
     expect(f).toBeDefined();
     expect(f!.message).toContain('7');
-    // The role is named, so the finding says which node is stranded.
     expect(f!.message).toContain('Document');
   });
 
@@ -77,7 +62,6 @@ describe('checking a pdf that already exists', () => {
     const found = validate(pdf);
     expect(codes(found)).toEqual(['untagged-document']);
     expect(found.findings[0]!.severity).toBe('info');
-    // Info does not make a file wrong, so the exit code stays 0.
     expect(found.ok).toBe(true);
   });
 
@@ -88,8 +72,6 @@ describe('checking a pdf that already exists', () => {
   });
 
   test('an encrypted file says so instead of reporting what it cannot read', () => {
-    // Nothing inside can be decompressed without the password, so every other
-    // check would be reporting its own inability as a property of the file.
     const found = validate(encryptedFixture());
     expect(codes(found)).toEqual(['encrypted-document']);
     expect(found.ok).toBe(false);
@@ -104,8 +86,6 @@ describe('checking a pdf that already exists', () => {
   });
 
   test('a structure tree that points at itself does not hang', () => {
-    // The tree comes from a file, and a file can contain an element that is its
-    // own ancestor. Without the guard this recurses until the stack gives out.
     const objs = assemblePdf([
       '<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 4 0 R >>',
       '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
@@ -117,9 +97,6 @@ describe('checking a pdf that already exists', () => {
   });
 
   test('a pdf this tool rendered passes its own checks', async () => {
-    // The point of reusing the render's own checks rather than writing a second
-    // set: a file letterpress produced must never come back from validate
-    // saying something the render did not say.
     const r = await render(browser, {
       html: '<html lang="en"><body><h1>A</h1><p>text</p><ul><li>x</li></ul></body></html>',
     });

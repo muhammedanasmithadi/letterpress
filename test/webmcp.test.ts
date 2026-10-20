@@ -1,16 +1,3 @@
-/**
- * The tools the viewer page offers to an agent, over WebMCP.
- *
- * The measurement notes are in `viewer/webmcp.js`, and they are the reason
- * this file looks the way it does: the API is `document.modelContext`, it does
- * not exist without a Chromium flag, it does not exist on a page that is not
- * a secure context, and `executeTool` takes its arguments as a JSON string
- * and answers with one.
- *
- * Every test here runs against a real browser with the flag on, loading the
- * real page over the real loopback server. There is no mock of `modelContext`
- * to be wrong in a way the real one is not.
- */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 
 import { closeTestBrowser, launchTestBrowser, type TestBrowser } from './browser.ts';
@@ -26,8 +13,6 @@ beforeAll(async () => {
   s = await launchTestServer();
   origin = serverOrigin(s);
   t = await launchTestBrowser('webmcp', ['--enable-blink-features=WebMCP']);
-  // One tab, opened once. A tab per test would open a new page each time, and
-  // each page registers its tools, and the browser accumulates them.
   tab = await t.browser.newTab();
   await tab.send('Page.enable');
   await tab.send('Runtime.enable');
@@ -40,7 +25,6 @@ afterAll(async () => {
   await s?.stop();
 }, 30_000);
 
-/** Evaluate in the page and return the value. */
 async function evaluate(expression: string): Promise<unknown> {
   const r = await tab.send('Runtime.evaluate', {
     expression: `(async () => { ${expression} })()`,
@@ -55,7 +39,6 @@ async function evaluate(expression: string): Promise<unknown> {
   return r?.result?.value;
 }
 
-/** Call one of the page's tools and hand back its text. */
 async function callTool(name: string, args: unknown): Promise<string> {
   return (await evaluate(
     `const t = await document.modelContext.getTools();
@@ -79,9 +62,6 @@ describe('the page offers tools to an agent', () => {
          });`,
       )) as string,
     ) as { doc: string; nav: string; proto: string[] | null };
-    // The navigator spelling is undefined here. The document spelling is the
-    // one that works, and a test that used the other would have measured
-    // nothing at all.
     expect(shape.doc).toBe('object');
     expect(shape.nav).toBe('undefined');
     expect(shape.proto).toContain('registerTool');
@@ -99,8 +79,6 @@ describe('the page offers tools to an agent', () => {
     expect(names).toEqual(['list_findings', 'render_html']);
     for (const tool of tools) {
       expect(tool.description.length).toBeGreaterThan(40);
-      // The schema comes back as a string, which is the one thing about this
-      // API that is easy to get wrong: an object here is not a schema.
       const schema = JSON.parse(tool.schema) as { type: string };
       expect(schema.type).toBe('object');
     }
@@ -134,10 +112,6 @@ describe('the page offers tools to an agent', () => {
   }, 120_000);
 
   test('the page shows what the agent rendered, so the human sees the same thing', async () => {
-    // The point of going through the page's own render rather than fetching
-    // `/render` a second time: the preview beside the editor has to be the
-    // document the agent was told about. A tool that rendered behind the
-    // page's back would leave the human looking at the old document.
     await callTool('render_html', {
       html: '<!doctype html><html lang="en"><head><style>@page{size:A5;margin:10mm}</style></head><body><h1>Agent</h1></body></html>',
     });
@@ -155,7 +129,6 @@ describe('the page offers tools to an agent', () => {
     };
     expect(page.metrics).toContain('1 page');
     expect(page.status).toContain('Rendered');
-    // The source box is the human's, and the agent does not overwrite it.
     expect(page.source).not.toContain('Agent');
   }, 120_000);
 

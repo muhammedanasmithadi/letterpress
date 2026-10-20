@@ -12,7 +12,6 @@ let browser: Browser;
 let profile: string;
 let dir: string;
 
-/** Render expecting failure; the thrown message is the assertion subject. */
 async function renderError(req: RenderRequest): Promise<string> {
   try {
     await render(browser, req);
@@ -101,9 +100,6 @@ describe('input that is not html', () => {
   });
 
   test('a binary magic header without a NUL byte is refused', async () => {
-    // A minimal PNG signature has no NUL byte in its first eight bytes, so the
-    // old UTF-8 text decode turned every byte into U+FFFD and the magic regex
-    // could never match. Detection must run on the raw bytes.
     const p = join(dir, 'header-only.png');
     await writeFile(p, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
     const message = await renderError({ path: p });
@@ -198,10 +194,6 @@ describe('numeric flags are validated', () => {
 
 describe('an error finding is not success', () => {
   test('an unrotatable --landscape exits non-zero', async () => {
-    // `auto` names no sheet, so there is no portrait spelling to transpose and no paper the
-    // engine could rotate without inventing one. This is the only case left where
-    // --landscape is reported as having had no effect: a document that names its own sheet
-    // has that sheet transposed now, and exits clean.
     const p = join(dir, 'psize.html');
     await writeFile(p, `<!doctype html><style>@page{size:auto;margin:8mm}</style><p>x</p>`);
 
@@ -231,9 +223,6 @@ describe('an error finding is not success', () => {
   }, 60_000);
 
   test('--landscape under a declared page exits 0, and the paper is wide', async () => {
-    // Used to exit 1 with `--landscape had no effect`. Chromium ignores its landscape
-    // parameter whenever preferCSSPageSize is set, which is every document that declares
-    // its own page, so the flag was silently dropped. The declaration is transposed now.
     const p = join(dir, 'declared.html');
     const out = join(dir, 'declared.pdf');
     await writeFile(p, `<!doctype html><style>@page{size:a5;margin:8mm}</style><p>x</p>`);
@@ -249,8 +238,6 @@ describe('an error finding is not success', () => {
     const finding = parsed.findings.find((f) => f.code === 'orientation-overridden')!;
     expect(finding.severity).toBe('info');
 
-    // A5 portrait is 148mm wide and 210mm high, so a transposed sheet is taller than wide
-    // turned the other way: read from the file itself, not from what the flag reported.
     const bytes = new Uint8Array(await Bun.file(out).arrayBuffer());
     const box = new TextDecoder('latin1').decode(bytes).match(/MediaBox\s*\[([^\]]*)\]/g)![0]!;
     const [x0, y0, x1, y1] = [...box.matchAll(/[\d.]+/g)].map((m) => Number(m[0]));
@@ -354,7 +341,6 @@ describe('invoice data is checked before it is printed', () => {
     return p;
   };
 
-  /** The data file written and the CLI run against it; the caller asserts the outcome. */
   const invoiceResult = async (name: string, extra: Record<string, unknown> = {}) => {
     const p = await write(name, extra);
     return cli(['-t', 'invoice', '-d', p, '-o', join(dir, 'o.pdf')]);

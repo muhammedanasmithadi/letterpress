@@ -1,10 +1,3 @@
-/**
- * A server for a test file, torn down with the file.
- *
- * The launch boilerplate (import, handle type, origin URL, start, stop) sat
- * identical in every server-driven suite, and the duplication gate counts it
- * once per file. Same reason test/browser.ts exists for browsers.
- */
 import { startServer } from '../src/server.ts';
 
 export type TestServer = Awaited<ReturnType<typeof startServer>>;

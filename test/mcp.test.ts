@@ -1,15 +1,3 @@
-/**
- * The MCP server, exercised the way a client would.
- *
- * Two eras of the protocol are in play and the difference between them is
- * small, which is exactly why it needs a test: a result with `resultType` in
- * it is correct for one client and wrong for the other, and the only way to
- * know which is which is to look at what the request carried.
- *
- * The render in here is a real render, through a real browser, because the
- * whole point of the server is that it makes a PDF. A test that stubbed the
- * render would pass whatever the protocol did.
- */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -36,12 +24,10 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true }).catch(() => {});
 }, 20_000);
 
-/** Send one request and get the reply, or null for a notification. */
 async function send(msg: Record<string, unknown>) {
   return handle(session, msg as never);
 }
 
-/** A modern request, with the `_meta` the current revision requires. */
 function modern(id: number, method: string, params: Record<string, unknown> = {}) {
   const meta = (params['_meta'] ?? {}) as Record<string, unknown>;
   return send({
@@ -52,12 +38,6 @@ function modern(id: number, method: string, params: Record<string, unknown> = {}
   });
 }
 
-/**
- * The result of a reply, or a thrown error naming what came back.
- *
- * A failed assertion inside a cast is unreadable -- the type error points at
- * the cast, not at the protocol. This says what the server actually answered.
- */
 function resultOf(reply: unknown): Record<string, unknown> {
   const r = reply as { result?: Record<string, unknown>; error?: unknown };
   if (r.error !== undefined)
@@ -65,7 +45,6 @@ function resultOf(reply: unknown): Record<string, unknown> {
   return r.result ?? {};
 }
 
-/** A tool result, in the shape the tools return. */
 function toolResult(reply: unknown) {
   return resultOf(reply) as unknown as {
     isError?: boolean;
@@ -74,7 +53,6 @@ function toolResult(reply: unknown) {
   };
 }
 
-/** The error of a reply. */
 function errorOf(reply: unknown): { code: number; message: string; data?: unknown } {
   const r = reply as { error?: { code: number; message: string; data?: unknown } };
   if (r.error === undefined)
@@ -82,7 +60,6 @@ function errorOf(reply: unknown): { code: number; message: string; data?: unknow
   return r.error;
 }
 
-/** A legacy request, which carries no `_meta` at all. */
 function legacy(id: number, method: string, params: Record<string, unknown> = {}) {
   return send({ jsonrpc: '2.0', id, method, params });
 }
@@ -105,10 +82,6 @@ describe('the handshake', () => {
   });
 
   test('a version this server does not speak is answered with one it does', async () => {
-    // The spec says: respond with another version you support, and it should
-    // be the latest. The client then either uses it or disconnects, which is
-    // the correct outcome -- a client that asked for a revision this server
-    // cannot speak gets told so rather than left waiting.
     const reply = await legacy(1, 'initialize', { protocolVersion: '1999-01-01' });
     const result = resultOf(reply) as unknown as { protocolVersion: string };
     expect(LEGACY_VERSIONS).toContain(result.protocolVersion);
@@ -179,9 +152,6 @@ describe('the tools', () => {
   });
 
   test('a tool result follows the era of the request that asked for it', async () => {
-    // The same call, two shapes. A modern client expects `resultType` on every
-    // result and fails the schema without it; a legacy client was written
-    // before the field existed and gets a field it never asked for.
     const modernReply = await modern(1, 'tools/call', {
       name: 'list_findings',
       arguments: { severity: 'error' },
@@ -193,8 +163,6 @@ describe('the tools', () => {
       arguments: { severity: 'error' },
     });
     expect(resultOf(legacyReply)).not.toHaveProperty('resultType');
-    // The content itself is the same either way, so a client that only reads
-    // `content` works against both.
     const modernContent = (resultOf(modernReply)['content'] ?? []) as Array<{ text: string }>;
     const legacyContent = (resultOf(legacyReply)['content'] ?? []) as Array<{ text: string }>;
     expect(modernContent[0]!.text).toBe(legacyContent[0]!.text);
@@ -325,10 +293,6 @@ describe('rendering through the server', () => {
 });
 
 describe('the server as a process', () => {
-  // The in-process tests above call `handle` directly. This one runs the
-  // command the way a client does -- a subprocess, newline-delimited messages
-  // on its stdin, replies on its stdout -- because the transport is half the
-  // protocol and the part a unit test of the handler cannot see.
   const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
 
   test('it answers over stdin and stdout, and nothing else reaches stdout', async () => {

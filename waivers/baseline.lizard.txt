@@ -1,3 +1,4 @@
+src/cli.ts::main
 src/render.ts::precedenceFindings
 src/selection.ts::glyphsOf
 src/selection.ts::textFlow

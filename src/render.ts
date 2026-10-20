@@ -76,6 +76,8 @@ export type RenderRequest = {
   allowNetwork?: boolean;
 
   root?: string;
+  noScript?: boolean;
+  auth?: { username: string; password: string };
   printBackground?: boolean;
   settleMs?: number;
   timeoutMs?: number;
@@ -710,7 +712,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
   const timeoutMs = req.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const tmp = process.env.TMPDIR ?? '/tmp';
   const dir = `${tmp}/letterpress-${process.pid}-${workDirCounter++}`;
-  const findings: Finding[] = [];
+  const findings: Finding[] = [...noScriptFindings(req)];
   const blocked: string[] = [];
 
   const failedSubresources: { kind: string; url: string }[] = [];
@@ -739,6 +741,9 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
     try {
       await tab.send('Page.enable');
       await tab.send('Runtime.enable');
+      if (req.noScript) {
+        await tab.send('Emulation.setScriptExecutionDisabled', { value: true });
+      }
       await tab.send('Network.enable');
       void enableFontDomains(tab);
       // A modal dialog blocks the renderer until something answers it. Measured
@@ -755,6 +760,7 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         srcUrl,
         blocked,
         failedSubresources,
+        auth: req.auth,
       });
 
       await loadDocument({
@@ -1557,6 +1563,20 @@ function scriptErrorFindings(errors: string[]): Finding[] {
   ];
 }
 
+function noScriptFindings(req: RenderRequest): Finding[] {
+  if (!req.noScript) return [];
+  return [
+    {
+      code: 'scripts-disabled',
+      severity: 'warn',
+      message:
+        'scripts did not run: --no-script was given, so any document logic that executes on load ' +
+        'never ran and the PDF reflects the page without it. Findings that depend on a running ' +
+        'script (js-error, and anything the document computes at load time) are absent for that reason.',
+    },
+  ];
+}
+
 /**
  * Chromium's own icon request.
  *
@@ -1583,14 +1603,16 @@ async function watchNetwork(
     srcUrl: string;
     blocked: string[];
     failedSubresources: { kind: string; url: string }[];
+    auth?: { username: string; password: string };
   },
 ): Promise<NetworkWatch> {
-  const { loopback, allowNetwork, isRemote, srcUrl, blocked, failedSubresources } = opts;
+  const { loopback, allowNetwork, isRemote, srcUrl, blocked, failedSubresources, auth } = opts;
   let mainStatus: number | undefined;
   let netError: string | undefined;
 
   await tab.send('Fetch.enable', {
     patterns: [{ urlPattern: 'http://*' }, { urlPattern: 'https://*' }],
+    handleAuthRequests: auth !== undefined,
   });
   tab.on('Fetch.requestPaused', (p) => {
     const url = String(p.request?.url ?? '');
@@ -1607,6 +1629,21 @@ async function watchNetwork(
         }));
     void proceed.catch(() => {});
   });
+
+  if (auth) {
+    tab.on('Fetch.authRequired', (p) => {
+      void tab
+        .send('Fetch.continueWithAuth', {
+          requestId: p.requestId,
+          authChallengeResponse: {
+            response: 'ProvideCredentials',
+            username: auth.username,
+            password: auth.password,
+          },
+        })
+        .catch(() => {});
+    });
+  }
 
   if (isRemote) {
     tab.on('Network.responseReceived', (p) => {

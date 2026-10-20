@@ -507,6 +507,33 @@ describe('--probe', () => {
   }, 60_000);
 });
 
+describe('--no-script', () => {
+  test('document scripts do not run, but the tool still reports on the page', async () => {
+    const src = join(dir, 'noscript.html');
+    await writeFile(
+      src,
+      `<!doctype html><html lang="en"><head><style>@page{size:A4;margin:12mm}body{font:12pt serif}</style></head>` +
+        `<body><p>static</p><script>document.body.insertAdjacentHTML('beforeend','<p>JS_RAN</p>')</script></body></html>`,
+      'utf8',
+    );
+    const out = join(dir, 'noscript.pdf');
+    const { code, stdout } = await run(['-o', out, '-q', src, '--no-script', '--json']);
+    expect(code).toBe(0);
+    const got = JSON.parse(stdout) as { findings: Array<{ code: string }> };
+    expect(got.findings.map((f) => f.code)).toContain('scripts-disabled');
+    const text = await pdfText(await bytesOf(out));
+    expect(text).toContain('static');
+    expect(text).not.toContain('JS_RAN');
+  }, 120_000);
+
+  test('a missing colon in --auth is a usage error', async () => {
+    const src = join(dir, 'noscript.html');
+    const { code, stderr } = await run(['--auth', 'no-colon', src]);
+    expect(code).toBe(2);
+    expect(stderr).toContain('--auth takes user:password');
+  }, 60_000);
+});
+
 describe('--before-print', () => {
   test('the expression runs in the page before printing', async () => {
     const src = join(dir, 'beforeprint.html');

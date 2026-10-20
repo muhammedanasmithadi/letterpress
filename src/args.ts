@@ -13,7 +13,9 @@ export type Options = {
   margin?: string;
   allowNetwork: boolean;
   root?: string;
+  auth?: string;
   background: boolean;
+  noScript: boolean;
   settleMs: number;
   timeoutMs: number;
   maxImagePpi: number;
@@ -130,8 +132,22 @@ function setRoot(opts: Options, argv: string[], i: number, a: string): Step {
   return consumedValue();
 }
 
+function setAuth(opts: Options, argv: string[], i: number, a: string): Step {
+  const v = valueAfter(argv, i, a);
+  if (!v.includes(':')) {
+    return { kind: 'error', error: '--auth takes user:password' };
+  }
+  opts.auth = v;
+  return consumedValue();
+}
+
 function setNoBackground(opts: Options): Step {
   opts.background = false;
+  return consumedFlag();
+}
+
+function setNoScript(opts: Options): Step {
+  opts.noScript = true;
   return consumedFlag();
 }
 
@@ -271,7 +287,9 @@ const HANDLERS: Map<string, Handler> = new Map([
   ['--margin', setMargin],
   ['--allow-network', setNetwork],
   ['--root', setRoot],
+  ['--auth', setAuth],
   ['--no-background', setNoBackground],
+  ['--no-script', setNoScript],
   ['--settle', setSettle],
   ['--max-image-ppi', setMaxImagePpi],
   ['--timeout', setRenderTimeout],
@@ -356,6 +374,7 @@ export function tokenize(argv: string[]): {
     landscape: false,
     allowNetwork: false,
     background: true,
+    noScript: false,
     settleMs: 0,
     timeoutMs: 30_000,
     maxImagePpi: 300,

@@ -51,7 +51,14 @@ options
                           (default: the document's own directory). Needed when the
                           document sits in a subdirectory and references ../assets --
                           as most sites do
+      --auth <user:pass>  credentials for HTTP Basic authentication when the
+                          document or its assets require them. Also read from
+                          the LETTERPRESS_AUTH environment variable
       --no-background     omit background graphics
+      --no-script         do not run the document's JavaScript. the tool's own
+                          measurements still run, so findings about the page
+                          still report; js-error will not fire because no
+                          script ran
       --max-image-ppi <n>  downsample images above this resolution (default
                           300, the print convention; 0 disables)
       --author <name>      pdf author. chromium drops the document's own
@@ -184,6 +191,20 @@ function killBrowserByProfile(profile: string): void {
  * free to reference names that do not exist there. That constraint is why the
  * flag names probes instead of accepting an expression.
  */
+/**
+ * Parse `user:password` into credentials, or undefined when nothing was given.
+ *
+ * A colon is required so a typo does not silently become a username with an
+ * empty password. The password may itself contain colons, so only the first
+ * colon separates.
+ */
+function parseAuth(raw: string | undefined): { username: string; password: string } | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const i = raw.indexOf(':');
+  if (i < 0) throw new UsageError('--auth takes user:password');
+  return { username: raw.slice(0, i), password: raw.slice(i + 1) };
+}
+
 function probeFor(name: ProbeName | undefined): (() => unknown) | undefined {
   // The function itself, never a wrapper around it. `() => wideGaps()` is a
   // `ReferenceError` in the page -- the arrow is shipped by toString and the
@@ -352,6 +373,15 @@ export async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
+  // Validate --auth early so a bad value is a usage error, not a render failure.
+  let auth: { username: string; password: string } | undefined;
+  try {
+    auth = parseAuth(opts.auth ?? process.env.LETTERPRESS_AUTH);
+  } catch (e) {
+    process.stderr.write(`${e instanceof Error ? e.message : e}\n\n${USAGE}`);
+    return 2;
+  }
+
   const outPath = opts.out ?? (opts.template ? `${opts.template}.pdf` : defaultOut(opts.input!));
   const profile = await mkdtemp(join(tmpdir(), 'letterpress-cli-'));
   let browser: Browser | undefined;
@@ -372,6 +402,7 @@ export async function main(argv: string[]): Promise<number> {
       margin: opts.margin,
       allowNetwork: opts.allowNetwork,
       printBackground: opts.background,
+      noScript: opts.noScript,
       settleMs: opts.settleMs,
       timeoutMs: opts.timeoutMs,
       maxImagePpi: opts.maxImagePpi || undefined,
@@ -380,6 +411,7 @@ export async function main(argv: string[]): Promise<number> {
       subject: opts.subject,
       keywords: opts.keywords,
       beforePrint: opts.beforePrint,
+      auth,
       pageRanges: opts.pageRanges,
       pageProbe: probeFor(opts.probe),
     });

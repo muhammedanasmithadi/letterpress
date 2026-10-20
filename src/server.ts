@@ -55,6 +55,22 @@ const STOPPING_MESSAGE =
   'the server is shutting down. this render was still queued and was never started; ' +
   'retry it against the new instance.';
 
+function normalizeAuth(raw: unknown): { username: string; password: string } | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === 'string') {
+    const i = raw.indexOf(':');
+    if (i < 0) return undefined;
+    return { username: raw.slice(0, i), password: raw.slice(i + 1) };
+  }
+  if (typeof raw === 'object') {
+    const r = raw as { username?: unknown; password?: unknown };
+    if (typeof r.username === 'string' && typeof r.password === 'string') {
+      return { username: r.username, password: r.password };
+    }
+  }
+  return undefined;
+}
+
 /**
  * Thrown into a queued render when the server stops before it could be given a slot.
  *
@@ -97,6 +113,7 @@ export type RenderBody = {
   author?: string;
   subject?: string;
   keywords?: string;
+  auth?: string | { username: string; password: string };
 };
 
 function originAllowed(request: Request, port: number): boolean {
@@ -579,6 +596,7 @@ export async function startServer(opts: ServerOptions = {}) {
                 typeof body.subject === 'string' ? body.subject.trim() || undefined : undefined,
               keywords:
                 typeof body.keywords === 'string' ? body.keywords.trim() || undefined : undefined,
+              auth: normalizeAuth(body.auth),
               pageRanges: body.pageRanges,
               maxImagePpi: clamp(body.maxImagePpi, 1200, undefined),
               settleMs: clamp(body.settleMs, MAX_SETTLE_MS, undefined),

@@ -683,3 +683,19 @@ installs the families they name — `fonts-dejavu-core`, `fonts-liberation2`,
 `fonts-noto-core` — and prints what the runner actually resolved. See
 `docs/measurements.md` for the numbers and for two Chromium lifecycle traps this
 codebase works around.
+
+### The documents
+
+The code carries no comments, so the reasoning lives here.
+
+| document                                                      | what it is about                                                  |
+| ------------------------------------------------------------- | ----------------------------------------------------------------- |
+| [selection.md](docs/selection.md)                             | how a reader groups text, and what breaks a selection into pieces |
+| [pdf-structure.md](docs/pdf-structure.md)                     | how a PDF is read, and what each repair changes                   |
+| [render-pipeline.md](docs/render-pipeline.md)                 | how a document becomes a PDF, and the paper rules                 |
+| [commands.md](docs/commands.md)                               | the flags, the HTTP API, and what `validate` looks for            |
+| [viewer.md](docs/viewer.md)                                   | the browser shell, and why each control behaves as it does        |
+| [testing.md](docs/testing.md)                                 | what the suite pins, and why each assertion is shaped that way    |
+| [measurements.md](docs/measurements.md)                       | every number measured on this machine                             |
+| [guidelines.md](docs/guidelines.md)                           | which coding-guideline rules are enforced here, and which are not |
+| [architecture-assessment.md](docs/architecture-assessment.md) | what this renderer does not do, and why                           |

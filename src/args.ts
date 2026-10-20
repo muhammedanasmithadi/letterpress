@@ -20,6 +20,7 @@ export type Options = {
   author?: string;
   subject?: string;
   keywords?: string;
+  beforePrint?: string;
   pageRanges?: string;
   probe?: ProbeName;
   json: boolean;
@@ -184,6 +185,13 @@ function setKeywords(opts: Options, argv: string[], i: number, a: string): Step 
   return consumedValue();
 }
 
+function setBeforePrint(opts: Options, argv: string[], i: number, a: string): Step {
+  opts.beforePrint = valueAfter(argv, i, a);
+  if (!opts.beforePrint.trim())
+    return { kind: 'error', error: '--before-print needs an expression' };
+  return consumedValue();
+}
+
 /**
  * `--page-ranges`, checked here rather than left to fail inside the engine.
  *
@@ -196,7 +204,8 @@ function setPageRanges(opts: Options, argv: string[], i: number, a: string): Ste
   const v = valueAfter(argv, i, a);
   // A comma-separated list of single pages and ranges: `1`, `1-3`, `1,4-6`.
   const part = /^[1-9]\d*(-[1-9]\d*)?$/;
-  const bad = v.split(',').filter((p) => !part.test(p.trim()));
+  const parts = v.split(',').map((p) => p.trim());
+  const bad = parts.filter((p) => !part.test(p));
   if (bad.length > 0) {
     return {
       kind: 'error',
@@ -205,7 +214,7 @@ function setPageRanges(opts: Options, argv: string[], i: number, a: string): Ste
         `"1,4-6"; ${bad.map((b) => `"${b}"`).join(', ')} ${bad.length === 1 ? 'is' : 'are'} not one`,
     };
   }
-  opts.pageRanges = v;
+  opts.pageRanges = parts.join(',');
   return consumedValue();
 }
 
@@ -269,6 +278,7 @@ const HANDLERS: Map<string, Handler> = new Map([
   ['--author', setAuthor],
   ['--subject', setSubject],
   ['--keywords', setKeywords],
+  ['--before-print', setBeforePrint],
   ['--page-ranges', setPageRanges],
   ['--probe', setProbe],
   ['--json', setJson],

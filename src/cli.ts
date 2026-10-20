@@ -58,6 +58,9 @@ options
                           <meta name="author">, so pass it here to keep it
       --subject <text>     pdf subject
       --keywords <text>    pdf keywords
+      --before-print <js>  run this JavaScript in the page after layout and before
+                          printing; use it to set state the document computes at
+                          print time
       --page-ranges <spec> print only these pages: 1-3, or 1,4-6. counters keep
                           counting the whole document, so page numbers in a footer
                           stay the numbers the reader sees, not 1,2,3 of the extract
@@ -376,6 +379,7 @@ export async function main(argv: string[]): Promise<number> {
       author: opts.author,
       subject: opts.subject,
       keywords: opts.keywords,
+      beforePrint: opts.beforePrint,
       pageRanges: opts.pageRanges,
       pageProbe: probeFor(opts.probe),
     });

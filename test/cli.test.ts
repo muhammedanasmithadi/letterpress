@@ -507,6 +507,37 @@ describe('--probe', () => {
   }, 60_000);
 });
 
+describe('--before-print', () => {
+  test('the expression runs in the page before printing', async () => {
+    const src = join(dir, 'beforeprint.html');
+    await writeFile(
+      src,
+      `<!doctype html><html lang="en"><head><style>@page{size:A4;margin:12mm}body{font:12pt serif}</style></head>` +
+        `<body><p>before</p></body></html>`,
+      'utf8',
+    );
+    const out = join(dir, 'beforeprint.pdf');
+    const { code } = await run([
+      '-o',
+      out,
+      '-q',
+      src,
+      '--before-print',
+      "document.body.insertAdjacentHTML('beforeend','<p>PRINTED</p>')",
+    ]);
+    expect(code).toBe(0);
+    const text = await pdfText(await bytesOf(out));
+    expect(text).toContain('PRINTED');
+  }, 120_000);
+
+  test('an empty expression is a usage error', async () => {
+    const src = join(dir, 'beforeprint.html');
+    const { code, stderr } = await run(['--before-print', '   ', src]);
+    expect(code).toBe(2);
+    expect(stderr).toContain('--before-print needs an expression');
+  }, 60_000);
+});
+
 describe('--page-ranges', () => {
   // The engine and the HTTP API have had this since before the cli did; the
   // flag was the missing piece, so these pin the parts a caller cannot see from

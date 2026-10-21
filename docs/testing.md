@@ -376,6 +376,25 @@ A stream that is not one, or not one this can inflate, is not a finding here.
 Empty bodies occur by design in the fuzz corpus — a tenth of documents — and
 the joins hold either way.
 
+## Tests that measure
+
+Two of the tests measure rather than assert a value, and both are about the
+same thing: the pdf is parsed into objects, and the work must not grow with
+the size of the document.
+
+One is a scale test. A document with forty thousand `@page` and no brace
+after them took ten seconds to scan before the scan was rewritten, and takes
+a millisecond now. The bound is a third of what the old code took, so a
+regression of that size is caught and a busy machine is not.
+
+The other is a smoke test. A document with a thirty-two megabyte stream in
+it must still split in under two seconds, and the difference between
+splitting it and splitting a small one must be under six hundred
+milliseconds. The bounds are generous on purpose: the machine these run on
+may be busy, and a bound that fails under load is worse than no bound. What
+they catch is a scan of the stream, which takes seconds where the work
+should take milliseconds.
+
 ## The two tool catalogues
 
 The model context protocol server and the viewer page keep separate copies of

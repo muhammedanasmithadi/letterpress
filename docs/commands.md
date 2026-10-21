@@ -189,8 +189,9 @@ come before any of them: the host and the origin, refused before the body is
 read, so a request from another web page is turned away without its bytes
 being taken in.
 
-The dispatcher was one function of two hundred and forty lines, and a reader
-could not see where one route ended and the next began. It is fifty now.
+The dispatcher was one function of two hundred and forty lines of code, and a
+reader could not see where one route ended and the next began. It is fifty-one
+now, and it is no longer on the complexity list.
 
 ## The HTTP API
 

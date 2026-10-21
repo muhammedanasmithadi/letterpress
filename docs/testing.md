@@ -376,6 +376,14 @@ A stream that is not one, or not one this can inflate, is not a finding here.
 Empty bodies occur by design in the fuzz corpus — a tenth of documents — and
 the joins hold either way.
 
+## Cleaning up after a run
+
+`tools/cleanup.sh` kills the browsers and the servers a run leaves behind,
+and it matches them on the profile directory rather than on the binary, so
+the user's own chromium is never touched. The number it prints at the end
+counts the same way: a browser that is not ours is not counted, so the
+number means something.
+
 ## Tests that measure
 
 Two of the tests measure rather than assert a value, and both are about the

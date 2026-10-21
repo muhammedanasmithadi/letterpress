@@ -40,5 +40,5 @@ fi
 
 sleep 1
 
-left=$(ps -eo cmd 2>/dev/null | grep "chromium-browser/chromium" | grep -vE "grep|pgrep|cleanup.sh" | wc -l)
+left=$(ps -eo cmd 2>/dev/null | grep "chromium-browser/chromium" | grep "letterpress" | grep -vE "grep|pgrep|cleanup.sh" | wc -l)
 echo "letterpress browsers still running: $left"

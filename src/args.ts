@@ -269,6 +269,29 @@ const HANDLERS: Map<string, Handler> = new Map([
   ['--quiet', setQuiet],
 ]);
 
+function expandEquals(argv: string[]): string[] {
+  const out: string[] = [];
+  for (const a of argv) {
+    if (a.startsWith('--')) {
+      const eq = a.indexOf('=');
+      if (eq > 2 && HANDLERS.has(a.slice(0, eq))) {
+        out.push(a.slice(0, eq), a.slice(eq + 1));
+        continue;
+      }
+    }
+    out.push(a);
+  }
+  return out;
+}
+
+export function flagsUsed(argv: string[]): string[] {
+  const used: string[] = [];
+  for (const a of expandEquals(argv)) {
+    if (HANDLERS.has(a)) used.push(a);
+  }
+  return used;
+}
+
 export function flagNames(): string[] {
   return [...HANDLERS.keys()].filter((k) => k.startsWith('--'));
 }
@@ -292,10 +315,10 @@ function resolveInput(opts: Options, rest: string[]): string | undefined {
 }
 
 function finish(opts: Options, rest: string[]): ParseResult {
+  if (opts.help || opts.listTemplates) return { opts };
   if (rest.length > 1) {
     return { opts, error: `expected one input, got ${rest.length}: ${rest.join(', ')}` };
   }
-  if (opts.help || opts.listTemplates) return { opts };
   if (opts.data && !opts.template) return { opts, error: '--data needs --template' };
   if (opts.template && !opts.data) return { opts, error: '--template needs --data' };
   const inputError = resolveInput(opts, rest);
@@ -318,8 +341,11 @@ export function parseArgs(argv: string[]): ParseResult {
 export function tokenize(argv: string[]): {
   opts: Options;
   rest: string[];
+  flags: string[];
   error?: string;
 } {
+  argv = expandEquals(argv);
+  const flags: string[] = [];
   const opts: Options = {
     landscape: false,
     allowNetwork: false,
@@ -333,10 +359,12 @@ export function tokenize(argv: string[]): {
   };
   const rest: string[] = [];
   for (let i = 0; i < argv.length;) {
-    const step = applyFlag(opts, argv, i, argv[i] ?? '');
-    if (step.kind === 'error') return { opts, rest, error: step.error };
+    const a = argv[i] ?? '';
+    if (HANDLERS.has(a)) flags.push(a);
+    const step = applyFlag(opts, argv, i, a);
+    if (step.kind === 'error') return { opts, rest, flags, error: step.error };
     if (step.kind === 'rest') rest.push(step.value);
     i += step.consumed;
   }
-  return { opts, rest };
+  return { opts, rest, flags };
 }

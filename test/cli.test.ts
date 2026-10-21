@@ -174,6 +174,31 @@ test('a paper name is read the way the model context protocol reads it', async (
   expect(r.code, `exit ${r.code}\n${r.stderr.slice(0, 300)}`).toBe(0);
 }, 60_000);
 
+test('a flag may carry its value with an equals sign', async () => {
+  const out = join(dir, 'equals.pdf');
+  const r = await run(['--format=a4', '-o', out, doc]);
+  expect(r.code, `exit ${r.code}\n${r.stderr.slice(0, 300)}`).toBe(0);
+  expect(await Bun.file(out).exists()).toBe(true);
+}, 60_000);
+
+test('help is help, whatever else is on the command line', async () => {
+  const r = await run(['--help', 'a.html', 'b.html']);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain('letterpress');
+}, 30_000);
+
+test('a subcommand refuses a flag it does not take', async () => {
+  const r = await run(['validate', '--template', 'x']);
+  expect(r.code).toBe(2);
+  expect(r.stderr).toContain('validate does not take --template');
+}, 30_000);
+
+test('a subcommand has its own help', async () => {
+  const r = await run(['page', '--help']);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain('letterpress page');
+}, 30_000);
+
 test('a format override is applied and reported', async () => {
   const out = join(dir, 'letter.pdf');
   const r = await run([doc, '-o', out, '--format', 'letter', '--json']);

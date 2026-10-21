@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
-import { tokenize } from './args.ts';
+import { flagsUsed, tokenize } from './args.ts';
 import { formatBytes } from './cli.ts';
 import { validate } from './validate.ts';
 import {
@@ -16,9 +16,25 @@ function fail(msg: string, code = 2): number {
   return code;
 }
 
+const VALIDATE_FLAGS = new Set(['--json', '--quiet', '-q']);
+const PAGE_FLAGS = new Set(['--format', '--margin', '--json', '--quiet', '-q']);
+
+function refusedFlags(argv: string[], allowed: Set<string>, name: string): string | null {
+  for (const flag of flagsUsed(argv)) {
+    if (!allowed.has(flag)) return `${name} does not take ${flag}`;
+  }
+  return null;
+}
+
 export async function runValidate(argv: string[]): Promise<number> {
   const { opts, rest, error } = tokenize(argv);
   if (error) return fail(error);
+  if (opts.help) {
+    process.stdout.write('letterpress validate <file.pdf>\n');
+    return 0;
+  }
+  const refused = refusedFlags(argv, VALIDATE_FLAGS, 'validate');
+  if (refused !== null) return fail(refused);
   if (rest.length !== 1)
     return fail('validate takes exactly one file: letterpress validate <file.pdf>');
   const path = rest[0]!;
@@ -51,6 +67,12 @@ export async function runValidate(argv: string[]): Promise<number> {
 export async function runPage(argv: string[]): Promise<number> {
   const { opts, rest, error } = tokenize(argv);
   if (error) return fail(error);
+  if (opts.help) {
+    process.stdout.write('letterpress page <file.html> [--format <name>] [--margin <length>]\n');
+    return 0;
+  }
+  const refused = refusedFlags(argv, PAGE_FLAGS, 'page');
+  if (refused !== null) return fail(refused);
   if (rest.length !== 1) return fail('page takes exactly one file: letterpress page <file.html>');
   const path = rest[0]!;
   let html: string;

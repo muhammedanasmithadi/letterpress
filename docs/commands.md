@@ -45,6 +45,14 @@ file that already exists and `page` explains what the tool made of its
 which is the whole reason they are separate commands rather than flags on the
 render path.
 
+A flag may carry its value with an equals sign, `--format=a4` as well as
+`--format a4`, and only the first equals sign is the separator.
+
+The two subcommands take the flags that make sense for them and refuse the
+others, because a flag a subcommand ignores is a flag the reader believes was
+used. `letterpress page` takes `--format` and `--margin`; `letterpress
+validate` takes none but `--json` and `--quiet`; both have their own `--help`.
+
 `letterpress page` says what `--landscape` would do to a document, in one
 line. There are four cases, and the first two are the ones a single boolean
 gets wrong. `transposePageSize` returns null for both a document that

@@ -27,7 +27,7 @@ export type Options = {
 };
 
 import { FORMATS, pageRangesProblem, type Format } from './render.ts';
-import { UsageError } from './cli.ts';
+import { UsageError } from './report.ts';
 function wholeNumber(v: string): number | undefined {
   if (!/^\d+$/.test(v)) return undefined;
   return Number(v);

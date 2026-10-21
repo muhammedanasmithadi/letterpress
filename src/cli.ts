@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Browser } from './browser.ts';
 import { parseArgs, type Options, type ParseResult, type ProbeName } from './args.ts';
+import { formatBytes, UsageError } from './report.ts';
 import { fontProbe, wideGaps } from './pageside.ts';
 
 export { flagNames, parseArgs } from './args.ts';
@@ -99,8 +100,6 @@ exit codes
     you are not using --json, test for the output file rather than assuming.
   2 bad usage
 `;
-
-export class UsageError extends Error {}
 
 function defaultOut(input: string): string {
   if (input === '-') return 'out.pdf';
@@ -390,12 +389,6 @@ export async function main(argv: string[]): Promise<number> {
     await browser?.close();
     await rm(profile, { recursive: true, force: true }).catch(() => {});
   }
-}
-
-export function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1048576).toFixed(2)} MB`;
 }
 
 export async function listTemplates(): Promise<string[]> {

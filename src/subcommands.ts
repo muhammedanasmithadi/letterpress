@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 import { flagsUsed, tokenize } from './args.ts';
-import { formatBytes } from './cli.ts';
+import { formatBytes } from './report.ts';
 import { validate } from './validate.ts';
 import {
   declaredPageSize,

@@ -221,7 +221,7 @@ describe('the shell itself', () => {
     expect(page).toContain('id="landscape" aria-pressed="false">Landscape');
     expect(page).not.toContain('name="orientation"');
     const js = await (await fetch(`${server.origin}/assets/app.js`)).text();
-    expect(js).toContain('landscape: isLandscape()');
+    expect(js).toContain('landscape: landscapeOn');
     expect(js).not.toContain('el.landscape.checked');
     expect(js).toContain("setAttribute('aria-pressed'");
     expect(js).toContain('orientation-ignored');

@@ -47,7 +47,7 @@ function settings() {
   return {
     format: format || undefined,
     ...(format && margin ? { margin } : {}),
-    landscape: isLandscape(),
+    landscape: landscapeOn,
     printBackground: el.background.checked,
     maxImagePpi: readPpi(),
     allowNetwork: el.network.checked,
@@ -159,8 +159,9 @@ function setBytes(bytes) {
 async function render(overrides = {}) {
   const mine = ++seq;
   controller?.abort();
-  controller = new AbortController();
-  const timer = setTimeout(() => controller.abort('timeout'), CLIENT_TIMEOUT_MS);
+  const mine_controller = new AbortController();
+  controller = mine_controller;
+  const timer = setTimeout(() => mine_controller.abort('timeout'), CLIENT_TIMEOUT_MS);
 
   const html = typeof overrides.html === 'string' ? overrides.html : el.source.value;
   if (!html.trim()) {
@@ -239,7 +240,7 @@ async function render(overrides = {}) {
   } catch (e) {
     if (mine !== seq) return null;
     const aborted = e instanceof Error && e.name === 'AbortError';
-    if (aborted && controller.signal.reason === 'timeout') {
+    if (aborted && mine_controller.signal.reason === 'timeout') {
       fail(
         `Gave up after ${Math.round(CLIENT_TIMEOUT_MS / 1000)}s without an answer. That is this page's ` +
           `own backstop for a connection that never completes, so the renderer is not the slow part here. ` +
@@ -287,27 +288,30 @@ el.format.addEventListener('change', () => {
 let marginTimer;
 el.margin.addEventListener('input', () => {
   clearTimeout(marginTimer);
-  marginTimer = setTimeout(() => {
-    const v = el.margin.value.trim();
-    if (v === '' || isLengthLike(v)) void render();
-  }, DEBOUNCE_MS);
+  marginTimer = setTimeout(() => void renderMargin(), DEBOUNCE_MS);
 });
 
 function isLengthLike(v) {
   return /^0(?:\.0+)?$/.test(v) || /^-?\d*\.?\d+(mm|cm|in|pt|px|pc|q)$/.test(v);
 }
 
-el.margin.addEventListener('change', () => void render());
+async function renderMargin() {
+  const v = el.margin.value.trim();
+  if (v === '' || isLengthLike(v)) return render();
+  say('That is not a length. A margin is a number and a unit, such as 15mm.', 'warn');
+  return null;
+}
+
+el.margin.addEventListener('change', () => {
+  clearTimeout(marginTimer);
+  void renderMargin();
+});
 
 for (const control of [el.background, el.network]) {
   control.addEventListener('change', () => void render());
 }
 
 let landscapeOn = false;
-
-function isLandscape() {
-  return landscapeOn;
-}
 
 function setOrientation(toLandscape) {
   landscapeOn = toLandscape;
@@ -428,11 +432,19 @@ renderHighlight();
 
 export async function renderForTool(args = {}) {
   const overrides = {};
-  if (typeof args.format === 'string' && hasFormat(args.format)) {
+  if (typeof args.format === 'string') {
+    if (!hasFormat(args.format)) {
+      throw new Error(`there is no paper called ${args.format}`);
+    }
     el.format.value = args.format;
     syncMargin();
   }
-  if (typeof args.margin === 'string') el.margin.value = args.margin;
+  if (typeof args.margin === 'string') {
+    if (!el.format.value) {
+      throw new Error('a margin needs a paper to apply to');
+    }
+    el.margin.value = args.margin;
+  }
   if (typeof args.landscape === 'boolean') {
     landscapeOn = args.landscape;
     paintOrientation();

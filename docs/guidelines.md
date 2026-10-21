@@ -33,6 +33,12 @@ Baseline 2026-10-10, updated 2026-10-21. Bun + TypeScript 7.0.2 codebase
 
 ## The gates this repository adds that the guidelines do not
 
+- `bun run ratchet` — the complexity gate. A function over the limit must be in
+  the baseline, and a baseline entry that is no longer a breach fails the gate:
+  a stale baseline is how a gate stops meaning anything, and it is also how a
+  parser that mis-reads a file hides the breaches after it. A function whose
+  span runs to the end of the file swallows everything after it, and the count
+  of breaches falls without a line of the code having changed.
 - `bun run comments` — the comment count. The guidelines' own tree check bans
   comments outright, which is right for a greenfield repository and wrong for
   one with 1,776 of them; the ratchet is how the burn-down is visible. The
@@ -41,7 +47,13 @@ Baseline 2026-10-10, updated 2026-10-21. Bun + TypeScript 7.0.2 codebase
   belongs to no node, and a walk over the nodes alone does not see it. That
   hole let 26 comments survive the first removal while the count said zero,
   so `test/comments.test.ts` now holds the gate to the shapes it has to tell
-  apart.
+  apart. The comments inside a template literal are counted separately, for
+  the same reason: the page-side script is a large block of browser
+  javascript shipped as a string, and a count that said zero while it carried
+  a comment on every third line was a count of nothing. A literal counts as
+  code rather than as data, so a regular expression that holds the shape of a
+  comment and a document that holds a css comment are not counted as
+  comments in this repository.
 - `bun run cleanup` — kills the browsers and servers an interrupted test run
   leaves behind. It matches on the profile directory, not the binary name, so
   it cannot touch a browser that is not ours.

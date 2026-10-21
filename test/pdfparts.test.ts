@@ -6,6 +6,7 @@ import {
   insertIntoDict,
   isEncrypted,
   kidsOf,
+  findStream,
   maskStrings,
   streamDict,
   streamRange,
@@ -240,6 +241,61 @@ describe('insertIntoDict', () => {
     const at = out.indexOf('/Contents (hello)');
     expect(at).toBeGreaterThan(nestedClose);
     expect(at).toBeLessThan(out.lastIndexOf('>>'));
+  });
+});
+
+describe('findStream', () => {
+  test('it finds the keyword outside a string and outside a comment', () => {
+    expect(findStream('<< /A 1 >>\nstream\n', 'word')).toBe(11);
+    expect(findStream('<< /A (stream) >>\nstream\n', 'word')).toBe(18);
+    expect(findStream('% a stream comment\n<< /A 1 >>', 'word')).toBe(-1);
+  });
+
+  test('a word wants the keyword as a word, and a newline wants a line ending', () => {
+    expect(findStream('xstream', 'word')).toBe(-1);
+    expect(findStream('xstream', 'newline')).toBe(-1);
+    expect(findStream('xstream\n', 'newline')).toBe(1);
+    expect(findStream('stream\n', 'word')).toBe(0);
+  });
+
+  test('an escaped parenthesis does not end the string', () => {
+    expect(findStream('(a \\) b) stream', 'word')).toBe(9);
+  });
+});
+
+describe('the cost of splitting a document', () => {
+  const withStream = (size: number) => {
+    const stream = 'q '.repeat(size);
+    const body = `1 0 obj\n<< /Length ${stream.length} >>\nstream\n${stream}\nendstream\nendobj\n`;
+    return new Uint8Array(
+      Buffer.from(
+        `%PDF-1.4\n${body}trailer\n<< /Root 1 0 R /Size 2 >>\nstartxref\n0\n%%EOF\n`,
+        LATIN1,
+      ),
+    );
+  };
+
+  test('a large stream is not copied to find the dictionary', () => {
+    const pdf = withStream(8_000_000);
+    const started = Date.now();
+    const parts = trySplit(pdf);
+    const took = Date.now() - started;
+    expect(parts).toBeDefined();
+    expect(parts!.objs.length).toBe(1);
+    expect(took).toBeLessThan(60);
+  });
+
+  test('the cost does not grow with the size of the stream', () => {
+    const small = withStream(4_000);
+    const large = withStream(8_000_000);
+    const time = (pdf: Uint8Array) => {
+      const started = Date.now();
+      trySplit(pdf);
+      return Date.now() - started;
+    };
+    time(small);
+    time(large);
+    expect(time(large)).toBeLessThan(Math.max(60, time(small) * 200));
   });
 });
 

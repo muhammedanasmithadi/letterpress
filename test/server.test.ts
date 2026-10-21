@@ -126,6 +126,15 @@ ${Array.from({ length: 6 }, (_, i) => `<div class="s">PAGE_${i + 1}</div>`).join
     expect(error).toContain('a4');
   });
 
+  test('rejects a page range that starts after it ends, as a client error', async () => {
+    for (const pageRanges of ['3-1', 'abc', '0']) {
+      const r = await post({ html: DOC, pageRanges });
+      expect(r.status, pageRanges).toBe(400);
+      const { error } = (await r.json()) as { error: string };
+      expect(error, pageRanges).toContain('pageRanges');
+    }
+  });
+
   test('rejects malformed json', async () => {
     const r = await post('{not json');
     expect(r.status).toBe(400);

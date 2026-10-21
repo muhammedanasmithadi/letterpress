@@ -77,6 +77,21 @@ conversion is asked for as a value that may be absent rather than as a
 thrown error, because a caller that cannot convert a unit still wants to
 know the order the two lengths were written in.
 
+## Reading a document
+
+The document is parsed into its objects, and the parts are read from there.
+Two of the reads used to copy the whole document to find one thing in it, and
+a document with a large stream in it is mostly stream.
+
+The `stream` keyword is found by a scan, not by a mask: the question is where
+the keyword is, and the answer is a position, so the text does not need to be
+copied at all. The keyword has to be outside a string literal and outside a
+comment, which is what a mask would have hidden.
+
+The mask itself is built from slices rather than from one character at a
+time. A masked copy of a content stream is megabytes of allocation, and
+thirteen thousand objects times a dozen passes is a lot of that.
+
 ## The printable width
 
 The printable width in CSS pixels, or 0 when it cannot be worked out. Zero

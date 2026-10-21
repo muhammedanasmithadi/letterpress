@@ -158,9 +158,10 @@ async function readStdin({
   });
 
   await Promise.race([pump, guard]);
+  const decoder = new TextDecoder();
   let out = '';
-  for (const c of chunks) out += new TextDecoder().decode(c, { stream: true });
-  return out;
+  for (const c of chunks) out += decoder.decode(c, { stream: true });
+  return out + decoder.decode();
 }
 
 function report(finding: Finding): string {
@@ -202,7 +203,7 @@ async function requestFor(opts: Options): Promise<RenderRequest> {
   if (opts.input === '-') {
     return {
       html: await readStdin({
-        timeoutMs: opts.timeoutMs ?? 30_000,
+        timeoutMs: opts.timeoutMs,
         maxBytes: 64 * 1024 * 1024,
       }),
     };
@@ -293,7 +294,7 @@ function reportOutcome(opts: Options, result: RenderResult, outPath: string): nu
     );
     return 1;
   }
-  return result.findings.some((f) => f.code === 'url-render-blocked') ? 1 : 0;
+  return 0;
 }
 
 async function subcommand(argv: string[]): Promise<number | null> {

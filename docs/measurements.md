@@ -29,6 +29,37 @@ tagged structure, and heading bookmarks produced by `generateDocumentOutline`.
 three-page document to four. Page numbers therefore come from CSS `@page` margin
 boxes with `counter(page)`, which work natively and reserve nothing.
 
+## Reading the pdf back
+
+Chromium prints the pdf and this project then rewrites it. The rewriting is
+where the time goes, and it goes on one thing: the pdf is parsed into its
+objects, and the parts are read from there. A 1.9 MB document from 38 pages:
+
+| measurement                               | before   | after    |
+| ----------------------------------------- | -------- | -------- |
+| parses of the same bytes in one render    | 35       | 35       |
+| text masked to find a keyword, per render | 180.7 MB | 77.8 MB  |
+| time in the mask, per render              | ~6.0 s   | ~1.2 s   |
+| time in the parse, per render             | ~9.6 s   | ~4.0 s   |
+| the whole render, best of eight           | 5 390 ms | 2 421 ms |
+| the same render for a one-page document   | 882 ms   | 863 ms   |
+
+The numbers are from a machine under load as well as a quiet one, so the two
+tables do not agree with each other; the ratios do. The before column is
+`HEAD` and the after column is the working tree, measured by running the two
+alternately so that the load falls on both equally.
+
+What the mask was for: the `stream` keyword is where a stream begins, and the
+old way of finding it was to copy the whole object with the string literals
+blanked, which for a page's content stream is a megabyte of allocation to
+learn that the keyword is a hundred bytes in. The keyword is found by a scan
+now, and the mask is only made for the part of the object that is a
+dictionary.
+
+The 35 parses are the next thing to look at. Nine of them are the repairs,
+each of which is given the whole document and returns the whole document, and
+each of which is checked afterwards, and the check parses too.
+
 ## Runtime comparison
 
 | metric                     | Node 22 | Bun 1.4.0 | Deno 2.9.5 |

@@ -68,23 +68,14 @@ export async function runPage(argv: string[]): Promise<number> {
   }
 
   if (!opts.quiet) {
-    const declared = analysis['declared'] as {
-      size: string | null;
-      margin: string | null;
-      orientation: string | null;
-      rules: string[];
-    };
-    const size = declared.size;
-    const margin = declared.margin;
-    const orientation = declared.orientation;
-    const rules = declared.rules;
+    const { size, margin, orientation, rules } = analysis.declared;
     process.stdout.write(`${path}\n`);
     process.stdout.write(`  declared size         ${size ?? '(none)'}\n`);
     process.stdout.write(`  declared margin       ${margin ?? '(none)'}\n`);
     process.stdout.write(`  declared orientation  ${orientation ?? '(none)'}\n`);
     process.stdout.write(`  @page rules           ${rules.length}\n`);
     for (const r of rules) process.stdout.write(`    ${r}\n`);
-    process.stdout.write(`  with --landscape      ${landscapeOutcome(size, orientation)}\n`);
+    process.stdout.write(`  with --landscape      ${analysis.landscape}\n`);
     if (opts.format) {
       process.stdout.write(
         `  with --format ${opts.format}    the document's @page size is stripped and the request applied ` +
@@ -96,19 +87,33 @@ export async function runPage(argv: string[]): Promise<number> {
         `  with --margin ${opts.margin}   ` +
           (margin
             ? `a document's own @page margin wins, so this is dropped (margin-ignored)`
-            : `applied only alongside --format, which is where the paper is set`),
+            : `applied only alongside --format, which is where the paper is set`) +
+          `\n`,
       );
     }
   }
   return 0;
 }
 
+export type PageAnalysis = {
+  path: string;
+  declared: {
+    size: string | null;
+    margin: string | null;
+    orientation: string | null;
+    rules: string[];
+  };
+  landscape: string;
+  format: string | null;
+  marginOverride: string | null;
+};
+
 export function pageAnalysis(
   html: string,
   path: string,
   format?: string,
   margin?: string,
-): Record<string, unknown> {
+): PageAnalysis {
   const rules = pageRules(html);
   const size = declaredPageSize(html);
   const declaredMargin = declaredPageMargin(html);
@@ -122,7 +127,7 @@ export function pageAnalysis(
   };
 }
 
-export function landscapeOutcome(size: string | null, orientation: string | null): string {
+function landscapeOutcome(size: string | null, orientation: string | null): string {
   if (!size) {
     return 'passed straight to chromium: the document declares no paper, so there is nothing to transpose';
   }

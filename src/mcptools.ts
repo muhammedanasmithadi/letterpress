@@ -4,10 +4,16 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 
 import { Browser } from './browser.ts';
-import { FINDINGS, FINDING_CODES } from './findings.ts';
+import { FINDINGS, FINDING_CODES, codesAt } from './findings.ts';
 import { inspect } from './pdf.ts';
 import { fontProbe, wideGaps } from './pageside.ts';
-import { render, FORMATS as RENDER_FORMATS, type Format, type RenderRequest } from './render.ts';
+import {
+  render,
+  FORMATS as RENDER_FORMATS,
+  pageRangesProblem,
+  type Format,
+  type RenderRequest,
+} from './render.ts';
 import { pageAnalysis } from './subcommands.ts';
 import { validate } from './validate.ts';
 
@@ -284,12 +290,7 @@ function pageRules(args: Record<string, unknown>): ToolResult {
     stringArg(args, 'format'),
     stringArg(args, 'margin'),
   );
-  const declared = analysis['declared'] as {
-    size: string | null;
-    margin: string | null;
-    orientation: string | null;
-    rules: string[];
-  };
+  const declared = analysis.declared;
   const lines = [
     `declared size: ${declared.size ?? '(none)'}`,
     `declared margin: ${declared.margin ?? '(none)'}`,
@@ -446,16 +447,16 @@ function numberArgs(args: Record<string, unknown>): {
   error?: string;
 } {
   const timeoutMs = numberArg(args, 'timeoutMs');
-  if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs < 1000)) {
-    return { error: 'timeoutMs must be a number of at least 1000.' };
+  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 1000)) {
+    return { error: 'timeoutMs must be a whole number of at least 1000.' };
   }
   const settleMs = numberArg(args, 'settleMs');
-  if (settleMs !== undefined && (!Number.isFinite(settleMs) || settleMs < 0)) {
-    return { error: 'settleMs must be zero or more.' };
+  if (settleMs !== undefined && (!Number.isInteger(settleMs) || settleMs < 0)) {
+    return { error: 'settleMs must be a whole number, zero or more.' };
   }
   const maxImagePpi = numberArg(args, 'maxImagePpi');
-  if (maxImagePpi !== undefined && (!Number.isFinite(maxImagePpi) || maxImagePpi < 0)) {
-    return { error: 'maxImagePpi must be zero or more.' };
+  if (maxImagePpi !== undefined && (!Number.isInteger(maxImagePpi) || maxImagePpi < 0)) {
+    return { error: 'maxImagePpi must be a whole number, zero or more.' };
   }
   return { maxImagePpi, settleMs, timeoutMs };
 }
@@ -490,6 +491,14 @@ function renderRequestFrom(args: Record<string, unknown>): {
   const numbers = numberArgs(args);
   if (numbers.error !== undefined) return { request: {}, error: numbers.error };
 
+  const pageRanges = stringArg(args, 'pageRanges');
+  if (pageRanges !== undefined) {
+    const problem = pageRangesProblem(pageRanges);
+    if (problem !== null) {
+      return { request: {}, error: `pageRanges must be a string like "1-3": ${problem}` };
+    }
+  }
+
   return {
     request: {
       html,
@@ -499,7 +508,7 @@ function renderRequestFrom(args: Record<string, unknown>): {
       format: format?.trim().toLowerCase() as Format | undefined,
       landscape: boolArg(args, 'landscape'),
       margin,
-      pageRanges: stringArg(args, 'pageRanges'),
+      pageRanges,
       allowNetwork: boolArg(args, 'allowNetwork'),
       maxImagePpi: numbers.maxImagePpi,
       settleMs: numbers.settleMs,
@@ -636,14 +645,15 @@ async function validatePdf(args: Record<string, unknown>, ctx: McpContext): Prom
   };
 }
 
+const SEVERITIES = ['error', 'warn', 'info'] as const;
+
 async function listFindings(args: Record<string, unknown>): Promise<ToolResult> {
-  const severity = typeof args.severity === 'string' ? args.severity : undefined;
-  if (severity !== undefined && !['error', 'warn', 'info'].includes(severity)) {
-    return failure(`severity must be error, warn or info, got "${severity}".`);
+  const raw = typeof args.severity === 'string' ? args.severity : undefined;
+  if (raw !== undefined && !SEVERITIES.includes(raw as (typeof SEVERITIES)[number])) {
+    return failure(`severity must be error, warn or info, got "${raw}".`);
   }
-  const codes = severity
-    ? FINDING_CODES.filter((c) => FINDINGS[c]!.severity === severity)
-    : FINDING_CODES;
+  const severity = raw as (typeof SEVERITIES)[number] | undefined;
+  const codes = severity ? codesAt(severity) : FINDING_CODES;
   const list = codes.map((code) => ({ code, ...FINDINGS[code]! }));
   const text_ = list.map((f) => `${f.severity}: ${f.code} -- ${f.summary}`);
   return {

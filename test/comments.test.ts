@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { commentRanges, commentsIn } from '../tools/lint-comments.ts';
+import { commentRanges, commentsIn, literalComments } from '../tools/lint-comments.ts';
 
 const count = (source: string) => commentsIn('probe.ts', source);
 
@@ -66,5 +66,22 @@ describe('the comment gate', () => {
     expect(count(source)).toBe(4);
     const ranges = commentRanges('probe.ts', source);
     expect(new Set(ranges.map((r) => r[0])).size).toBe(ranges.length);
+  });
+});
+
+describe('the comments inside a template literal', () => {
+  test('it counts the comments in a block of javascript', () => {
+    const source = ['const x = 1;', '// one', '// two', 'return x;'].join('\n');
+    expect(literalComments('probe.ts', `const AUDIT = String.raw\`${source}\`;`)).toBe(2);
+  });
+
+  test('it does not count a pattern that looks like a comment', () => {
+    const source = '/\\*[sS]*?\\*/|"(?:\\\\[sS]|[^"\\\\])*"';
+    expect(literalComments('probe.ts', `const AUDIT = String.raw\`${source}\`;`)).toBe(0);
+  });
+
+  test('it does not count a comment in a document', () => {
+    const source = '<!doctype html><style>/* a css comment */</style>';
+    expect(literalComments('probe.ts', `const html = \`${source}\`;`)).toBe(0);
   });
 });

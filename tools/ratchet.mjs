@@ -30,4 +30,11 @@ if (added.length > 0) {
   console.error(`new complexity breaches (CC>15 or L>200):\n${added.join('\n')}`);
   process.exit(1);
 }
-console.log(`lizard ratchet ok (${current.length} known, ${fixed.length} fixed)`);
+if (fixed.length > 0) {
+  console.error(
+    `these are no longer breaches, so the baseline is stale:\n${fixed.join('\n')}\n` +
+      `remove them from waivers/baseline.lizard.txt`,
+  );
+  process.exit(1);
+}
+console.log(`lizard ratchet ok (${current.length} known)`);

@@ -15,13 +15,14 @@ function asBuffer(pdf: Uint8Array): Buffer {
 function dictClose(window: string): number {
   let depth = 0;
   for (let i = 0; i + 1 < window.length; i++) {
-    const pair = window.slice(i, i + 2);
-    if (pair === '<<') {
+    const a = window.charCodeAt(i);
+    const b = window.charCodeAt(i + 1);
+    if (a === 60 && b === 60) {
       depth++;
       i++;
       continue;
     }
-    if (pair === '>>') {
+    if (a === 62 && b === 62) {
       depth--;
       i++;
 
@@ -46,9 +47,9 @@ export function hasPostTrailerObjects(pdf: Uint8Array): boolean {
 
 function sliceObject(text: string, raw: Buffer, num: number, from: number, next: number): Obj {
   const window = text.slice(from, next);
-  const marker = maskStrings(window).match(/stream\r?\n/);
+  const marker = findStream(window, 'newline');
   let to: number;
-  if (marker && marker.index !== undefined) {
+  if (marker !== -1) {
     const endKw = window.lastIndexOf('\nendstream');
     if (endKw !== -1) {
       let end = endKw + '\nendstream'.length;
@@ -159,57 +160,118 @@ export function insertIntoDict(body: string, entry: string): string {
   return body.slice(0, close) + entry + '\n' + body.slice(close);
 }
 
-export function maskStrings(text: string): string {
-  let out = '';
+export function findStream(text: string, mode: 'word' | 'newline'): number {
   let i = 0;
-  while (i < text.length) {
+  const n = text.length;
+  while (i < n) {
     const ch = text[i]!;
-
     if (ch === '%') {
-      out += '%';
-      i++;
-      while (i < text.length && text[i] !== '\n' && text[i] !== '\r') {
-        out += ' ';
-        i++;
-      }
+      while (i < n && text[i] !== '\n' && text[i] !== '\r') i++;
+      continue;
+    }
+    if (ch === '(') {
+      i = skipString(text, i);
+      continue;
+    }
+    if (ch === 's' && isStreamKeyword(text, i, mode)) return i;
+    i++;
+  }
+  return -1;
+}
+
+function skipString(text: string, at: number): number {
+  let i = at + 1;
+  const n = text.length;
+  while (i < n) {
+    const c = text[i]!;
+    if (c === '\\') {
+      i += 2;
+      continue;
+    }
+    if (c === ')') return i + 1;
+    i++;
+  }
+  return n;
+}
+
+function isStreamKeyword(text: string, at: number, mode: 'word' | 'newline'): boolean {
+  if (!text.startsWith('stream', at)) return false;
+  const after = text[at + 6] ?? ' ';
+  if (mode === 'newline') return after === '\n' || after === '\r';
+  const before = at === 0 ? ' ' : text[at - 1]!;
+  return !/[A-Za-z0-9]/.test(before) && !/[A-Za-z0-9]/.test(after);
+}
+
+export function maskStrings(text: string): string {
+  const out: string[] = [];
+  let last = 0;
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    const ch = text[i]!;
+    if (ch === '%') {
+      let end = i + 1;
+      while (end < n && text[end] !== '\n' && text[end] !== '\r') end++;
+      out.push(text.slice(last, i + 1), ' '.repeat(end - i - 1));
+      last = end;
+      i = end;
       continue;
     }
     if (ch !== '(') {
-      out += ch;
       i++;
       continue;
     }
-
-    out += '(';
-    i++;
-    let body = '';
-    for (;;) {
-      if (i >= text.length) {
-        out += body;
-        break;
-      }
-      const c = text[i]!;
-      if (c === '\\') {
-        out += text.slice(i, i + 2);
-        i += 2;
-        continue;
-      }
-      if (c === ')') {
-        out += body + ')';
-        i++;
-        break;
-      }
-      body += c === '\n' ? '\n' : ' ';
-      i++;
-    }
+    const masked = maskStringBody(text, i + 1);
+    out.push(text.slice(last, i + 1));
+    if (masked.escapes !== '') out.push(masked.escapes);
+    if (masked.body !== '') out.push(masked.body);
+    last = masked.end;
+    i = masked.end + 1;
   }
-  return out;
+  out.push(text.slice(last));
+  return out.join('');
+}
+
+function maskStringBody(
+  text: string,
+  start: number,
+): { end: number; escapes: string; body: string } {
+  let j = start;
+  const n = text.length;
+  const escapes: string[] = [];
+  const body: string[] = [];
+  let run = 0;
+  while (j < n) {
+    const c = text[j]!;
+    if (c === '\\') {
+      if (run > 0) {
+        body.push(' '.repeat(run));
+        run = 0;
+      }
+      escapes.push(text.slice(j, j + 2));
+      j += 2;
+      continue;
+    }
+    if (c === ')') break;
+    if (c === '\n') {
+      if (run > 0) {
+        body.push(' '.repeat(run));
+        run = 0;
+      }
+      body.push('\n');
+      j++;
+      continue;
+    }
+    run++;
+    j++;
+  }
+  if (run > 0) body.push(' '.repeat(run));
+  return { end: Math.min(j, n), escapes: escapes.join(''), body: body.join('') };
 }
 
 export function dictOf(o: Obj): string {
   const text = o.bytes.toString(LATIN1);
-
-  const at = maskStrings(text).search(/\bstream\b/);
+  const at = findStream(text, 'word');
   return (at === -1 ? text : text.slice(0, at)).trim();
 }
 
@@ -329,9 +391,9 @@ export function inflatedStream(o: Obj, inflate: (b: Buffer) => Buffer): Buffer |
 }
 
 export function streamDict(o: Obj): string {
-  const text = maskStrings(o.bytes.toString(LATIN1));
-  const marker = text.match(/stream\r?\n/);
-  return text.slice(0, marker?.index ?? text.length);
+  const text = o.bytes.toString(LATIN1);
+  const at = findStream(text, 'newline');
+  return maskStrings(at === -1 ? text : text.slice(0, at));
 }
 
 export function walkObjects(

@@ -35,10 +35,21 @@ async function documented(): Promise<Map<string, string>> {
   const start = lines.findIndex((l) => l.startsWith('| code '));
   expect(start, 'the README has no findings table').toBeGreaterThan(-1);
   const rows = new Map<string, string>();
-  for (const line of lines.slice(start + 2)) {
+  const seen = new Map<string, number>();
+  for (const [at, line] of lines.slice(start + 2).entries()) {
     if (!line.startsWith('|')) break;
     const m = /^\|\s*`([a-z0-9-]+)`\s*\|(.*?)\|\s*$/.exec(line);
-    if (m) rows.set(m[1]!, m[2]!.replace(/\s+/g, ' ').trim());
+    if (!m) continue;
+    const code = m[1]!;
+    const first = seen.get(code);
+    if (first !== undefined) {
+      throw new Error(
+        `the README lists \`${code}\` twice, on rows ${first + start + 3} and ${at + start + 3}. ` +
+          `a second row for a code is invisible to the map below, so it would never be compared.`,
+      );
+    }
+    seen.set(code, at + start + 3);
+    rows.set(code, m[2]!.replace(/\s+/g, ' ').trim());
   }
   return rows;
 }

@@ -54,6 +54,21 @@ export function parseFormat(value: unknown): Format | undefined {
   return name as Format;
 }
 
+export function pageRangesProblem(value: string): string | null {
+  const parts = value.split(',').map((p) => p.trim());
+  const bad = parts.filter((p) => !/^[1-9]\d*(-[1-9]\d*)?$/.test(p));
+  if (bad.length > 0) {
+    const names = bad.map((b) => '"' + b + '"').join(', ');
+    const verb = bad.length === 1 ? 'is' : 'are';
+    return names + ' ' + verb + ' not a page number or a range';
+  }
+  for (const p of parts) {
+    const m = /^([1-9]\d*)-([1-9]\d*)$/.exec(p);
+    if (m && Number(m[1]) > Number(m[2])) return 'the range "' + p + '" starts after it ends';
+  }
+  return null;
+}
+
 export type Finding = {
   code: string;
   severity: 'error' | 'warn' | 'info';

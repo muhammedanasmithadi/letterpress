@@ -6,7 +6,7 @@ import { Browser } from './browser.ts';
 import { FINDINGS, FINDING_CODES } from './findings.ts';
 import { handle, LEGACY_VERSIONS, MODERN_VERSION, type Session } from './mcp.ts';
 import { contextWith, type McpSandbox } from './mcptools.ts';
-import { EMPTY_INPUT_MESSAGE, FORMATS, render, type Format } from './render.ts';
+import { EMPTY_INPUT_MESSAGE, FORMATS, pageRangesProblem, render, type Format } from './render.ts';
 
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 
@@ -162,6 +162,9 @@ function checkPageRanges(body: RenderBody): string | null {
   if (body.pageRanges !== undefined && typeof body.pageRanges !== 'string') {
     return 'pageRanges must be a string like "1-3"';
   }
+  if (typeof body.pageRanges !== 'string') return null;
+  const problem = pageRangesProblem(body.pageRanges);
+  if (problem !== null) return `pageRanges must be a string like "1-3": ${problem}`;
   return null;
 }
 

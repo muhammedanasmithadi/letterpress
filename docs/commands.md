@@ -89,6 +89,15 @@ asking before a render, and a render does not answer it on its own.
 `list_findings` returns every code with its severity and what it means, so
 the codes in a result can be read.
 
+## One set of page ranges, three ways in
+
+The command line, the http endpoint and the model context protocol all take
+`--page-ranges`, so they all ask the same question about it: is this a page
+number or a range of them, and does a range start before it ends. A range
+that starts after it ends is refused, rather than handed to chromium, which
+answers "Page range is invalid (start > end)" and turns a client's mistake
+into a failure of the server.
+
 ## The rules a shared server puts on a caller
 
 The stdio server answers to whoever started it. That caller can already read

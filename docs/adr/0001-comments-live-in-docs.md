@@ -33,4 +33,11 @@
   of browser JavaScript as a string. The first version of the removal tool was
   built on the scanner, and it took the regex along with the comment after it
   and left a file that would not parse — which the typecheck caught, and which
-  is why the count is read from the parser now.
+  is why the count is read from the parser now. The parser has the same
+  blindness, and it matters: the page-side script is JavaScript, and a count
+  that said zero while it carried a comment on every third line was a count of
+  nothing. The comments inside a template literal are counted separately, and
+  ratcheted separately: the number may fall but not rise. A literal counts as
+  code rather than as data, so a regular expression that holds the shape of a
+  comment and a document that holds a css comment are not counted as comments
+  in this repository.

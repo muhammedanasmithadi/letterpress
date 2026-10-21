@@ -92,12 +92,13 @@ function checkReferences(
   pdf: Uint8Array,
   parts: ReturnType<typeof trySplit>,
   text: string,
+  codes: string[],
   failures: string[],
 ): void {
   const defined = index(pdf);
   for (const m of text.matchAll(/(?:^|[^0-9])(\d+) \d+ obj\b/g)) defined.set(Number(m[1]), '');
   const codeRegions: string[] = parts
-    ? [...parts.objs.map((o) => dictCode(o)), maskStrings(parts.trailer.toString(LATIN1))]
+    ? [...codes, maskStrings(parts.trailer.toString(LATIN1))]
     : [maskStrings(text)];
   for (const region of codeRegions) {
     for (const m of region.matchAll(/(?:^|[^0-9])(\d+) \d+ R\b/g)) {
@@ -162,10 +163,12 @@ function checkStreamLength(
 function checkObjects(
   parts: ReturnType<typeof trySplit>,
   byNum: Map<number, Obj>,
+  codes: string[],
   failures: string[],
 ): void {
+  let at = 0;
   for (const o of parts?.objs ?? []) {
-    const code = dictCode(o);
+    const code = codes[at++] ?? '';
     const opened = (code.match(/<</g) ?? []).length;
     const closed = (code.match(/>>/g) ?? []).length;
     if (opened !== closed) {
@@ -202,8 +205,9 @@ export function verify(pdf: Uint8Array, original?: Uint8Array): Verification {
 
   const parts = trySplit(pdf);
   const byNum = new Map<number, Obj>((parts?.objs ?? []).map((o) => [o.num, o]));
-  checkReferences(pdf, parts, text, failures);
-  checkObjects(parts, byNum, failures);
+  const codes = parts ? parts.objs.map((o) => dictCode(o)) : [];
+  checkReferences(pdf, parts, text, codes, failures);
+  checkObjects(parts, byNum, codes, failures);
   if (original) checkPreserved(original, pdf, failures);
 
   return { ok: failures.length === 0, failures };

@@ -429,6 +429,42 @@ describe('the arguments a tool refuses', () => {
     expect(sizes[0]).toContain('841.91');
   }, 60_000);
 
+  test('a page range that starts after it ends is refused', async () => {
+    const reply = await send({
+      jsonrpc: '2.0',
+      id: 39,
+      method: 'tools/call',
+      params: { name: 'render_html', arguments: { html: '<p>x</p>', pageRanges: '3-1' } },
+    });
+    const result = toolResult(reply);
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('starts after it ends');
+  });
+
+  test('a page range that is not one is refused', async () => {
+    const reply = await send({
+      jsonrpc: '2.0',
+      id: 41,
+      method: 'tools/call',
+      params: { name: 'render_html', arguments: { html: '<p>x</p>', pageRanges: 'abc' } },
+    });
+    const result = toolResult(reply);
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('not a page number or a range');
+  });
+
+  test('a wait that is not a whole number is refused', async () => {
+    const reply = await send({
+      jsonrpc: '2.0',
+      id: 42,
+      method: 'tools/call',
+      params: { name: 'render_html', arguments: { html: '<p>x</p>', settleMs: 1.5 } },
+    });
+    const result = toolResult(reply);
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('whole number');
+  });
+
   test('a paper nobody has heard of is refused', async () => {
     const reply = await send({
       jsonrpc: '2.0',
@@ -505,13 +541,13 @@ describe('the arguments a tool refuses', () => {
   test('a timeout the timer cannot honour is refused', async () => {
     const result = await refused({ html: '<p>x</p>', timeoutMs: 0 });
     expect(result.isError).toBe(true);
-    expect(result.content[0]!.text).toContain('timeoutMs must be a number of at least 1000');
+    expect(result.content[0]!.text).toContain('timeoutMs must be a whole number of at least 1000');
   });
 
   test('a negative wait is refused', async () => {
     const result = await refused({ html: '<p>x</p>', settleMs: -1 });
     expect(result.isError).toBe(true);
-    expect(result.content[0]!.text).toContain('settleMs must be zero or more');
+    expect(result.content[0]!.text).toContain('settleMs must be a whole number, zero or more');
   });
 });
 

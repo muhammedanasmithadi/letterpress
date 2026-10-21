@@ -73,6 +73,12 @@ function toolsFor(formats) {
       },
       async execute(args) {
         const data = await findingsManifest();
+        if (
+          typeof args.severity === 'string' &&
+          !['error', 'warn', 'info'].includes(args.severity)
+        ) {
+          throw new Error(`severity must be error, warn or info, got "${args.severity}".`);
+        }
         const wanted =
           typeof args.severity === 'string'
             ? data.findings.filter((f) => f.severity === args.severity)
@@ -97,7 +103,7 @@ async function findingsManifest() {
   return manifest;
 }
 
-export async function registerWebMcpTools() {
+async function registerWebMcpTools() {
   const api = document.modelContext;
   if (!api || typeof api.registerTool !== 'function') {
     return { registered: false, reason: 'this browser has no document.modelContext' };
@@ -115,4 +121,6 @@ export async function registerWebMcpTools() {
   return { registered: true, count: tools.length };
 }
 
-registerWebMcpTools().catch(() => {});
+registerWebMcpTools().catch((e) => {
+  console.error('the page could not register its tools: ' + (e?.message ?? e));
+});

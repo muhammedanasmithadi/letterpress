@@ -136,6 +136,44 @@ test('reads HTML from stdin', async () => {
   expect(await pdfText(bytes)).toContain('From stdin');
 }, 60_000);
 
+test('a character on a chunk boundary in stdin survives', async () => {
+  const out = join(dir, 'boundary.pdf');
+  const head = '<!doctype html><meta charset="utf-8"><p>';
+  const body = new TextEncoder().encode(
+    head + 'x'.repeat(65_535 - head.length) + '\u65e5ENDMARKER</p>',
+  );
+  const cut = 65_536;
+  const proc = Bun.spawn(['bun', CLI, '-', '-o', out, '--json'], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+    stdin: 'pipe',
+  });
+  proc.stdin.write(body.subarray(0, cut));
+  await Bun.sleep(200);
+  proc.stdin.write(body.subarray(cut));
+  await proc.stdin.end();
+  const code = await proc.exited;
+  const stderr = await new Response(proc.stderr).text();
+  expect(code, `exit ${code}\nstderr: ${stderr.slice(0, 600)}`).toBe(0);
+
+  const bytes = new Uint8Array(await Bun.file(out).arrayBuffer());
+  const text = await pdfText(bytes);
+  expect(text).toContain('ENDMARKER');
+  expect(text).toContain('\u65e5');
+}, 60_000);
+
+test('a page range that starts after it ends is a usage error', async () => {
+  const r = await run(['--page-ranges', '3-1', '-o', join(dir, 'bad.pdf'), doc]);
+  expect(r.code).toBe(2);
+  expect(r.stderr).toContain('starts after it ends');
+}, 30_000);
+
+test('a paper name is read the way the model context protocol reads it', async () => {
+  const out = join(dir, 'trimmed.pdf');
+  const r = await run(['--format', ' a4 ', '-o', out, doc]);
+  expect(r.code, `exit ${r.code}\n${r.stderr.slice(0, 300)}`).toBe(0);
+}, 60_000);
+
 test('a format override is applied and reported', async () => {
   const out = join(dir, 'letter.pdf');
   const r = await run([doc, '-o', out, '--format', 'letter', '--json']);

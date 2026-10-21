@@ -26,7 +26,7 @@ export type Options = {
   help?: boolean;
 };
 
-import { FORMATS, type Format } from './render.ts';
+import { FORMATS, pageRangesProblem, type Format } from './render.ts';
 import { UsageError } from './cli.ts';
 function wholeNumber(v: string): number | undefined {
   if (!/^\d+$/.test(v)) return undefined;
@@ -81,7 +81,7 @@ function setData(opts: Options, argv: string[], i: number, a: string): Step {
 }
 
 function setFormat(opts: Options, argv: string[], i: number, a: string): Step {
-  const v = valueAfter(argv, i, a).toLowerCase();
+  const v = valueAfter(argv, i, a).trim().toLowerCase();
   if (!(v in FORMATS)) {
     return {
       kind: 'error',
@@ -139,7 +139,7 @@ function setNoScript(opts: Options): Step {
 function setSettle(opts: Options, argv: string[], i: number, a: string): Step {
   const v = valueAfter(argv, i, a);
   const n = wholeNumber(v);
-  if (n === undefined || n < 0) {
+  if (n === undefined) {
     return {
       kind: 'error',
       error: `--settle needs a whole number of milliseconds, got "${v}"`,
@@ -195,18 +195,19 @@ function setBeforePrint(opts: Options, argv: string[], i: number, a: string): St
 
 function setPageRanges(opts: Options, argv: string[], i: number, a: string): Step {
   const v = valueAfter(argv, i, a);
-  const part = /^[1-9]\d*(-[1-9]\d*)?$/;
-  const parts = v.split(',').map((p) => p.trim());
-  const bad = parts.filter((p) => !part.test(p));
-  if (bad.length > 0) {
+  const problem = pageRangesProblem(v);
+  if (problem !== null) {
     return {
       kind: 'error',
       error:
         `--page-ranges takes page numbers and ranges separated by commas, like "1-3" or ` +
-        `"1,4-6"; ${bad.map((b) => `"${b}"`).join(', ')} ${bad.length === 1 ? 'is' : 'are'} not one`,
+        `"1,4-6"; ${problem}`,
     };
   }
-  opts.pageRanges = parts.join(',');
+  opts.pageRanges = v
+    .split(',')
+    .map((p) => p.trim())
+    .join(',');
   return consumedValue();
 }
 

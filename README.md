@@ -268,7 +268,6 @@ asks nothing.
 
 | code                        | meaning                                                                                                                                                                                                            |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `orientation-ignored`       | `--landscape` was dropped: the declaration names no paper to transpose (`size: auto`)                                                                                                                              |
 | `margin-ignored`            | `--margin` was dropped: the document declares `@page margin`                                                                                                                                                       |
 | `page-size-override`        | `--format` disagrees with the document's `@page`; the declaration is stripped and the request applied                                                                                                              |
 | `orientation-ignored`       | `--landscape` cannot apply: the declaration names no paper to transpose, so there is nothing to turn                                                                                                               |

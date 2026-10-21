@@ -84,11 +84,17 @@ document to look at the trailer, which is a region at the end of the file.
 
 Where the time goes now, on the same document, measured inside the render:
 
-| stage                   | ms    |
-| ----------------------- | ----- |
-| chromium's own printing | 644   |
-| the nine repairs        | 1 140 |
-| the findings            | 39    |
+| stage                          | ms  |
+| ------------------------------ | --- |
+| the nine repairs               | 776 |
+| chromium's own printing        | 548 |
+| the page-side audit            | 189 |
+| the findings                   | 31  |
+| preparing the document         | 5   |
+| the tab, the network, the rest | 261 |
+
+The whole command was 2 398 ms, and the difference from the 1 810 ms inside
+the render is the browser starting up and the command's own start-up.
 
 The repairs are the biggest part, and the biggest repair is the one that folds
 text runs into TJ arrays: it scans every text block in the document, and it

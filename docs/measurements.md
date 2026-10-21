@@ -41,13 +41,15 @@ objects, and the parts are read from there. A 1.9 MB document from 38 pages:
 | text masked to find a keyword, per render | 180.7 MB | 77.8 MB  |
 | time in the mask, per render              | ~6.0 s   | ~1.2 s   |
 | time in the parse, per render             | ~9.6 s   | ~4.0 s   |
-| the whole render, best of sixteen         | 5 390 ms | 2 406 ms |
+| the whole render, best of sixteen         | 6 011 ms | 2 398 ms |
 | the same render for a one-page document   | 882 ms   | 863 ms   |
 
 The numbers are from a machine under load as well as a quiet one, so the two
-tables do not agree with each other; the ratios do. The before column is
-`HEAD` and the after column is the working tree, measured by running the two
-alternately so that the load falls on both equally.
+tables do not agree with each other; the ratios do. The before column is the
+tree this work started from and the after column is the tree it ended with,
+measured by running the two alternately so that the load falls on both equally.
+The before column is the noisier of the two: the old code was spending its
+time in allocations, and the machine objected.
 
 What the mask was for: the `stream` keyword is where a stream begins, and the
 old way of finding it was to copy the whole object with the string literals
@@ -72,6 +74,27 @@ document would be written once at the end.
 The dictionary of an object is read from the front of it, so the stream after
 the dictionary is never turned into a string to be thrown away. A dictionary
 longer than the window falls back to the whole object, which is rare.
+
+Three more things cost a copy of the whole document each and now cost none
+of it. The check that every reference resolves built a map of every object's
+text when it only ever asked whether a number was in it. The check that a
+repair did not rewrite a content stream parsed the document a second time for
+the answer the caller already had. And the encryption check parsed the whole
+document to look at the trailer, which is a region at the end of the file.
+
+Where the time goes now, on the same document, measured inside the render:
+
+| stage                   | ms    |
+| ----------------------- | ----- |
+| chromium's own printing | 644   |
+| the nine repairs        | 1 140 |
+| the findings            | 39    |
+
+The repairs are the biggest part, and the biggest repair is the one that folds
+text runs into TJ arrays: it scans every text block in the document, and it
+was asking a slice and a trim of every gap between every pair of tokens
+whether the gap was empty. The gap is asked of the text now, and the blocks
+are put back at the offsets they came from rather than looked for again.
 
 ## Runtime comparison
 

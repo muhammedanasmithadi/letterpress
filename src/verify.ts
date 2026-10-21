@@ -13,9 +13,9 @@ const LATIN1 = 'latin1' as BufferEncoding;
 
 type Verification = { ok: boolean; failures: string[] };
 
-function index(parts: Parts | undefined): Map<number, string> {
-  const out = new Map<number, string>();
-  if (parts) for (const o of parts.objs) out.set(o.num, o.bytes.toString(LATIN1));
+function index(parts: Parts | undefined): Set<number> {
+  const out = new Set<number>();
+  if (parts) for (const o of parts.objs) out.add(o.num);
   return out;
 }
 
@@ -95,7 +95,7 @@ function checkReferences(
   failures: string[],
 ): void {
   const defined = index(parts);
-  for (const m of text.matchAll(/(?:^|[^0-9])(\d+) \d+ obj\b/g)) defined.set(Number(m[1]), '');
+  for (const m of text.matchAll(/(?:^|[^0-9])(\d+) \d+ obj\b/g)) defined.add(Number(m[1]));
   const codeRegions: string[] = parts
     ? [...codes, maskStrings(parts.trailer.toString(LATIN1))]
     : [maskStrings(text)];

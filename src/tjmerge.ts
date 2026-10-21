@@ -123,6 +123,16 @@ function blocksOf(stream: string): string[] {
   return [...stream.matchAll(/BT[\s\S]*?ET/g)].map((m) => m[0]);
 }
 
+type BlockAt = { text: string; from: number; to: number };
+
+function blocksAt(stream: string): BlockAt[] {
+  return [...stream.matchAll(/BT[\s\S]*?ET/g)].map((m) => ({
+    text: m[0],
+    from: m.index,
+    to: m.index + m[0].length,
+  }));
+}
+
 type GlyphItem = { cids: number[]; dx: number; moved: boolean };
 
 type Item = { raw: string } | GlyphItem;
@@ -148,6 +158,13 @@ function mergeBlock(block: string, widths: Widths): string | null {
   return scan ? buildBlock(scan, widths) : null;
 }
 
+function onlySpace(text: string, from: number, to: number): boolean {
+  const space = /\S/g;
+  space.lastIndex = from;
+  const found = space.exec(text);
+  return found === null || found.index >= to;
+}
+
 function scanBlock(text: string): BlockScan | null {
   const tok =
     /\bBT\b|\bET\b|\/(\w+)\s+([-\d.eE]+)\s+Tf|([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+([-\d.eE]+)\s+Tm|([-\d.eE]+)\s+([-\d.eE]+)\s+Td|<([0-9A-Fa-f]*)>\s*Tj|([^\n]*\bBDC\b[^\n]*)|\bEMC\b/g;
@@ -166,11 +183,11 @@ function scanBlock(text: string): BlockScan | null {
   let at = 0;
 
   for (let m = tok.exec(text); m; m = tok.exec(text)) {
-    if (text.slice(at, m.index).trim() !== '') return null;
+    if (!onlySpace(text, at, m.index)) return null;
     at = m.index + m[0].length;
     if (!step(st, m)) return null;
   }
-  if (text.slice(at).trim() !== '') return null;
+  if (!onlySpace(text, at, text.length)) return null;
   if (!st.open || !st.closed) return null;
   if (!st.items.some((i) => 'cids' in i)) return null;
   return { items: st.items, tf: st.tf, size: st.size, tm: st.tm };
@@ -351,21 +368,22 @@ export function mergeTextRuns(pdf: Uint8Array): { pdf: Uint8Array; stats: MergeS
     const decoded = decodeStream(o);
     if (!decoded || !hasTextBlock(decoded.bytes)) return o;
     const text = decoded.bytes.toString(LATIN1);
-    const blocks = blocksOf(text);
+    const blocks = blocksAt(text);
     stats.blocks += blocks.length;
     const widths = byStream.get(o.num);
     if (!widths) return o;
     const before = streamPlaced(text, widths);
 
-    let rewritten = text;
-    let merged = 0;
+    const runs: Array<{ from: number; to: number; run: string }> = [];
     for (const block of blocks) {
-      const run = before ? mergeBlock(block, widths) : null;
-      if (run) {
-        rewritten = rewritten.replace(block, run);
-        merged++;
-      }
+      const run = before ? mergeBlock(block.text, widths) : null;
+      if (run) runs.push({ from: block.from, to: block.to, run });
     }
+    let rewritten = text;
+    for (const r of runs.reverse()) {
+      rewritten = rewritten.slice(0, r.from) + r.run + rewritten.slice(r.to);
+    }
+    const merged = runs.length;
     if (rewritten === text) {
       stats.refused += before ? blocks.length - merged : blocks.length;
       return o;

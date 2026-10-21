@@ -144,6 +144,7 @@ export function fixFontDescriptors(pdf: Uint8Array): Uint8Array {
 function referencedDescriptors(objs: Obj[]): Set<number> {
   const nums = new Set<number>();
   for (const o of objs) {
+    if (!o.bytes.includes('/Subtype')) continue;
     const text = o.bytes.toString(LATIN1);
     if (!/\/Subtype\s*\/(?:CIDFontType2|TrueType|Type3)\b/.test(text)) continue;
     const d = text.match(/\/FontDescriptor\s+(\d+) 0 R/);

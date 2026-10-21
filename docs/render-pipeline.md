@@ -88,6 +88,9 @@ the keyword is, and the answer is a position, so the text does not need to be
 copied at all. The keyword has to be outside a string literal and outside a
 comment, which is what a mask would have hidden.
 
+A text block is put back where it came from rather than looked for again, so
+a document with many blocks in one stream costs a search per block no more.
+
 The mask itself is built from slices rather than from one character at a
 time. A masked copy of a content stream is megabytes of allocation, and
 thirteen thousand objects times a dozen passes is a lot of that.

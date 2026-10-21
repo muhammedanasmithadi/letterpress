@@ -376,6 +376,14 @@ A stream that is not one, or not one this can inflate, is not a finding here.
 Empty bodies occur by design in the fuzz corpus — a tenth of documents — and
 the joins hold either way.
 
+## The coverage floor
+
+The floor is on the code that runs in the test process. The page-side probes
+are shipped into the browser and run there, so the coverage of this process
+says nothing about them: they were five lines out of two hundred and sixty,
+and no change to this repository can move that number, because the code is not
+run here. Their own tests run them, in the browser, where they are.
+
 ## Cleaning up after a run
 
 `tools/cleanup.sh` kills the browsers and the servers a run leaves behind,

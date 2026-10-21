@@ -6,6 +6,24 @@ unmodified on all three runtimes and prints one JSON line per phase
 (`deno run --allow-run --allow-read --allow-write --allow-net --allow-env`;
 probe documents generate into the system temp dir unless `$BENCH_DIR` says otherwise).
 
+## The measurements, and how to take them again
+
+Every number in this file came from one of the tools in `tools/`, and each of
+them is a script that can be run:
+
+| script                      | what it measures                                |
+| --------------------------- | ----------------------------------------------- |
+| `bun run bench`             | chromium's own print pipeline, phase by phase   |
+| `bun run bench:baseline`    | the cost of each repair as the document grows   |
+| `bun run bench:burst`       | the server under a burst of renders             |
+| `bun run bench:concurrency` | the server under renders that overlap           |
+| `bun run bench:determinism` | whether two renders of one document agree       |
+| `bun run bench:transfer`    | the cost of moving a two-thousand-page document |
+| `bun run bench:verify`      | the cost of the verification that always runs   |
+
+The numbers depend on the machine, so they are recorded with the machine they
+came from, and the ratios are what a change should be judged on.
+
 ## Renderer
 
 The renderer is Chromium's own print pipeline, reached over CDP. A 400-page

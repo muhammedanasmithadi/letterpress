@@ -668,6 +668,58 @@ describe('--page-ranges', () => {
   }, 60_000);
 });
 
+describe('letterpress page', () => {
+  const PAGE_DOC =
+    `<!doctype html><html lang="en"><head><style>@page{size:A4;margin:15mm}</style></head>` +
+    `<body><h1>Heading</h1></body></html>`;
+
+  let doc: string;
+
+  beforeAll(async () => {
+    doc = join(dir, 'page.html');
+    await writeFile(doc, PAGE_DOC, 'utf8');
+  }, 30_000);
+
+  test('it says what the document declares', async () => {
+    const { code, stdout } = await run(['page', doc]);
+    expect(code).toBe(0);
+    expect(stdout).toContain('declared size         a4');
+    expect(stdout).toContain('declared margin       15mm');
+    expect(stdout).toContain('@page rules           1');
+    expect(stdout).toContain('@page{size:A4;margin:15mm}');
+  }, 30_000);
+
+  test('it says what a format and a margin would do', async () => {
+    const { code, stdout } = await run(['page', '--format', 'a4', '--margin', '15mm', doc]);
+    expect(code).toBe(0);
+    expect(stdout).toContain('with --format a4');
+    expect(stdout).toContain('page-size-override');
+    expect(stdout).toContain('with --margin 15mm');
+    expect(stdout).toContain('margin-ignored');
+  }, 30_000);
+
+  test('--json carries the same answer', async () => {
+    const { code, stdout } = await run(['page', '--json', doc]);
+    expect(code).toBe(0);
+    const got = JSON.parse(stdout) as {
+      path: string;
+      declared: { size: string | null; margin: string | null; rules: string[] };
+      landscape: string;
+    };
+    expect(got.path).toBe(doc);
+    expect(got.declared.size).toBe('a4');
+    expect(got.declared.margin).toBe('15mm');
+    expect(got.declared.rules).toEqual(['@page{size:A4;margin:15mm}']);
+    expect(got.landscape).toContain('transposed');
+  }, 30_000);
+
+  test('a missing file is a usage error', async () => {
+    const { code, stdout } = await run(['page', join(dir, 'absent.html')]);
+    expect(stdout).not.toContain('declared size');
+    expect(code).toBe(2);
+  }, 30_000);
+});
+
 describe('letterpress validate', () => {
   const PDF_DOC =
     `<!doctype html><html lang="en"><head><style>@page{size:A4;margin:15mm}</style></head>` +

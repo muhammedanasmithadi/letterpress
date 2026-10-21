@@ -6,6 +6,12 @@
   "scripts": {
     "test": "bun test; code=$?; tools/cleanup.sh; exit $code",
     "bench": "bun tools/bench.mjs",
+    "bench:baseline": "bun tools/bench-baseline.ts",
+    "bench:burst": "bun tools/bench-burst.ts",
+    "bench:concurrency": "bun tools/bench-concurrency.ts",
+    "bench:determinism": "bun tools/bench-determinism.ts",
+    "bench:transfer": "bun tools/bench-transfer.ts",
+    "bench:verify": "bun tools/bench-verify-cost.ts",
     "render": "bun src/cli.ts",
     "typecheck": "tsc --noEmit",
     "serve": "bun src/server.ts",

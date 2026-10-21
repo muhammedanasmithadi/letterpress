@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 
 import { closeTestBrowser, launchTestBrowser, type TestBrowser } from './browser.ts';
+import { TOOLS as SERVER_TOOLS } from '../src/mcptools.ts';
 import { useTestServer } from './servers.ts';
 import type { Tab } from '../src/browser.ts';
 
@@ -118,6 +119,16 @@ describe('the page offers tools to an agent', () => {
     expect(text).toContain('1 page');
   }, 120_000);
 
+  test('every tool the page offers is one the server also offers', async () => {
+    const tools = await waitForTools(2);
+    for (const tool of tools) {
+      expect(
+        SERVER_TOOLS.map((t) => t.name),
+        tool.name,
+      ).toContain(tool.name);
+    }
+  });
+
   test('every tool that is registered can also be called', async () => {
     const tools = await waitForTools(2);
     expect(tools.map((t) => t.name).sort()).toEqual(['list_findings', 'render_html']);
@@ -182,4 +193,26 @@ describe('the server serves the manifest', () => {
       expect(f.summary.length).toBeGreaterThan(10);
     }
   }, 30_000);
+
+  test('the paper names come with it, so the page cannot disagree', async () => {
+    const r = await fetch(`${server.origin}/findings`);
+    const body = (await r.json()) as { formats: string[] };
+    expect(body.formats).toEqual(['a3', 'a4', 'a5', 'legal', 'letter', 'tabloid']);
+  }, 30_000);
+
+  test('the page offers the same paper names the server has', async () => {
+    const tools = await waitForTools(2);
+    const listed = JSON.parse(
+      (await evaluate(
+        `const t = await document.modelContext.getTools();
+         const r = t.find(x => x.name === 'render_html');
+         const schema = typeof r.inputSchema === 'string' ? JSON.parse(r.inputSchema) : r.inputSchema;
+         return JSON.stringify(schema.properties.format.enum);`,
+      )) as string,
+    ) as string[];
+    const r = await fetch(`${server.origin}/findings`);
+    const body = (await r.json()) as { formats: string[] };
+    expect(listed).toEqual(body.formats);
+    expect(tools.length).toBeGreaterThan(0);
+  }, 60_000);
 });

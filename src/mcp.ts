@@ -21,10 +21,10 @@ type Message = {
 };
 
 type Reply =
-  | { jsonrpc: '2.0'; id: string | number; result: Json }
+  | { jsonrpc: '2.0'; id: string | number | null; result: Json }
   | {
       jsonrpc: '2.0';
-      id: string | number;
+      id: string | number | null;
       error: { code: number; message: string; data?: unknown };
     };
 
@@ -36,11 +36,11 @@ const META_VERSION = 'io.modelcontextprotocol/protocolVersion';
 const META_CLIENT_CAPS = 'io.modelcontextprotocol/clientCapabilities';
 const META_SERVER_INFO = 'io.modelcontextprotocol/serverInfo';
 
-function ok(id: string | number, result: Json): Reply {
+function ok(id: string | number | null, result: Json): Reply {
   return { jsonrpc: '2.0', id, result };
 }
 
-function fail(id: string | number, code: number, message: string, data?: unknown): Reply {
+function fail(id: string | number | null, code: number, message: string, data?: unknown): Reply {
   return {
     jsonrpc: '2.0',
     id,
@@ -56,10 +56,6 @@ function metaOf(msg: Message): Json {
 function declaredVersion(msg: Message): string | null {
   const version = metaOf(msg)[META_VERSION];
   return typeof version === 'string' ? version : null;
-}
-
-function isModern(msg: Message): boolean {
-  return declaredVersion(msg) !== null;
 }
 
 function toolList(): Json[] {
@@ -79,9 +75,13 @@ function modernResult(body: Json): Json {
   };
 }
 
-export async function handle(session: Session, msg: Message): Promise<Reply | null> {
+export async function handle(
+  session: Session,
+  msg: Message | Message[],
+): Promise<Reply | Reply[] | null> {
+  if (Array.isArray(msg)) return handleBatch(session, msg);
   if (msg.method === undefined) return null;
-  if (msg.id === undefined || msg.id === null) {
+  if (msg.id === undefined) {
     return null;
   }
   const id = msg.id;
@@ -94,41 +94,53 @@ export async function handle(session: Session, msg: Message): Promise<Reply | nu
     });
   }
 
-  if (msg.method === 'server/discover') return discover(id);
-
   if (version !== null && metaOf(msg)[META_CLIENT_CAPS] === undefined) {
     return fail(id, -32602, `a modern request must carry ${META_CLIENT_CAPS} in _meta`);
   }
 
-  if (msg.method === 'initialize') return initialize(id, msg);
-  if (msg.method === 'ping') return ok(id, isModern(msg) ? modernResult({}) : {});
-  if (msg.method === 'tools/list') return listTools(id, msg);
-  if (msg.method === 'tools/call') return callToolRequest(session, id, msg);
+  if (msg.id === null) {
+    return fail(null, -32600, 'a request must have an id, and null is not one');
+  }
+
+  const modern = version !== null;
+  if (msg.method === 'server/discover') return discover(id, modern);
+  if (msg.method === 'initialize') return initialize(id, msg, modern);
+  if (msg.method === 'ping') return ok(id, modern ? modernResult({}) : {});
+  if (msg.method === 'tools/list') return listTools(id, modern);
+  if (msg.method === 'tools/call') return callToolRequest(session, id, msg, modern);
 
   return fail(id, -32601, `Method not found: ${msg.method}`);
 }
 
-function discover(id: string | number): Reply {
-  return ok(
-    id,
-    modernResult({
-      supportedVersions: [MODERN_VERSION],
-      capabilities: { tools: {} },
-      instructions: INSTRUCTIONS,
-      ttlMs: 3_600_000,
-      cacheScope: 'public',
-    }),
-  );
+async function handleBatch(session: Session, msgs: Message[]): Promise<Reply[]> {
+  const replies: Reply[] = [];
+  for (const one of msgs) {
+    const reply = await handle(session, one);
+    if (reply !== null && !Array.isArray(reply)) replies.push(reply);
+  }
+  return replies;
 }
 
-function initialize(id: string | number, msg: Message): Reply {
-  const version = agreedVersion((msg.params as Json | undefined)?.['protocolVersion']);
-  return ok(id, {
-    protocolVersion: version,
+function discover(id: string | number, modern: boolean): Reply {
+  const body = {
+    supportedVersions: [MODERN_VERSION],
+    capabilities: { tools: {} },
+    instructions: INSTRUCTIONS,
+    ttlMs: 3_600_000,
+    cacheScope: 'public',
+  };
+  return ok(id, modern ? modernResult(body) : body);
+}
+
+function initialize(id: string | number, msg: Message, modern: boolean): Reply {
+  const requested = (msg.params as Json | undefined)?.['protocolVersion'];
+  const body = {
+    protocolVersion: modern ? MODERN_VERSION : agreedVersion(requested),
     capabilities: { tools: {} },
     serverInfo: SERVER_INFO,
     instructions: INSTRUCTIONS,
-  });
+  };
+  return ok(id, modern ? modernResult(body) : body);
 }
 
 function agreedVersion(requested: unknown): string {
@@ -137,9 +149,9 @@ function agreedVersion(requested: unknown): string {
   return requested;
 }
 
-function listTools(id: string | number, msg: Message): Reply {
+function listTools(id: string | number, modern: boolean): Reply {
   const tools = toolList();
-  if (isModern(msg)) {
+  if (modern) {
     return ok(id, modernResult({ tools, ttlMs: 3_600_000, cacheScope: 'public' }));
   }
   return ok(id, { tools });
@@ -153,6 +165,7 @@ async function callToolRequest(
   session: Session,
   id: string | number,
   msg: Message,
+  modern: boolean,
 ): Promise<Reply> {
   const params = (msg.params ?? {}) as Json;
   const name = params['name'];
@@ -172,7 +185,7 @@ async function callToolRequest(
   const body: Json = { content: result.content };
   if (result.structuredContent !== undefined) body['structuredContent'] = result.structuredContent;
   if (result.isError) body['isError'] = true;
-  return ok(id, isModern(msg) ? modernResult(body) : body);
+  return ok(id, modern ? modernResult(body) : body);
 }
 
 export async function newSession(): Promise<Session> {
@@ -190,7 +203,7 @@ export async function serve(session: Session): Promise<void> {
       buffer = buffer.slice(newline + 1);
       newline = buffer.indexOf('\n');
       if (!line) continue;
-      await respond(session, line);
+      void respond(session, line);
     }
   }
 }
@@ -205,7 +218,9 @@ async function respond(session: Session, line: string): Promise<void> {
   }
   const reply = await handle(session, msg);
   if (reply === null) return;
-  process.stdout.write(`${JSON.stringify(reply)}\n`);
+  try {
+    process.stdout.write(`${JSON.stringify(reply)}\n`);
+  } catch {}
 }
 
 export async function runMcp(): Promise<number> {

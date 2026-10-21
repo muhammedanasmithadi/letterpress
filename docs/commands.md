@@ -70,6 +70,17 @@ finding says a gap is too wide; the probe says which one and why.
 bytes. It reads the file and nothing else, so it costs milliseconds against the
 ~1s a render takes.
 
+The bytes may be sent as base64, and a string that is not base64 is refused
+rather than decoded. The decoder is forgiving: it drops the characters it does
+not recognise and carries on, so a string that is not base64 at all decodes to
+something, and the answer to a request for a pdf becomes a complaint about the
+pdf.
+
+The paper names are the renderer's own, and a name is read the way the command
+line reads it: `A4` and `a4` are the same paper. The list is served to the
+viewer page with the findings, so the page and the server cannot disagree
+about which papers exist.
+
 `page_rules` says what the renderer would make of a document's own `@page`
 rules: the paper and margin it declares, what `--landscape` would do to them,
 and what `--format` and `--margin` would change. The question is worth
@@ -131,6 +142,10 @@ The version is taken from the header when there is one, because that is what
 an intermediary can route on, and from the body otherwise, for a client that
 sends neither.
 
+The server keeps the document it was given and sweeps the ones before it, so a
+server that renders all afternoon does not fill the disk with documents nobody
+asked for.
+
 The origin check is the one this server already applies to every request: a
 local MCP endpoint that answers requests from any web page is a remote code
 execution surface, and the spec says the same about it.
@@ -166,6 +181,16 @@ than by `realpathSync`, because the file the link points at usually does not
 exist yet — the PDF is about to be written there — and `realpathSync` fails
 on a broken link, which would have left the link itself as the answer and
 missed the escape entirely.
+
+## The routes the server answers
+
+One function per route. The dispatcher is a list of paths and the checks that
+come before any of them: the host and the origin, refused before the body is
+read, so a request from another web page is turned away without its bytes
+being taken in.
+
+The dispatcher was one function of two hundred and forty lines, and a reader
+could not see where one route ended and the next began. It is fifty now.
 
 ## The HTTP API
 

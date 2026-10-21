@@ -291,6 +291,7 @@ export function fontProbe(): Array<{ family: string; elements: number }> {
   const found: Array<{ family: string; elements: number }> = [];
   for (const [family, elements] of counts) {
     if (loaded.has(family)) continue;
+    if (found.length >= 20) break;
     first.get(family)!.setAttribute('data-lp-font', String(found.length));
     found.push({ family, elements });
   }

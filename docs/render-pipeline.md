@@ -51,6 +51,16 @@ answered null, `preferCSSPageSize` was turned off, and a ledger-landscape
 newspaper printed on a letter sheet with no finding — the exact failure this
 function exists to prevent, caused by a comment that mentioned nothing at all.
 
+An unterminated comment runs to the end, in the stylesheet as in the browser,
+so a rule that follows one is inside it and is not a live rule.
+
+The three scans above are scans and not patterns. A pattern that looks for the
+end of a comment that is never closed reads to the end of the text, once per
+opening marker, and a document is untrusted input, so that is a way to hold a
+server busy. Measured: a document with 40,000 `@page` and no
+brace after them took ten seconds to scan, and the shape grows quadratically
+from there. The same document takes a millisecond now.
+
 Quoted strings next, for the same reason. A `@page` rule takes keywords,
 lengths and colours; it cannot hold a string literal, so a string that looks
 like one is text and not a declaration. This also keeps a brace inside
@@ -190,6 +200,15 @@ visible and over the cap, at the cap's resolution. Images that cannot be
 measured are skipped, so the results are a subsequence of `document.images` —
 which is why the replacement matches on the index recorded during the
 measurement rather than on position in the returned list.
+
+**The stylesheet text.** The audit reads the source of the `<style>` elements
+and of the linked stylesheets, because a name inside a comment or a quoted
+string is prose and not a declaration. The comments are removed by a scan
+rather than by a pattern: a pattern that looks for the end of a comment that
+is never closed reads to the end of the text, once per opening marker, and the
+text is the document's own. A document with 16,000 open comments in its
+stylesheet took half a second to strip, and the shape grows quadratically
+from there.
 
 **The linked stylesheets** are fetched before the synchronous script runs.
 Contained on purpose: any failure here — a hung fetch, a closed socket — must

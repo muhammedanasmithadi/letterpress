@@ -26,6 +26,21 @@ test('the page-side script parses as javascript', () => {
   expect(() => new Function(m![1]!)).not.toThrow();
 });
 
+test('the css comment strip in the page script is a scan, not a pattern', () => {
+  const src = readFileSync(join(import.meta.dir, '..', 'src', 'lint.ts'), 'utf8');
+  const m = /const stripComments = ([\s\S]*?\n  \};)/.exec(src);
+  expect(m, 'could not find the stripComments helper').not.toBeNull();
+  const strip = new Function(`return (${m![1]!.replace(/;$/, '')})`)() as (t: string) => string;
+
+  expect(strip('a/* b */c')).toBe('a c');
+  expect(strip('a/* b')).toBe('a');
+
+  const text = '/* '.repeat(40_000);
+  const started = Date.now();
+  strip(text);
+  expect(Date.now() - started).toBeLessThan(1000);
+});
+
 test('the audit reports real findings rather than failing to run', async () => {
   const r = await render(browser, {
     html: `<!doctype html><meta charset="utf-8">

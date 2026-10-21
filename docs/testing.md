@@ -376,6 +376,14 @@ A stream that is not one, or not one this can inflate, is not a finding here.
 Empty bodies occur by design in the fuzz corpus — a tenth of documents — and
 the joins hold either way.
 
+## The two tool catalogues
+
+The model context protocol server and the viewer page keep separate copies of
+their tool lists, which the guidelines allow at two uses. What must not happen
+is the page offering a tool the server does not, or naming the same tool
+differently in the two places: an agent reads the names, and a name that means
+one thing in the browser and another in the server is worse than either.
+
 ## What a shared server will not do
 
 The render endpoint accepts no path and no url, so the tools on the same route

@@ -157,6 +157,20 @@ describe('the tools', () => {
     expect(result).not.toHaveProperty('ttlMs');
   });
 
+  test('every reply follows the era of the request that asked for it', async () => {
+    const modernInitialize = await modern(20, 'initialize', { protocolVersion: MODERN_VERSION });
+    const modernInit = resultOf(modernInitialize);
+    expect(modernInit['resultType']).toBe('complete');
+    expect(modernInit['protocolVersion']).toBe(MODERN_VERSION);
+
+    const legacyDiscover = await legacy(21, 'server/discover');
+    const legacyDisc = resultOf(legacyDiscover);
+    expect(legacyDisc).not.toHaveProperty('resultType');
+
+    const modernDiscover = await modern(22, 'server/discover');
+    expect(resultOf(modernDiscover)['resultType']).toBe('complete');
+  });
+
   test('a tool result follows the era of the request that asked for it', async () => {
     const modernReply = await modern(1, 'tools/call', {
       name: 'list_findings',
@@ -360,6 +374,145 @@ describe('rendering through the server', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).toContain('cannot read');
   }, 60_000);
+});
+
+describe('the messages a server may be sent', () => {
+  test('a batch is answered with a reply for each request in it', async () => {
+    const replies = (await handle(session, [
+      { jsonrpc: '2.0', id: 30, method: 'ping' },
+      { jsonrpc: '2.0', id: 31, method: 'tools/list' },
+    ] as never)) as unknown as Array<{ id: number }>;
+    expect(Array.isArray(replies)).toBe(true);
+    expect(replies.map((r) => r.id)).toEqual([30, 31]);
+  });
+
+  test('a request with the id null is answered with an error, not dropped', async () => {
+    const reply = (await handle(session, {
+      jsonrpc: '2.0',
+      id: null,
+      method: 'ping',
+    } as never)) as unknown as { id: number | null; error: { code: number } };
+    expect(reply.id).toBeNull();
+    expect(reply.error.code).toBe(-32600);
+  });
+
+  test('a tool call that cannot be written is refused, and the server survives', async () => {
+    const reply = await send({
+      jsonrpc: '2.0',
+      id: 32,
+      method: 'tools/call',
+      params: {
+        name: 'render_html',
+        arguments: { html: '<p>x</p>', outputPath: '/no-such-directory-xyz/out.pdf' },
+      },
+    });
+    const result = toolResult(reply);
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('could not be written');
+
+    const alive = await send({ jsonrpc: '2.0', id: 33, method: 'ping' });
+    expect(alive).not.toBeNull();
+  });
+});
+
+describe('the arguments a tool refuses', () => {
+  test('a paper name is read the way the command line reads it', async () => {
+    const reply = await send({
+      jsonrpc: '2.0',
+      id: 34,
+      method: 'tools/call',
+      params: { name: 'render_html', arguments: { html: '<p>x</p>', format: 'A4' } },
+    });
+    const result = toolResult(reply);
+    expect(result.isError).toBeFalsy();
+    const sizes = result.structuredContent!['pageSizes'] as string[];
+    expect(sizes[0]).toContain('841.91');
+  }, 60_000);
+
+  test('a paper nobody has heard of is refused', async () => {
+    const reply = await send({
+      jsonrpc: '2.0',
+      id: 35,
+      method: 'tools/call',
+      params: { name: 'render_html', arguments: { html: '<p>x</p>', format: 'a9' } },
+    });
+    const result = toolResult(reply);
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('format must be one of');
+  });
+
+  test('bytes that are not base64 are refused rather than decoded', async () => {
+    const reply = await send({
+      jsonrpc: '2.0',
+      id: 36,
+      method: 'tools/call',
+      params: { name: 'validate_pdf', arguments: { pdf: '!!!not base64!!!' } },
+    });
+    const result = toolResult(reply);
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('not base64');
+  });
+
+  test('the work directory does not grow with the number of renders', async () => {
+    const { readdir } = await import('node:fs/promises');
+    for (let i = 0; i < 3; i++) {
+      const reply = await send({
+        jsonrpc: '2.0',
+        id: 38 + i,
+        method: 'tools/call',
+        params: { name: 'render_html', arguments: { html: '<p>x</p>' } },
+      });
+      expect(toolResult(reply).isError).toBeFalsy();
+    }
+    const files = await readdir(session.context.workDir);
+    const outputs = files.filter((f) => f.startsWith('output-'));
+    expect(outputs.length).toBe(1);
+  }, 120_000);
+
+  test('the paper names the tool advertises are the papers the renderer has', async () => {
+    const reply = await send({ jsonrpc: '2.0', id: 37, method: 'tools/list' });
+    const tools = resultOf(reply)['tools'] as Array<{
+      name: string;
+      inputSchema: { properties: Record<string, { enum?: string[] }> };
+    }>;
+    const render = tools.find((t) => t.name === 'render_html')!;
+    expect(render.inputSchema.properties['format']!.enum).toEqual([
+      'a3',
+      'a4',
+      'a5',
+      'legal',
+      'letter',
+      'tabloid',
+    ]);
+  });
+
+  const refused = async (args: Record<string, unknown>) => {
+    const reply = await send({
+      jsonrpc: '2.0',
+      id: 40,
+      method: 'tools/call',
+      params: { name: 'render_html', arguments: args },
+    });
+    return toolResult(reply);
+  };
+
+  test('a probe nobody has heard of is refused rather than ignored', async () => {
+    const result = await refused({ html: '<p>x</p>', probe: 'nonsense' });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('probe must be one of gaps, fonts');
+  });
+
+  test('a timeout the timer cannot honour is refused', async () => {
+    const result = await refused({ html: '<p>x</p>', timeoutMs: 0 });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('timeoutMs must be a number of at least 1000');
+  });
+
+  test('a negative wait is refused', async () => {
+    const result = await refused({ html: '<p>x</p>', settleMs: -1 });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('settleMs must be zero or more');
+  });
 });
 
 describe('the server as a process', () => {

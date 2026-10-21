@@ -51,6 +51,23 @@ const AUDIT = String.raw`
   // content:"a string( of text" is valid CSS that Chromium keeps and renders.
   const unquoted = (text) =>
     text.replace(/"(\\.|[^"\\])*"/g, '""').replace(/'(\\.|[^'\\])*'/g, "''");
+  // A scan, not a pattern. A pattern that looks for the end of a comment that
+  // is never closed reads to the end of the text, once per opening marker, so
+  // a stylesheet full of open comments takes a quadratic amount of time. The
+  // text is the document's own, and the document is untrusted.
+  const stripComments = (text) => {
+    let out = "";
+    let at = 0;
+    for (;;) {
+      const start = text.indexOf("/*", at);
+      if (start < 0) return out + text.slice(at);
+      out += text.slice(at, start);
+      const end = text.indexOf("*/", start + 2);
+      if (end < 0) return out;
+      out += " ";
+      at = end + 2;
+    }
+  };
   const scanRules = (rules) => {
     for (const rule of rules || []) {
       // Recurse only when there is something nested. A plain style rule exposes
@@ -89,7 +106,7 @@ const AUDIT = String.raw`
   // silent -- neither is an active declaration. A name the CSSOM scan already reported is
   // skipped, so a kept declaration is reported once, not twice.
   const scanSourceText = (src, where) => {
-    const clean = unquoted(src.replace(/\/\*[\s\S]*?\*\//g, ""));
+    const clean = unquoted(stripComments(src));
     const decls = clean.match(/content\s*:([^;{}]+)/g) || [];
     for (const decl of decls) {
       for (const name of Object.keys(unsupported)) {

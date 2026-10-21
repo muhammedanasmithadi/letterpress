@@ -318,7 +318,9 @@ asks nothing.
 
 The table above is also a machine-readable list, at `GET /findings` over HTTP
 and as the `list_findings` tool over MCP and WebMCP. Each entry is the code,
-the severity it is reported at, and one line saying what it means.
+the severity it is reported at, and one line saying what it means. The same
+response carries the paper names, so the viewer page and the server cannot
+disagree about which papers exist.
 
 It exists because a finding code is a promise: a caller writes
 `if (code === 'js-error')`, and that string has to keep meaning the same
@@ -466,6 +468,13 @@ JSON object. The headers the spec requires — `MCP-Protocol-Version`,
 `Mcp-Method`, `Mcp-Name` — are checked against the body, because an
 intermediary may route on one and the server act on the other. A request from
 another origin is refused, as every request to that server is.
+
+The HTTP route is a shared daemon, so it answers under the same limits as the
+render endpoint beside it: the body is capped, the document is bounded by the
+page limit, the render takes a slot in the same queue, and a path or a url is
+refused, because the endpoint that renders accepts neither. The stdio server
+has no such limit: its caller is whoever started the process, and that caller
+can already read every file and write every file the process can.
 
 ### WebMCP, in the browser
 

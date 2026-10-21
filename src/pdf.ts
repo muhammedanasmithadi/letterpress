@@ -236,17 +236,74 @@ export function declaredPageMargin(html: string): string | null {
 }
 
 export function pageRules(html: string): string[] {
-  const withoutHtml = html.replace(/<!--[\s\S]*?(?:-->|$)/g, ' ');
-  const styles = [...withoutHtml.matchAll(/<style\b[^>]*>([\s\S]*?)(?:<\/style\s*>|$)/gi)];
+  const styles = styleBlocks(stripHtmlComments(html)).map(stripCssComments);
 
-  return (
-    styles
-      .flatMap((m) => m[1] ?? [])
-      .join('\n')
-      .replace(/\/\*[\s\S]*?\*\//g, ' ')
-      .replace(/"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'/g, '""')
-      .match(/@page[^{]*\{[^}]*\}/gi) ?? []
+  return pageRuleBodies(
+    styles.join('\n').replace(/"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'/g, '""'),
   );
+}
+
+function styleBlocks(html: string): string[] {
+  const out: string[] = [];
+  const lower = html.toLowerCase();
+  let at = 0;
+  for (;;) {
+    const start = lower.indexOf('<style', at);
+    if (start < 0) return out;
+    const open = html.indexOf('>', start);
+    if (open < 0) return out;
+    const end = lower.indexOf('</style', open);
+    if (end < 0) {
+      out.push(html.slice(open + 1));
+      return out;
+    }
+    out.push(html.slice(open + 1, end));
+    at = end + 7;
+  }
+}
+
+function pageRuleBodies(css: string): string[] {
+  const out: string[] = [];
+  const lower = css.toLowerCase();
+  let at = 0;
+  for (;;) {
+    const start = lower.indexOf('@page', at);
+    if (start < 0) return out;
+    const open = css.indexOf('{', start);
+    if (open < 0) return out;
+    const close = css.indexOf('}', open);
+    if (close < 0) return out;
+    out.push(css.slice(start, close + 1));
+    at = close + 1;
+  }
+}
+
+function stripCssComments(css: string): string {
+  let out = '';
+  let at = 0;
+  for (;;) {
+    const start = css.indexOf('/*', at);
+    if (start < 0) return out + css.slice(at);
+    out += css.slice(at, start);
+    const end = css.indexOf('*/', start + 2);
+    if (end < 0) return out;
+    out += ' ';
+    at = end + 2;
+  }
+}
+
+function stripHtmlComments(html: string): string {
+  let out = '';
+  let at = 0;
+  for (;;) {
+    const start = html.indexOf('<!--', at);
+    if (start < 0) return out + html.slice(at);
+    out += html.slice(at, start);
+    const end = html.indexOf('-->', start + 4);
+    if (end < 0) return out;
+    out += ' ';
+    at = end + 3;
+  }
 }
 
 const ABSOLUTE_UNITS: Record<string, number> = {

@@ -29,6 +29,10 @@ test('an unterminated HTML comment runs to the end, as it does in a browser', ()
   expect(declaredPageSize('<!-- oops <style>@page{size:A4}</style>')).toBeNull();
 });
 
+test('an unterminated CSS comment runs to the end, as it does in a browser', () => {
+  expect(declaredPageSize('<style>/* oops @page{size:A4}')).toBeNull();
+});
+
 test('a live rule after a closed comment is still found', () => {
   expect(declaredPageSize('<!-- @page{size:A4} --><style>@page{size:A3}</style>')).toBe('a3');
   expect(pageRules('<!-- @page{size:A4} --><style>@page{size:A3}</style>')).toHaveLength(1);
@@ -171,4 +175,27 @@ test('transposePageSize keeps the rest of the document intact', () => {
   expect(declaredPageOrientation(out)).toBe('landscape');
   expect(declaredPageSize(out)).toBe('a4 landscape');
   expect(declaredPageMargin(out)).toBe('1in');
+});
+
+test('the page rule scan does not grow with the size of the document', () => {
+  const doc = `<style>${'@page '.repeat(40_000)}</style>`;
+  const started = Date.now();
+  const rules = pageRules(doc);
+  const took = Date.now() - started;
+  expect(rules).toEqual([]);
+  expect(took).toBeLessThan(3000);
+});
+
+test('a page rule is found where a rule used to be looked for', () => {
+  expect(pageRules('<style>@page{size:A4}</style>')).toEqual(['@page{size:A4}']);
+  expect(pageRules('<style>@page :first{margin:1in}@page{size:A4}</style>')).toEqual([
+    '@page :first{margin:1in}',
+    '@page{size:A4}',
+  ]);
+  expect(pageRules('<!-- <style>@page{size:A4}</style> --><p>x')).toEqual([]);
+  expect(pageRules('<style>/* @page{size:A4} */ @page{size:B5}</style>')).toEqual([
+    '@page{size:B5}',
+  ]);
+  expect(pageRules('<style>@page{content:"}"}</style>')).toEqual(['@page{content:""}']);
+  expect(pageRules('<style>@page{size:A4}')).toEqual(['@page{size:A4}']);
 });

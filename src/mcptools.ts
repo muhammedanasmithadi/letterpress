@@ -1,5 +1,4 @@
-import { readFile } from 'node:fs/promises';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { lstatSync, readlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -8,7 +7,7 @@ import { Browser } from './browser.ts';
 import { FINDINGS, FINDING_CODES } from './findings.ts';
 import { inspect } from './pdf.ts';
 import { fontProbe, wideGaps } from './pageside.ts';
-import { render, type Format, type RenderRequest } from './render.ts';
+import { render, FORMATS as RENDER_FORMATS, type Format, type RenderRequest } from './render.ts';
 import { pageAnalysis } from './subcommands.ts';
 import { validate } from './validate.ts';
 
@@ -20,7 +19,7 @@ type ToolResult = {
   isError?: boolean;
 };
 
-const FORMATS = ['a3', 'a4', 'a5', 'legal', 'letter', 'tabloid'] as const;
+const FORMATS = Object.keys(RENDER_FORMATS) as ReadonlyArray<Format>;
 
 const PDF_RESOURCE_LIMIT = 4 * 1024 * 1024;
 
@@ -187,7 +186,7 @@ export const TOOLS: Tool[] = [
         html: { type: 'string', description: 'the document to read the page rules out of.' },
         format: {
           type: 'string',
-          enum: ['a3', 'a4', 'a5', 'legal', 'letter', 'tabloid'],
+          enum: FORMATS,
           description: 'the paper to ask about, as if it were requested.',
         },
         margin: {
@@ -227,29 +226,36 @@ export type McpContext = {
   workDir: string;
 
   sandbox?: McpSandbox;
+
+  outputCount: number;
+
+  close?: () => Promise<void>;
 };
 
 export async function makeContext(): Promise<McpContext> {
   const workDir = await mkdtemp(join(tmpdir(), 'letterpress-mcp-'));
+  const profile = await mkdtemp(join(tmpdir(), 'letterpress-mcp-profile-'));
   let browser: Browser | undefined;
   return {
     workDir,
+    outputCount: 0,
     browser: async () => {
-      if (!browser) {
-        const profile = await mkdtemp(join(tmpdir(), 'letterpress-mcp-profile-'));
-        browser = await Browser.launch({ profile });
-      }
+      if (!browser) browser = await Browser.launch({ profile });
       return browser;
+    },
+    close: async () => {
+      await browser?.close();
+      await rm(profile, { recursive: true, force: true }).catch(() => {});
     },
   };
 }
 
 export function contextWith(browser: Browser, workDir: string, sandbox: McpSandbox): McpContext {
-  return { browser: async () => browser, workDir, sandbox };
+  return { browser: async () => browser, workDir, sandbox, outputCount: 0 };
 }
 
 export async function closeContext(ctx: McpContext): Promise<void> {
-  const { rm } = await import('node:fs/promises');
+  await ctx.close?.();
   await rm(ctx.workDir, { recursive: true, force: true }).catch(() => {});
 }
 
@@ -356,10 +362,24 @@ function refuseForSandbox(request: RenderRequest, ctx: McpContext): string | nul
   return null;
 }
 
-let outputCounter = 0;
-function nextOutputName(): string {
-  outputCounter += 1;
-  return `output-${outputCounter}.pdf`;
+function nextOutputName(ctx: McpContext): string {
+  ctx.outputCount += 1;
+  return `output-${ctx.outputCount}.pdf`;
+}
+
+async function sweepOlderOutputs(ctx: McpContext, keep: string): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await readdir(ctx.workDir);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    const path = join(ctx.workDir, name);
+    if (path === keep) continue;
+    if (!name.startsWith('output-')) continue;
+    await rm(path, { force: true }).catch(() => {});
+  }
 }
 
 function confineRead(path: string, ctx: McpContext): string | null {
@@ -419,6 +439,27 @@ function boolArg(args: Record<string, unknown>, key: string): boolean {
   return args[key] === true;
 }
 
+function numberArgs(args: Record<string, unknown>): {
+  maxImagePpi?: number;
+  settleMs?: number;
+  timeoutMs?: number;
+  error?: string;
+} {
+  const timeoutMs = numberArg(args, 'timeoutMs');
+  if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs < 1000)) {
+    return { error: 'timeoutMs must be a number of at least 1000.' };
+  }
+  const settleMs = numberArg(args, 'settleMs');
+  if (settleMs !== undefined && (!Number.isFinite(settleMs) || settleMs < 0)) {
+    return { error: 'settleMs must be zero or more.' };
+  }
+  const maxImagePpi = numberArg(args, 'maxImagePpi');
+  if (maxImagePpi !== undefined && (!Number.isFinite(maxImagePpi) || maxImagePpi < 0)) {
+    return { error: 'maxImagePpi must be zero or more.' };
+  }
+  return { maxImagePpi, settleMs, timeoutMs };
+}
+
 function renderRequestFrom(args: Record<string, unknown>): {
   request: RenderRequest;
   error?: string;
@@ -431,7 +472,7 @@ function renderRequestFrom(args: Record<string, unknown>): {
   }
 
   const format = stringArg(args, 'format');
-  if (format !== undefined && !(FORMATS as readonly string[]).includes(format)) {
+  if (format !== undefined && !FORMATS.includes(format.trim().toLowerCase() as Format)) {
     return { request: {}, error: `format must be one of ${FORMATS.join(', ')}, got "${format}".` };
   }
   const margin = stringArg(args, 'margin');
@@ -442,20 +483,27 @@ function renderRequestFrom(args: Record<string, unknown>): {
     };
   }
 
+  const probe = stringArg(args, 'probe');
+  if (probe !== undefined && probe !== 'gaps' && probe !== 'fonts') {
+    return { request: {}, error: `probe must be one of gaps, fonts, got "${probe}".` };
+  }
+  const numbers = numberArgs(args);
+  if (numbers.error !== undefined) return { request: {}, error: numbers.error };
+
   return {
     request: {
       html,
       path,
       url,
-      pageProbe: probeFor(stringArg(args, 'probe')),
-      format: format as Format | undefined,
+      pageProbe: probeFor(probe),
+      format: format?.trim().toLowerCase() as Format | undefined,
       landscape: boolArg(args, 'landscape'),
       margin,
       pageRanges: stringArg(args, 'pageRanges'),
       allowNetwork: boolArg(args, 'allowNetwork'),
-      maxImagePpi: numberArg(args, 'maxImagePpi'),
-      settleMs: numberArg(args, 'settleMs'),
-      timeoutMs: numberArg(args, 'timeoutMs'),
+      maxImagePpi: numbers.maxImagePpi,
+      settleMs: numbers.settleMs,
+      timeoutMs: numbers.timeoutMs,
       noScript: boolArg(args, 'noScript'),
       beforePrint: stringArg(args, 'beforePrint'),
       root: stringArg(args, 'root'),
@@ -471,7 +519,7 @@ async function renderHtml(args: Record<string, unknown>, ctx: McpContext): Promi
   const out =
     requested !== undefined && requested.trim() !== ''
       ? requested
-      : join(ctx.workDir, nextOutputName());
+      : join(ctx.workDir, nextOutputName(ctx));
   const confined = confineOutput(out, ctx);
   if (confined !== null) return failure(confined);
 
@@ -479,7 +527,14 @@ async function renderHtml(args: Record<string, unknown>, ctx: McpContext): Promi
   if ('refused' in rendered) return failure(rendered.refused);
   const result = rendered.result;
 
-  await writeFile(out, result.pdf);
+  try {
+    await writeFile(out, result.pdf);
+    await sweepOlderOutputs(ctx, out);
+  } catch (e) {
+    return failure(
+      `the pdf could not be written to ${out}: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
 
   const errors = result.findings.filter((f) => f.severity === 'error');
   const lines = result.findings.map(findingLine);
@@ -506,18 +561,35 @@ async function renderHtml(args: Record<string, unknown>, ctx: McpContext): Promi
     ...(result.probe === undefined ? {} : { probe: result.probe }),
   };
 
-  if (boolArg(args, 'includePdf') && result.pdf.byteLength <= PDF_RESOURCE_LIMIT) {
-    content.push({
-      type: 'resource',
-      resource: {
-        uri: `file://${out}`,
-        mimeType: 'application/pdf',
-        blob: Buffer.from(result.pdf).toString('base64'),
-      },
-    });
+  if (boolArg(args, 'includePdf')) {
+    if (result.pdf.byteLength <= PDF_RESOURCE_LIMIT) {
+      content.push({
+        type: 'resource',
+        resource: {
+          uri: `file://${out}`,
+          mimeType: 'application/pdf',
+          blob: Buffer.from(result.pdf).toString('base64'),
+        },
+      });
+    } else {
+      content.push(
+        text(
+          `the pdf is ${(result.pdf.byteLength / 1048576).toFixed(1)}MB, over the ` +
+            `${PDF_RESOURCE_LIMIT / 1048576}MB limit for sending it inline. it was written to ${out}.`,
+        ),
+      );
+    }
   }
 
   return { content, structuredContent: structured };
+}
+
+function decodeBase64(text: string): Uint8Array | null {
+  const packed = text.replace(/\s+/g, '');
+  if (packed.length === 0) return new Uint8Array();
+  if (packed.length % 4 !== 0) return null;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(packed)) return null;
+  return new Uint8Array(Buffer.from(packed, 'base64'));
 }
 
 async function validatePdf(args: Record<string, unknown>, ctx: McpContext): Promise<ToolResult> {
@@ -528,11 +600,9 @@ async function validatePdf(args: Record<string, unknown>, ctx: McpContext): Prom
 
   let bytes: Uint8Array;
   if (encoded !== undefined) {
-    try {
-      bytes = new Uint8Array(Buffer.from(encoded, 'base64'));
-    } catch (e) {
-      return failure(`the pdf is not base64: ${e instanceof Error ? e.message : String(e)}`);
-    }
+    const decoded = decodeBase64(encoded);
+    if (decoded === null) return failure('the pdf is not base64.');
+    bytes = decoded;
   } else {
     const confined = confineRead(path!, ctx);
     if (confined !== null) return failure(confined);

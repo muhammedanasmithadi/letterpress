@@ -332,7 +332,7 @@ async function mcpResponse(request: Request, session: Session): Promise<Response
   if (mismatch) return mcpError(idOf(msg), -32020, mismatch);
 
   const reply = await handle(session, msg as never);
-  if (reply === null) {
+  if (reply === null || (Array.isArray(reply) && reply.length === 0)) {
     return new Response(null, { status: 202 });
   }
   return Response.json(reply, { headers: { 'cache-control': 'no-store' } });
@@ -525,24 +525,8 @@ export async function startServer(opts: ServerOptions = {}) {
     idleTimeout: 30,
 
     async fetch(request: Request): Promise<Response> {
-      if (!hostAllowed(request.headers.get('host'))) {
-        return Response.json(
-          {
-            ok: false,
-            error: 'this server only answers requests addressed to loopback',
-          },
-          { status: 403 },
-        );
-      }
-      if (!originAllowed(request, server.port ?? 0)) {
-        return Response.json(
-          {
-            ok: false,
-            error: 'this server only answers its own viewer, not other web pages',
-          },
-          { status: 403 },
-        );
-      }
+      const refused = refusedBy(request);
+      if (refused !== null) return refused;
 
       let url: URL;
       try {
@@ -553,11 +537,7 @@ export async function startServer(opts: ServerOptions = {}) {
 
       try {
         if (url.pathname === '/health') {
-          const alive = await browser.alive();
-          return Response.json(
-            { ok: alive, port: server.port, chromium: alive },
-            { status: alive ? 200 : 503 },
-          );
+          return healthRoute();
         }
 
         if (url.pathname === '/mcp') {
@@ -571,210 +551,23 @@ export async function startServer(opts: ServerOptions = {}) {
         }
 
         if (url.pathname === '/findings') {
-          return Response.json(
-            {
-              findings: FINDING_CODES.map((code) => ({ code, ...FINDINGS[code]! })),
-            },
-            { headers: { 'cache-control': 'no-store' } },
-          );
+          return findingsRoute();
         }
 
         if (url.pathname === '/' || url.pathname === '/index.html') {
-          const file = Bun.file(join(viewerDir, 'index.html'));
-          if (!(await file.exists())) {
-            return new Response('viewer not built yet', { status: 404 });
-          }
-          return new Response(file, {
-            headers: {
-              'content-type': 'text/html; charset=utf-8',
-              'cache-control': 'no-store',
-            },
-          });
+          return viewerRoute();
         }
 
         if (url.pathname.startsWith('/assets/')) {
-          const name = url.pathname.slice('/assets/'.length);
-          const target = join(viewerDir, name);
-
-          if (!target.startsWith(viewerDir + '/')) {
-            return new Response('forbidden', { status: 403 });
-          }
-
-          if (name.length > 512 || name.includes('\0')) {
-            return new Response('not found', { status: 404 });
-          }
-          const file = Bun.file(target);
-          if (!(await file.exists())) return new Response('not found', { status: 404 });
-
-          const ext = target.slice(target.lastIndexOf('.'));
-          const type =
-            ext === '.html'
-              ? 'text/html; charset=utf-8'
-              : ext === '.js' || ext === '.mjs'
-                ? 'text/javascript; charset=utf-8'
-                : ext === '.css'
-                  ? 'text/css; charset=utf-8'
-                  : ext === '.json'
-                    ? 'application/json'
-                    : undefined;
-          return new Response(
-            file,
-            type
-              ? {
-                  headers: {
-                    'content-type': type,
-                    'cache-control': 'no-store',
-                  },
-                }
-              : { headers: { 'cache-control': 'no-store' } },
-          );
+          return assetRoute(url.pathname);
         }
 
-        if (url.pathname !== '/render' || request.method !== 'POST') {
-          return new Response('not found', { status: 404 });
+        if (url.pathname === '/render') {
+          if (request.method !== 'POST') return new Response('not found', { status: 404 });
+          return renderRoute(request);
         }
 
-        const type = (request.headers.get('content-type') ?? '').split(';')[0]?.trim() ?? '';
-        if (type !== 'application/json') {
-          return Response.json(
-            {
-              ok: false,
-              error: `send content-type: application/json, not "${type || 'nothing'}"`,
-            },
-            { status: 415 },
-          );
-        }
-
-        if (active >= MAX_CONCURRENT_RENDERS && queued >= MAX_QUEUED_RENDERS) {
-          return Response.json(
-            {
-              ok: false,
-              error: `${MAX_CONCURRENT_RENDERS} renders are running and ${MAX_QUEUED_RENDERS} are queued, which is the limit. retry shortly.`,
-            },
-            { status: 429, headers: { 'retry-after': '2' } },
-          );
-        }
-
-        const read = await readCapped(request, MAX_BODY_BYTES);
-        if ('tooBig' in read) {
-          return Response.json(
-            {
-              ok: false,
-              error: `document is ${(read.tooBig / 1048576).toFixed(1)}MB, over the ${MAX_BODY_BYTES / 1048576}MB limit`,
-            },
-            { status: 413 },
-          );
-        }
-        if ('broken' in read) return badRequest(`body stream ended early: ${read.broken}`);
-
-        let body: RenderBody;
-        try {
-          body = JSON.parse(read.text);
-        } catch (e) {
-          return badRequest(`body is not valid JSON: ${(e as Error).message}`);
-        }
-
-        if (body === null || typeof body !== 'object' || Array.isArray(body)) {
-          return badRequest('body must be a JSON object');
-        }
-
-        const invalid = invalidBody(body);
-        if (invalid) return badRequest(invalid);
-        const format = typed(body.format);
-
-        const slot = acquire();
-        if (!slot) {
-          return Response.json(
-            {
-              ok: false,
-              error: `the render queue filled up while this request was being read. retry shortly.`,
-            },
-            { status: 429, headers: { 'retry-after': '2' } },
-          );
-        }
-
-        try {
-          await slot;
-        } catch (e) {
-          if (!(e instanceof ServerStopping)) throw e;
-          return Response.json(
-            { ok: false, error: STOPPING_MESSAGE },
-            { status: 503, headers: { 'retry-after': '5' } },
-          );
-        }
-
-        const work = (async () => {
-          try {
-            const result = await render(browser, {
-              html: body.html!,
-              format: format as Format | undefined,
-              landscape: body.landscape === true,
-              margin: typeof body.margin === 'string' ? body.margin.trim() || undefined : undefined,
-
-              printBackground: body.printBackground !== false,
-
-              allowNetwork: body.allowNetwork === true,
-
-              author: typeof body.author === 'string' ? body.author.trim() || undefined : undefined,
-              subject:
-                typeof body.subject === 'string' ? body.subject.trim() || undefined : undefined,
-              keywords:
-                typeof body.keywords === 'string' ? body.keywords.trim() || undefined : undefined,
-              auth: normalizeAuth(body.auth),
-              pageRanges: body.pageRanges,
-              maxImagePpi: clamp(body.maxImagePpi, 1200, undefined),
-              settleMs: clamp(body.settleMs, MAX_SETTLE_MS, undefined),
-              timeoutMs: deadline(body.timeoutMs),
-
-              transfer: 'stream',
-            });
-
-            if (result.info.pages > MAX_PAGES && !body.pageRanges) {
-              return Response.json(
-                {
-                  ok: false,
-                  error:
-                    `this document is ${result.info.pages} pages, over the ${MAX_PAGES}-page limit. ` +
-                    `split it, or render it with the cli, which has no page limit.`,
-                  pages: result.info.pages,
-                  limit: MAX_PAGES,
-                },
-                { status: 413 },
-              );
-            }
-
-            if (body.responseFormat === 'pdf') {
-              return pdfResponse(result);
-            }
-
-            return Response.json({
-              ok: true,
-              pdf: Buffer.from(result.pdf).toString('base64'),
-              pages: result.info.pages,
-              bytes: result.pdf.byteLength,
-              ms: result.ms,
-              mediaBoxes: result.info.mediaBoxes,
-              tagged: result.info.tagged,
-              findings: result.findings,
-
-              partial: Boolean(body.pageRanges),
-            });
-          } catch (e) {
-            return Response.json(
-              { ok: false, error: e instanceof Error ? e.message : String(e) },
-              { status: 500 },
-            );
-          } finally {
-            release();
-          }
-        })();
-
-        inFlight.add(work);
-        try {
-          return await work;
-        } finally {
-          inFlight.delete(work);
-        }
+        return new Response('not found', { status: 404 });
       } catch (e) {
         return Response.json(
           { ok: false, error: e instanceof Error ? e.message : String(e) },
@@ -783,6 +576,260 @@ export async function startServer(opts: ServerOptions = {}) {
       }
     },
   });
+
+  function renderWithBody(body: RenderBody, format: Format | undefined) {
+    return render(browser, {
+      html: body.html!,
+      format: format as Format | undefined,
+      landscape: body.landscape === true,
+      margin: typeof body.margin === 'string' ? body.margin.trim() || undefined : undefined,
+
+      printBackground: body.printBackground !== false,
+
+      allowNetwork: body.allowNetwork === true,
+
+      author: typeof body.author === 'string' ? body.author.trim() || undefined : undefined,
+      subject: typeof body.subject === 'string' ? body.subject.trim() || undefined : undefined,
+      keywords: typeof body.keywords === 'string' ? body.keywords.trim() || undefined : undefined,
+      auth: normalizeAuth(body.auth),
+      pageRanges: body.pageRanges,
+      maxImagePpi: clamp(body.maxImagePpi, 1200, undefined),
+      settleMs: clamp(body.settleMs, MAX_SETTLE_MS, undefined),
+      timeoutMs: deadline(body.timeoutMs),
+
+      transfer: 'stream',
+    });
+  }
+
+  async function renderBody(
+    request: Request,
+  ): Promise<{ body: RenderBody } | { refused: Response }> {
+    const read = await readCapped(request, MAX_BODY_BYTES);
+    if ('tooBig' in read) {
+      return {
+        refused: Response.json(
+          {
+            ok: false,
+            error: `document is ${(read.tooBig / 1048576).toFixed(1)}MB, over the ${MAX_BODY_BYTES / 1048576}MB limit`,
+          },
+          { status: 413 },
+        ),
+      };
+    }
+    if ('broken' in read) {
+      return { refused: badRequest(`body stream ended early: ${read.broken}`) };
+    }
+    let body: RenderBody;
+    try {
+      body = JSON.parse(read.text);
+    } catch (e) {
+      return { refused: badRequest(`body is not valid JSON: ${(e as Error).message}`) };
+    }
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      return { refused: badRequest('body must be a JSON object') };
+    }
+    const invalid = invalidBody(body);
+    if (invalid) return { refused: badRequest(invalid) };
+    return { body };
+  }
+
+  function refusedBy(request: Request): Response | null {
+    if (!hostAllowed(request.headers.get('host'))) {
+      return Response.json(
+        {
+          ok: false,
+          error: 'this server only answers requests addressed to loopback',
+        },
+        { status: 403 },
+      );
+    }
+    if (!originAllowed(request, server.port ?? 0)) {
+      return Response.json(
+        {
+          ok: false,
+          error: 'this server only answers its own viewer, not other web pages',
+        },
+        { status: 403 },
+      );
+    }
+    return null;
+  }
+
+  async function healthRoute(): Promise<Response> {
+    const alive = await browser.alive();
+    return Response.json(
+      { ok: alive, port: server.port, chromium: alive },
+      { status: alive ? 200 : 503 },
+    );
+  }
+
+  function findingsRoute(): Response {
+    return Response.json(
+      {
+        findings: FINDING_CODES.map((code) => ({ code, ...FINDINGS[code]! })),
+        formats: Object.keys(FORMATS),
+      },
+      { headers: { 'cache-control': 'no-store' } },
+    );
+  }
+
+  async function viewerRoute(): Promise<Response> {
+    const file = Bun.file(join(viewerDir, 'index.html'));
+    if (!(await file.exists())) {
+      return new Response('viewer not built yet', { status: 404 });
+    }
+    return new Response(file, {
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+      },
+    });
+  }
+
+  async function assetRoute(pathname: string): Promise<Response> {
+    const name = pathname.slice('/assets/'.length);
+    const target = join(viewerDir, name);
+
+    if (!target.startsWith(viewerDir + '/')) {
+      return new Response('forbidden', { status: 403 });
+    }
+
+    if (name.length > 512 || name.includes('\0')) {
+      return new Response('not found', { status: 404 });
+    }
+    const file = Bun.file(target);
+    if (!(await file.exists())) return new Response('not found', { status: 404 });
+
+    const ext = target.slice(target.lastIndexOf('.'));
+    const type =
+      ext === '.html'
+        ? 'text/html; charset=utf-8'
+        : ext === '.js' || ext === '.mjs'
+          ? 'text/javascript; charset=utf-8'
+          : ext === '.css'
+            ? 'text/css; charset=utf-8'
+            : ext === '.json'
+              ? 'application/json'
+              : undefined;
+    return new Response(
+      file,
+      type
+        ? {
+            headers: {
+              'content-type': type,
+              'cache-control': 'no-store',
+            },
+          }
+        : { headers: { 'cache-control': 'no-store' } },
+    );
+  }
+
+  async function renderRoute(request: Request): Promise<Response> {
+    try {
+      const type = (request.headers.get('content-type') ?? '').split(';')[0]?.trim() ?? '';
+      if (type !== 'application/json') {
+        return Response.json(
+          {
+            ok: false,
+            error: `send content-type: application/json, not "${type || 'nothing'}"`,
+          },
+          { status: 415 },
+        );
+      }
+
+      if (active >= MAX_CONCURRENT_RENDERS && queued >= MAX_QUEUED_RENDERS) {
+        return Response.json(
+          {
+            ok: false,
+            error: `${MAX_CONCURRENT_RENDERS} renders are running and ${MAX_QUEUED_RENDERS} are queued, which is the limit. retry shortly.`,
+          },
+          { status: 429, headers: { 'retry-after': '2' } },
+        );
+      }
+
+      const read = await renderBody(request);
+      if ('refused' in read) return read.refused;
+      const body = read.body;
+      const format = typed(body.format);
+
+      const slot = acquire();
+      if (!slot) {
+        return Response.json(
+          {
+            ok: false,
+            error: `the render queue filled up while this request was being read. retry shortly.`,
+          },
+          { status: 429, headers: { 'retry-after': '2' } },
+        );
+      }
+
+      try {
+        await slot;
+      } catch (e) {
+        if (!(e instanceof ServerStopping)) throw e;
+        return Response.json(
+          { ok: false, error: STOPPING_MESSAGE },
+          { status: 503, headers: { 'retry-after': '5' } },
+        );
+      }
+
+      const work = (async () => {
+        try {
+          const result = await renderWithBody(body, format as Format | undefined);
+
+          if (result.info.pages > MAX_PAGES && !body.pageRanges) {
+            return Response.json(
+              {
+                ok: false,
+                error:
+                  `this document is ${result.info.pages} pages, over the ${MAX_PAGES}-page limit. ` +
+                  `split it, or render it with the cli, which has no page limit.`,
+                pages: result.info.pages,
+                limit: MAX_PAGES,
+              },
+              { status: 413 },
+            );
+          }
+
+          if (body.responseFormat === 'pdf') {
+            return pdfResponse(result);
+          }
+
+          return Response.json({
+            ok: true,
+            pdf: Buffer.from(result.pdf).toString('base64'),
+            pages: result.info.pages,
+            bytes: result.pdf.byteLength,
+            ms: result.ms,
+            mediaBoxes: result.info.mediaBoxes,
+            tagged: result.info.tagged,
+            findings: result.findings,
+
+            partial: Boolean(body.pageRanges),
+          });
+        } catch (e) {
+          return Response.json(
+            { ok: false, error: e instanceof Error ? e.message : String(e) },
+            { status: 500 },
+          );
+        } finally {
+          release();
+        }
+      })();
+
+      inFlight.add(work);
+      try {
+        return await work;
+      } finally {
+        inFlight.delete(work);
+      }
+    } catch (e) {
+      return Response.json(
+        { ok: false, error: e instanceof Error ? e.message : String(e) },
+        { status: 500 },
+      );
+    }
+  }
 
   async function reapChromium() {
     if (!process.platform.toUpperCase().startsWith('LINUX')) return;

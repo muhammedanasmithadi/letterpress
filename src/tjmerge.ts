@@ -309,20 +309,32 @@ function sameGlyphs(before: Placed[], after: Placed[] | null): boolean {
   return true;
 }
 
-function decodeStream(o: Obj): { text: string; compressed: boolean } | null {
+function decodeStream(o: Obj): { bytes: Buffer; compressed: boolean } | null {
   const dict = dictOf(o);
   const range = streamRange(o.bytes);
   if (!range) return null;
   const compressed = /FlateDecode/.test(dict);
   const raw = o.bytes.subarray(range.start, range.end);
   try {
-    return {
-      text: (compressed ? inflateSync(raw) : Buffer.from(raw)).toString(LATIN1),
-      compressed,
-    };
+    return { bytes: compressed ? inflateSync(raw) : Buffer.from(raw), compressed };
   } catch {
     return null;
   }
+}
+
+const WORD = /[A-Za-z0-9_]/;
+
+function wordByte(b: number | undefined): boolean {
+  return b !== undefined && WORD.test(String.fromCharCode(b));
+}
+
+function hasTextBlock(bytes: Buffer): boolean {
+  let at = bytes.indexOf('BT');
+  while (at !== -1) {
+    if (!wordByte(bytes[at - 1]) && !wordByte(bytes[at + 2])) return true;
+    at = bytes.indexOf('BT', at + 1);
+  }
+  return false;
 }
 
 export function mergeTextRuns(pdf: Uint8Array): { pdf: Uint8Array; stats: MergeStats } {
@@ -337,14 +349,15 @@ export function mergeTextRuns(pdf: Uint8Array): { pdf: Uint8Array; stats: MergeS
   let changed = 0;
   const objs: Obj[] = parts.objs.map((o) => {
     const decoded = decodeStream(o);
-    if (!decoded || !/\bBT\b/.test(decoded.text)) return o;
-    const blocks = blocksOf(decoded.text);
+    if (!decoded || !hasTextBlock(decoded.bytes)) return o;
+    const text = decoded.bytes.toString(LATIN1);
+    const blocks = blocksOf(text);
     stats.blocks += blocks.length;
     const widths = byStream.get(o.num);
     if (!widths) return o;
-    const before = streamPlaced(decoded.text, widths);
+    const before = streamPlaced(text, widths);
 
-    let rewritten = decoded.text;
+    let rewritten = text;
     let merged = 0;
     for (const block of blocks) {
       const run = before ? mergeBlock(block, widths) : null;
@@ -353,7 +366,7 @@ export function mergeTextRuns(pdf: Uint8Array): { pdf: Uint8Array; stats: MergeS
         merged++;
       }
     }
-    if (rewritten === decoded.text) {
+    if (rewritten === text) {
       stats.refused += before ? blocks.length - merged : blocks.length;
       return o;
     }
@@ -390,11 +403,11 @@ export function textRunProfile(pdf: Uint8Array): { glyphs: number; tj: number; s
   if (!parts) return profile;
   for (const o of parts.objs) {
     const decoded = decodeStream(o);
-    if (!decoded || !/\bBT\b/.test(decoded.text)) continue;
-    profile.glyphs += (decoded.text.match(/<[0-9A-Fa-f]+>/g) ?? []).length;
-    profile.tj += (decoded.text.match(/\bTJ\b/g) ?? []).length;
-    profile.showOps +=
-      (decoded.text.match(/\bTj\b/g) ?? []).length + (decoded.text.match(/\bTJ\b/g) ?? []).length;
+    if (!decoded || !hasTextBlock(decoded.bytes)) continue;
+    const text = decoded.bytes.toString(LATIN1);
+    profile.glyphs += (text.match(/<[0-9A-Fa-f]+>/g) ?? []).length;
+    profile.tj += (text.match(/\bTJ\b/g) ?? []).length;
+    profile.showOps += (text.match(/\bTj\b/g) ?? []).length + (text.match(/\bTJ\b/g) ?? []).length;
   }
   return profile;
 }

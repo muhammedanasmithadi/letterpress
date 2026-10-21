@@ -8,6 +8,7 @@ import {
   streamRange,
   trySplit,
   type Obj,
+  type Parts,
 } from './pdfparts.ts';
 
 export function pdfString(value: string): string {
@@ -103,14 +104,14 @@ function decodeLiteral(raw: string): string {
   return out;
 }
 
-export function readDocInfo(pdf: Uint8Array): DocInfo {
+export function readDocInfo(pdf: Uint8Array, parts?: Parts): DocInfo {
   const empty: DocInfo = {};
-  const parts = trySplit(pdf);
-  if (!parts) return empty;
-  const trailer = parts.trailer.toString(LATIN1);
+  const split = parts ?? trySplit(pdf);
+  if (!split) return empty;
+  const trailer = split.trailer.toString(LATIN1);
   const ref = trailer.match(/\/Info\s+(\d+)\s+0\s+R/);
   if (!ref) return empty;
-  const obj = parts.objs.find((o) => o.num === Number(ref[1]));
+  const obj = split.objs.find((o) => o.num === Number(ref[1]));
   if (!obj) return empty;
   const body = obj.bytes.toString(LATIN1);
   return {
@@ -205,7 +206,7 @@ export function addMetadata(
   if (isEncrypted(pdf)) return pdf;
 
   const packetInfo: DocInfo = {
-    ...readDocInfo(pdf),
+    ...readDocInfo(pdf, parts),
     author: wanted.Author,
     subject: wanted.Subject,
     keywords: wanted.Keywords,

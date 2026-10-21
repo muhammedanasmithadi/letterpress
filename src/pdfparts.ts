@@ -33,9 +33,12 @@ function dictClose(window: string): number {
 }
 
 export function isEncrypted(pdf: Uint8Array): boolean {
-  const parts = trySplit(pdf);
-  if (!parts) return false;
-  return /\/Encrypt\b/.test(maskStrings(parts.trailer.toString(LATIN1)));
+  const buf = asBuffer(pdf);
+  const at = buf.indexOf('\ntrailer\n');
+  if (at === -1) return false;
+  const end = buf.indexOf('\nstartxref', at);
+  const trailer = buf.subarray(at + 1, end === -1 ? buf.length : end).toString(LATIN1);
+  return /\/Encrypt\b/.test(maskStrings(trailer));
 }
 
 export function hasPostTrailerObjects(pdf: Uint8Array): boolean {
@@ -202,6 +205,8 @@ function isStreamKeyword(text: string, at: number, mode: 'word' | 'newline'): bo
   return !/[A-Za-z0-9]/.test(before) && !/[A-Za-z0-9]/.test(after);
 }
 
+const DICT_LIMIT = 8192;
+
 export function maskStrings(text: string): string {
   const out: string[] = [];
   let last = 0;
@@ -270,9 +275,15 @@ function maskStringBody(
 }
 
 export function dictOf(o: Obj): string {
-  const text = o.bytes.toString(LATIN1);
-  const at = findStream(text, 'word');
-  return (at === -1 ? text : text.slice(0, at)).trim();
+  const bytes = o.bytes;
+  const limit = Math.min(bytes.length, DICT_LIMIT);
+  const head = bytes.subarray(0, limit).toString(LATIN1);
+  const at = findStream(head, 'word');
+  if (at !== -1) return head.slice(0, at).trim();
+  if (limit === bytes.length) return head.trim();
+  const text = bytes.toString(LATIN1);
+  const full = findStream(text, 'word');
+  return (full === -1 ? text : text.slice(0, full)).trim();
 }
 
 export function dictCode(o: Obj): string {

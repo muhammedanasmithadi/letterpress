@@ -299,6 +299,26 @@ describe('the cost of splitting a document', () => {
   });
 });
 
+describe('the dictionary of an object', () => {
+  test('a long dictionary is still read whole', () => {
+    const filler = ' '.repeat(9000);
+    const obj = {
+      num: 1,
+      bytes: Buffer.from(`1 0 obj\n<< /Note (${filler}) /Type /Page >>\nendobj\n`, LATIN1),
+    } as Obj;
+    expect(dictOf(obj)).toContain('/Type /Page');
+    expect(dictOf(obj)).toContain('/Note');
+  });
+
+  test('a stream after the dictionary is not part of it', () => {
+    const obj = {
+      num: 1,
+      bytes: Buffer.from('1 0 obj\n<< /Length 5 >>\nstream\nq q q\nendstream\nendobj\n', LATIN1),
+    } as Obj;
+    expect(dictOf(obj)).toBe('1 0 obj\n<< /Length 5 >>');
+  });
+});
+
 describe('maskStrings', () => {
   const O = (bytes: string) => ({ num: 1, bytes: Buffer.from(bytes, LATIN1) }) as Obj;
 
@@ -434,6 +454,8 @@ describe('split keeps a stream object whole', () => {
 
       expect(o.bytes.toString(LATIN1).endsWith('\nendstream\nendobj')).toBe(true);
       expect(contentPayloads(pdf)).toEqual([payload]);
+      const parts = trySplit(pdf);
+      expect(contentPayloads(pdf, parts)).toEqual([payload]);
       expect(verify(pdf).ok).toBe(true);
     });
   }

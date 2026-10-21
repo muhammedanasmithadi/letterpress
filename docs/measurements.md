@@ -37,11 +37,11 @@ objects, and the parts are read from there. A 1.9 MB document from 38 pages:
 
 | measurement                               | before   | after    |
 | ----------------------------------------- | -------- | -------- |
-| parses of the same bytes in one render    | 35       | 35       |
+| parses of the same bytes in one render    | 35       | 20       |
 | text masked to find a keyword, per render | 180.7 MB | 77.8 MB  |
 | time in the mask, per render              | ~6.0 s   | ~1.2 s   |
 | time in the parse, per render             | ~9.6 s   | ~4.0 s   |
-| the whole render, best of eight           | 5 390 ms | 2 421 ms |
+| the whole render, best of sixteen         | 5 390 ms | 2 406 ms |
 | the same render for a one-page document   | 882 ms   | 863 ms   |
 
 The numbers are from a machine under load as well as a quiet one, so the two
@@ -56,9 +56,22 @@ learn that the keyword is a hundred bytes in. The keyword is found by a scan
 now, and the mask is only made for the part of the object that is a
 dictionary.
 
-The 35 parses are the next thing to look at. Nine of them are the repairs,
-each of which is given the whole document and returns the whole document, and
-each of which is checked afterwards, and the check parses too.
+The parses are the next thing to look at, and there are twenty of them where
+there were thirty-five. A document is parsed for the repair, for the check
+after the repair, and for the check that the content streams were not
+rewritten; the parts a function has already parsed are now passed to it
+rather than parsed again, and the encryption check reads the trailer instead
+of the document.
+
+What is left is nine of the repairs, each of which is given the whole
+document and returns the whole document, and each of which is checked
+afterwards, and the check parses too. That is a change of shape rather than a
+change of speed: a repair would take the parts and return the parts, and the
+document would be written once at the end.
+
+The dictionary of an object is read from the front of it, so the stream after
+the dictionary is never turned into a string to be thrown away. A dictionary
+longer than the window falls back to the whole object, which is rare.
 
 ## Runtime comparison
 

@@ -6,25 +6,25 @@ import {
   streamRange,
   trySplit,
   type Obj,
+  type Parts,
 } from './pdfparts.ts';
 
 const LATIN1 = 'latin1' as BufferEncoding;
 
 type Verification = { ok: boolean; failures: string[] };
 
-function index(pdf: Uint8Array): Map<number, string> {
+function index(parts: Parts | undefined): Map<number, string> {
   const out = new Map<number, string>();
-  const parts = trySplit(pdf);
   if (parts) for (const o of parts.objs) out.set(o.num, o.bytes.toString(LATIN1));
   return out;
 }
 
-export function contentPayloads(pdf: Uint8Array): string[] {
-  const parts = trySplit(pdf);
-  if (!parts) return [];
-  const byNum = new Map<number, Obj>(parts.objs.map((o) => [o.num, o]));
+export function contentPayloads(pdf: Uint8Array, parts?: Parts): string[] {
+  const split = parts ?? trySplit(pdf);
+  if (!split) return [];
+  const byNum = new Map<number, Obj>(split.objs.map((o) => [o.num, o]));
   const out: string[] = [];
-  for (const o of parts.objs) {
+  for (const o of split.objs) {
     if (!/\/Type\s*\/Page\b/.test(o.bytes.toString(LATIN1))) continue;
     for (const m of o.bytes
       .toString(LATIN1)
@@ -89,13 +89,12 @@ function checkCrossRef(text: string, failures: string[]): void {
 }
 
 function checkReferences(
-  pdf: Uint8Array,
   parts: ReturnType<typeof trySplit>,
   text: string,
   codes: string[],
   failures: string[],
 ): void {
-  const defined = index(pdf);
+  const defined = index(parts);
   for (const m of text.matchAll(/(?:^|[^0-9])(\d+) \d+ obj\b/g)) defined.set(Number(m[1]), '');
   const codeRegions: string[] = parts
     ? [...codes, maskStrings(parts.trailer.toString(LATIN1))]
@@ -179,9 +178,14 @@ function checkObjects(
   }
 }
 
-function checkPreserved(original: Uint8Array, pdf: Uint8Array, failures: string[]): void {
+function checkPreserved(
+  original: Uint8Array,
+  pdf: Uint8Array,
+  parts: Parts | undefined,
+  failures: string[],
+): void {
   const before = contentPayloads(original);
-  const after = contentPayloads(pdf);
+  const after = contentPayloads(pdf, parts);
   if (before.length !== after.length) {
     failures.push(`the document has ${after.length} content streams where it had ${before.length}`);
     return;
@@ -206,9 +210,9 @@ export function verify(pdf: Uint8Array, original?: Uint8Array): Verification {
   const parts = trySplit(pdf);
   const byNum = new Map<number, Obj>((parts?.objs ?? []).map((o) => [o.num, o]));
   const codes = parts ? parts.objs.map((o) => dictCode(o)) : [];
-  checkReferences(pdf, parts, text, codes, failures);
+  checkReferences(parts, text, codes, failures);
   checkObjects(parts, byNum, codes, failures);
-  if (original) checkPreserved(original, pdf, failures);
+  if (original) checkPreserved(original, pdf, parts, failures);
 
   return { ok: failures.length === 0, failures };
 }

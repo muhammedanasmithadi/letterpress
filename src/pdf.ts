@@ -160,10 +160,6 @@ export function stripPageSize(html: string): string {
         open +
         body
           .replace(/((?:^|;)\s*)\bsize\s*:[^;}]*/gi, '$1')
-          // The separators around the declaration that was taken out. `size` first in the
-          // rule leaves the `;` that followed it leading the body; `size` last leaves the `;`
-          // that preceded it trailing. Neither is a syntax error in CSS, but a page rule that
-          // reads `{;margin:2cm}` is a page rule nobody wrote.
           .replace(/^\s*;\s*/, '')
           .replace(/;\s*;/g, ';')
           .replace(/\s*;\s*$/, '') +
@@ -182,12 +178,9 @@ function landscapeSizeValue(value: string): string | null {
   if (!v || /\blandscape\b/.test(v)) return null;
   const dims = /^([\d.]+)\s*(mm|cm|in|pt|pc|px|q)\s+([\d.]+)\s*(mm|cm|in|pt|pc|px|q)$/.exec(v);
   if (dims) {
-    try {
-      if (toInches(`${dims[1]}${dims[2]}`) > toInches(`${dims[3]}${dims[4]}`)) return null;
-    } catch {
-      // Not a unit printToPDF can take; the declaration still has an order, so
-      // fall through and swap it.
-    }
+    const first = inchesOf(`${dims[1]}${dims[2]}`);
+    const second = inchesOf(`${dims[3]}${dims[4]}`);
+    if (first !== null && second !== null && first > second) return null;
     return `${dims[3]}${dims[4]} ${dims[1]}${dims[2]}`;
   }
   if (/^(a3|a4|a5|b4|b5|jis-b[45]|letter|legal|tabloid|ledger)\b/.test(v)) {
@@ -250,20 +243,7 @@ export function pageRules(html: string): string[] {
     styles
       .flatMap((m) => m[1] ?? [])
       .join('\n')
-      // Comments before strings, for the same reason the HTML comments go first above:
-      // the comment is the outer container, and an apostrophe inside one is not a
-      // delimiter. Stripping the other way round, `` opened a string at
-      // the apostrophe and closed it at the next quote anywhere in the document, which
-      // swallowed the `@page` rule whole. Nothing below could then match it, so
-      // `declaredPageSize` answered null, `preferCSSPageSize` was turned off, and a
-      // ledger-landscape newspaper printed on a letter sheet with no finding -- the
-      // exact failure this function exists to prevent, caused by a comment that
-      // mentioned nothing at all.
       .replace(/\/\*[\s\S]*?\*\//g, ' ')
-      // Quoted strings next, for the same reason. A `@page` rule takes keywords, lengths
-      // and colours; it cannot hold a string literal, so a string that looks like one is
-      // text and not a declaration. This also keeps a brace inside `content: "}"` from
-      // ending the match early.
       .replace(/"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'/g, '""')
       .match(/@page[^{]*\{[^}]*\}/gi) ?? []
   );
@@ -305,6 +285,14 @@ export function declaredPageOrientation(html: string): 'portrait' | 'landscape' 
     return toInches(dims[0]!) > toInches(dims[1]!) ? 'landscape' : 'portrait';
   } catch {
     return 'portrait';
+  }
+}
+
+function inchesOf(len: string): number | null {
+  try {
+    return toInches(len);
+  } catch {
+    return null;
   }
 }
 

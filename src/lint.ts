@@ -419,9 +419,7 @@ export async function audit(tab: Tab, timeoutMs: number): Promise<Finding[]> {
         },
         timeoutMs,
       );
-    } catch {
-      /* the audit runs without linked sources */
-    }
+    } catch {}
     const res = await tab.send(
       'Runtime.evaluate',
       {

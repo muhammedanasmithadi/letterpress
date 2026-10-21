@@ -29,9 +29,7 @@ function streams(pdf: Uint8Array): string {
     const raw = o.bytes.subarray(range.start, range.end);
     try {
       out += inflateSync(raw).toString('latin1');
-    } catch {
-      // Not a stream, or not one this can inflate. Neither is a finding here.
-    }
+    } catch {}
   }
   return out;
 }

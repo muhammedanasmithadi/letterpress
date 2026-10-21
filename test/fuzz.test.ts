@@ -95,7 +95,6 @@ describe('harness units (no browser)', () => {
     expect(html.startsWith('<!doctype html>')).toBe(true);
     expect(html.endsWith('</body></html>')).toBe(true);
     expect(html).toBe(head + blocks.join('\n') + tail);
-    // Empty bodies occur by design (a tenth of documents); the joins hold either way.
   });
 
   test('every mutation kind returns named bytes without throwing', () => {

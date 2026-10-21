@@ -225,3 +225,106 @@ describe('the mcp endpoint', () => {
     expect(r.status).toBe(403);
   });
 });
+
+describe('what a shared server will not do', () => {
+  const HTML =
+    '<!doctype html><html lang="en"><head><style>@page{size:A4;margin:12mm}</style></head><body><p>x</p></body></html>';
+
+  async function call(args: Record<string, unknown>) {
+    const r = await modern({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'render_html', arguments: args },
+    });
+    const body = (await r.json()) as {
+      result: { isError?: boolean; content: Array<{ text: string }> };
+    };
+    return body.result;
+  }
+
+  test('a file on the server is not read', async () => {
+    const result = await call({ path: '/etc/hostname' });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('send the html');
+  });
+
+  test('a url is not fetched', async () => {
+    const result = await call({ html: HTML, url: 'http://127.0.0.1:9/secret' });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('send the html');
+  });
+
+  test('two callers do not get the same file', async () => {
+    const first = await call({ html: HTML });
+    const second = await call({ html: HTML });
+    const a = (first.content[0]!.text.match(/wrote (\S+)/) ?? [])[1];
+    const b = (second.content[0]!.text.match(/wrote (\S+)/) ?? [])[1];
+    expect(a).toBeTruthy();
+    expect(a).not.toBe(b);
+  });
+
+  test('a body over the limit is refused', async () => {
+    const r = await fetch(`${server.origin}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/list',
+        pad: 'x'.repeat(9 * 1024 * 1024),
+      }),
+    });
+    expect(r.status).toBe(413);
+  });
+});
+
+describe('the version header', () => {
+  test('a version this server does not speak is refused', async () => {
+    const r = await fetch(`${server.origin}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'mcp-protocol-version': '1999-01-01' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    expect(r.status).toBe(400);
+    const body = (await r.json()) as { error: { code: number; data: { supported: string[] } } };
+    expect(body.error.code).toBe(-32022);
+    expect(body.error.data.supported).toContain('2026-07-28');
+  });
+
+  test('a base64 encoded version is understood', async () => {
+    const encoded = `=?base64?${Buffer.from('2026-07-28').toString('base64')}?=`;
+    const r = await fetch(`${server.origin}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'mcp-protocol-version': encoded },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/list',
+        params: { _meta: MODERN_META },
+      }),
+    });
+    expect(r.status).toBe(200);
+  });
+
+  test('a custom parameter header that disagrees with the body is refused', async () => {
+    const r = await fetch(`${server.origin}/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'mcp-method': 'tools/call',
+        'mcp-name': 'render_html',
+        'mcp-param-html': 'something else',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'render_html', arguments: { html: '<p>x</p>' } },
+      }),
+    });
+    expect(r.status).toBe(400);
+    const body = (await r.json()) as { error: { code: number } };
+    expect(body.error.code).toBe(-32020);
+  });
+});

@@ -210,11 +210,23 @@ export const TOOLS: Tool[] = [
   },
 ];
 
+export type McpSandbox = {
+  root: string;
+
+  maxPages: number;
+
+  maxSettleMs: number;
+  maxTimeoutMs: number;
+
+  acquire: () => Promise<void> | null;
+  release: () => void;
+};
+
 export type McpContext = {
   browser: () => Promise<Browser>;
   workDir: string;
 
-  outputRoot?: string;
+  sandbox?: McpSandbox;
 };
 
 export async function makeContext(): Promise<McpContext> {
@@ -232,8 +244,8 @@ export async function makeContext(): Promise<McpContext> {
   };
 }
 
-export function contextWith(browser: Browser, workDir: string): McpContext {
-  return { browser: async () => browser, workDir, outputRoot: workDir };
+export function contextWith(browser: Browser, workDir: string, sandbox: McpSandbox): McpContext {
+  return { browser: async () => browser, workDir, sandbox };
 }
 
 export async function closeContext(ctx: McpContext): Promise<void> {
@@ -290,8 +302,68 @@ function findingLine(f: { severity: string; code: string; message: string }): st
   return `${f.severity}: ${f.code} -- ${f.message}`;
 }
 
+async function renderUnderSandbox(
+  request: RenderRequest,
+  ctx: McpContext,
+): Promise<{ result: Awaited<ReturnType<typeof render>> } | { refused: string }> {
+  const refused = refuseForSandbox(request, ctx);
+  if (refused !== null) return { refused };
+
+  const sandbox = ctx.sandbox;
+  if (sandbox !== undefined) {
+    const slot = sandbox.acquire();
+    if (slot === null) return { refused: 'the renderer is busy; try again shortly' };
+    try {
+      await slot;
+    } catch {
+      return { refused: 'the server is shutting down' };
+    }
+  }
+
+  try {
+    const browser = await ctx.browser();
+    const result = await render(browser, request);
+    if (sandbox !== undefined && result.info.pages > sandbox.maxPages) {
+      return {
+        refused:
+          `this document is ${result.info.pages} pages, over the ${sandbox.maxPages}-page limit. ` +
+          `split it, or render it with the cli, which has no page limit.`,
+      };
+    }
+    return { result };
+  } catch (e) {
+    return { refused: `the render failed: ${e instanceof Error ? e.message : String(e)}` };
+  } finally {
+    if (sandbox !== undefined) sandbox.release();
+  }
+}
+
+function refuseForSandbox(request: RenderRequest, ctx: McpContext): string | null {
+  const sandbox = ctx.sandbox;
+  if (sandbox === undefined) return null;
+  if (request.path !== undefined) {
+    return 'a file on the server is not read; send the html instead';
+  }
+  if (request.url !== undefined) {
+    return 'a url is not fetched; send the html instead';
+  }
+  if (request.settleMs !== undefined && request.settleMs > sandbox.maxSettleMs) {
+    request.settleMs = sandbox.maxSettleMs;
+  }
+  if (request.timeoutMs !== undefined && request.timeoutMs > sandbox.maxTimeoutMs) {
+    request.timeoutMs = sandbox.maxTimeoutMs;
+  }
+  return null;
+}
+
+let outputCounter = 0;
+function nextOutputName(): string {
+  outputCounter += 1;
+  return `output-${outputCounter}.pdf`;
+}
+
 function confineRead(path: string, ctx: McpContext): string | null {
-  const root = ctx.outputRoot;
+  const root = ctx.sandbox?.root;
   if (root === undefined) return null;
   const base = realpathOf(root);
   const target = realpathOf(resolve(path));
@@ -302,7 +374,7 @@ function confineRead(path: string, ctx: McpContext): string | null {
 }
 
 function confineOutput(out: string, ctx: McpContext): string | null {
-  const root = ctx.outputRoot;
+  const root = ctx.sandbox?.root;
   if (root === undefined) return null;
   const base = realpathOf(root);
   const target = realpathOf(resolve(out));
@@ -318,13 +390,19 @@ function realpathOf(path: string): string {
   let at: string = sep;
   for (const part of parts) {
     at = join(at, part);
-    try {
-      if (lstatSync(at).isSymbolicLink()) {
-        at = realpathOf(resolve(dirname(at), readlinkSync(at)));
-      }
-    } catch {}
+    const link = linkTarget(at);
+    if (link !== null) at = realpathOf(link);
   }
   return at;
+}
+
+function linkTarget(path: string): string | null {
+  try {
+    if (!lstatSync(path).isSymbolicLink()) return null;
+    return resolve(dirname(path), readlinkSync(path));
+  } catch {
+    return null;
+  }
 }
 
 function stringArg(args: Record<string, unknown>, key: string): string | undefined {
@@ -393,17 +471,13 @@ async function renderHtml(args: Record<string, unknown>, ctx: McpContext): Promi
   const out =
     requested !== undefined && requested.trim() !== ''
       ? requested
-      : join(ctx.workDir, 'output.pdf');
+      : join(ctx.workDir, nextOutputName());
   const confined = confineOutput(out, ctx);
   if (confined !== null) return failure(confined);
 
-  let result;
-  try {
-    const browser = await ctx.browser();
-    result = await render(browser, request);
-  } catch (e) {
-    return failure(`the render failed: ${e instanceof Error ? e.message : String(e)}`);
-  }
+  const rendered = await renderUnderSandbox(request, ctx);
+  if ('refused' in rendered) return failure(rendered.refused);
+  const result = rendered.result;
 
   await writeFile(out, result.pdf);
 

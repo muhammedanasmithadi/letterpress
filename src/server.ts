@@ -4,11 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Browser } from './browser.ts';
 import { FINDINGS, FINDING_CODES } from './findings.ts';
-import { handle, type Session } from './mcp.ts';
-import { contextWith } from './mcptools.ts';
+import { handle, LEGACY_VERSIONS, MODERN_VERSION, type Session } from './mcp.ts';
+import { contextWith, type McpSandbox } from './mcptools.ts';
 import { EMPTY_INPUT_MESSAGE, FORMATS, render, type Format } from './render.ts';
 
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
+
+const SUPPORTED_VERSIONS = [MODERN_VERSION, ...LEGACY_VERSIONS];
 const LOOPBACK_HOST = /^(?:127\.0\.0\.1|\[::1\]|localhost)(?::\d+)?$/i;
 
 const warnToStderr = (message: string): void => {
@@ -295,14 +297,35 @@ async function mcpResponse(request: Request, session: Session): Promise<Response
     );
   }
 
+  const read = await readCapped(request, MAX_BODY_BYTES);
+  if ('tooBig' in read) {
+    return mcpError(
+      null,
+      -32600,
+      `the body is ${(read.tooBig / 1048576).toFixed(1)}MB, over the ${MAX_BODY_BYTES / 1048576}MB limit`,
+      413,
+    );
+  }
+  if ('broken' in read) {
+    return mcpError(null, -32700, 'the body stream ended early');
+  }
+
   let msg: Record<string, unknown>;
   try {
-    msg = (await request.json()) as Record<string, unknown>;
+    msg = JSON.parse(read.text) as Record<string, unknown>;
   } catch (e) {
     return mcpError(null, -32700, `the body is not JSON: ${(e as Error).message}`);
   }
   if (msg === null || typeof msg !== 'object' || Array.isArray(msg)) {
     return mcpError(null, -32600, 'the body must be a JSON-RPC message');
+  }
+
+  const requested = requestedVersion(request, msg);
+  if (requested !== null && !SUPPORTED_VERSIONS.includes(requested)) {
+    return mcpError(idOf(msg), -32022, 'Unsupported protocol version', 400, {
+      supported: SUPPORTED_VERSIONS,
+      requested,
+    });
   }
 
   const mismatch = headerMismatch(request, msg);
@@ -330,7 +353,7 @@ function headerMismatch(request: Request, msg: Record<string, unknown>): string 
   const name = (msg['params'] as Record<string, unknown> | undefined)?.['name'];
   const headerName = request.headers.get('mcp-name');
   if (headerName !== null && headerName !== String(name ?? '')) {
-    return `Mcp-Name header value '${headerName}' does not match body value '${String(name ?? '')}'`;
+    return `Mcp-Name header value '${headerName}' does not match body value '${String(name ?? '')}`;
   }
 
   const headerVersion = request.headers.get('mcp-protocol-version');
@@ -338,10 +361,61 @@ function headerMismatch(request: Request, msg: Record<string, unknown>): string 
     | Record<string, unknown>
     | undefined;
   const declared = bodyVersion?.['io.modelcontextprotocol/protocolVersion'];
-  if (headerVersion !== null && typeof declared === 'string' && headerVersion !== declared) {
-    return `MCP-Protocol-Version header value '${headerVersion}' does not match body value '${declared}'`;
+  if (headerVersion !== null && typeof declared === 'string') {
+    const sent = decodeHeaderValue(headerVersion);
+    if (sent !== declared) {
+      return `MCP-Protocol-Version header value '${headerVersion}' does not match body value '${declared}'`;
+    }
   }
+
+  const param = paramMismatch(request, msg);
+  if (param !== null) return param;
   return null;
+}
+
+function decodeHeaderValue(value: string): string {
+  const m = /^=\?base64\?(.*)\?=$/.exec(value);
+  if (!m) return value;
+  try {
+    return Buffer.from(m[1]!, 'base64').toString('utf8');
+  } catch {
+    return value;
+  }
+}
+
+function paramMismatch(request: Request, msg: Record<string, unknown>): string | null {
+  const args = (msg['params'] as Record<string, unknown> | undefined)?.['arguments'] as
+    | Record<string, unknown>
+    | undefined;
+  if (args === undefined) return null;
+  let problem: string | null = null;
+  request.headers.forEach((value, name) => {
+    if (problem !== null) return;
+    if (!name.toLowerCase().startsWith('mcp-param-')) return;
+    const key = name.slice('mcp-param-'.length);
+    const sent = decodeHeaderValue(value);
+    const inBody = args[key];
+    if (inBody === undefined) {
+      problem = `${name} header value '${value}' has no counterpart in the body`;
+      return;
+    }
+    if (String(inBody) !== sent) {
+      problem = `${name} header value '${value}' does not match body value '${String(inBody)}'`;
+    }
+  });
+  return problem;
+}
+
+function requestedVersion(request: Request, msg: Record<string, unknown>): string | null {
+  const header = request.headers.get('mcp-protocol-version');
+  if (header !== null) return decodeHeaderValue(header);
+  const body = (msg['params'] as Record<string, unknown> | undefined)?.['_meta'] as
+    | Record<string, unknown>
+    | undefined;
+  const declared = body?.['io.modelcontextprotocol/protocolVersion'];
+  if (typeof declared === 'string') return declared;
+  const legacy = (msg['params'] as Record<string, unknown> | undefined)?.['protocolVersion'];
+  return typeof legacy === 'string' ? legacy : null;
 }
 
 function mcpError(
@@ -349,9 +423,10 @@ function mcpError(
   code: number,
   message: string,
   status = 400,
+  data?: unknown,
 ): Response {
   return Response.json(
-    { jsonrpc: '2.0', id, error: { code, message } },
+    { jsonrpc: '2.0', id, error: data === undefined ? { code, message } : { code, message, data } },
     { status, headers: { 'cache-control': 'no-store' } },
   );
 }
@@ -399,8 +474,6 @@ export async function startServer(opts: ServerOptions = {}) {
   opts.onReady?.(browser);
 
   const mcpWorkDir = await mkdtemp(join(tmpdir(), 'letterpress-mcp-'));
-  const mcpContext = contextWith(browser, mcpWorkDir);
-  const mcpSession: Session = { context: mcpContext };
 
   const viewerDir = join(import.meta.dir, '..', 'viewer');
 
@@ -433,6 +506,16 @@ export async function startServer(opts: ServerOptions = {}) {
     active--;
     waiters.shift()?.();
   };
+
+  const mcpSandbox: McpSandbox = {
+    root: mcpWorkDir,
+    maxPages: MAX_PAGES,
+    maxSettleMs: MAX_SETTLE_MS,
+    maxTimeoutMs: MAX_TIMEOUT_MS,
+    acquire,
+    release,
+  };
+  const mcpSession: Session = { context: contextWith(browser, mcpWorkDir, mcpSandbox) };
 
   const inFlight = new Set<Promise<unknown>>();
 

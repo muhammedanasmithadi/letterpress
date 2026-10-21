@@ -281,8 +281,6 @@ describe('the gate in the render path', () => {
       );
       const v = verify(dropped);
       if (v.ok) missed.push(String(o.num));
-      // And it must fail on the missing reference, not on something incidental that a
-      // rewritten cross-reference table happened to break.
       else if (!v.failures.some((f) => f.startsWith('a reference to object'))) {
         missed.push(`${o.num} (${v.failures[0]})`);
       }

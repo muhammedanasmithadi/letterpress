@@ -78,6 +78,27 @@ asking before a render, and a render does not answer it on its own.
 `list_findings` returns every code with its severity and what it means, so
 the codes in a result can be read.
 
+## The rules a shared server puts on a caller
+
+The stdio server answers to whoever started it. That caller can already read
+every file the process can read and write every file it can write, so giving
+it the whole filesystem changes nothing.
+
+The HTTP server is a shared daemon: any local process can reach it. A path it
+accepts is a file-read primitive for all of them, a document count it does not
+bound is a way to exhaust the browser, and a render it does not queue is a way
+to saturate it. So the HTTP server passes a sandbox, and every limit the
+render endpoint already enforces is in it:
+
+- the only directory a caller may read from or write to;
+- the most pages a document may have;
+- the most the caller may ask the renderer to wait;
+- a slot in the render queue.
+
+The rules are one object rather than a set of optional fields, because an
+optional field is a security property that is off by default and invisible in
+the type: a caller that forgets to set it gets no confinement and no error.
+
 ## The model context protocol over HTTP
 
 The server answers the model context protocol on `/mcp`, the same tools the
@@ -92,7 +113,23 @@ The headers are not decoration. `MCP-Protocol-Version` has to agree with the
 version in the body, and `Mcp-Method` and `Mcp-Name` have to agree with the
 body, because an intermediary may route on one and the server may act on the
 other. A request whose headers disagree with its body is refused with `400`
-and `HeaderMismatch`, which is the code the spec allocates for it.
+and `HeaderMismatch`, which is the code the spec allocates for it. A version
+this server does not speak is refused with `UnsupportedProtocolVersion`,
+which lists the versions it does.
+
+The custom `Mcp-Param-{Name}` headers are checked the same way: the spec lets
+a tool mark a parameter to be mirrored into a header, and says the server must
+refuse a request whose mirrored header does not match the value in the body.
+
+A header value the spec allows to be base64 is decoded before it is compared.
+The sentinel marks a value that cannot be a plain header value, and the spec
+says a client must encode one that would otherwise be ambiguous. A value that
+matches the sentinel is itself encoded, so the marker is never confused with
+the text it wraps.
+
+The version is taken from the header when there is one, because that is what
+an intermediary can route on, and from the body otherwise, for a client that
+sends neither.
 
 The origin check is the one this server already applies to every request: a
 local MCP endpoint that answers requests from any web page is a remote code

@@ -37,6 +37,36 @@ A negative margin is refused there rather than passed on: `printToPDF` rejects
 it on all four sides, and the message belongs with the arithmetic that read the
 value.
 
+## Reading a document's own page rules
+
+A document's `@page` rules are found by scanning its stylesheets, and the
+scanning has to survive text that is not CSS.
+
+Comments go first, for the same reason the HTML comments go first above: the
+comment is the outer container, and an apostrophe inside one is not a
+delimiter. Stripping the other way round opened a string at the apostrophe and
+closed it at the next quote anywhere in the document, which swallowed the
+`@page` rule whole. Nothing below could then match it, so `declaredPageSize`
+answered null, `preferCSSPageSize` was turned off, and a ledger-landscape
+newspaper printed on a letter sheet with no finding — the exact failure this
+function exists to prevent, caused by a comment that mentioned nothing at all.
+
+Quoted strings next, for the same reason. A `@page` rule takes keywords,
+lengths and colours; it cannot hold a string literal, so a string that looks
+like one is text and not a declaration. This also keeps a brace inside
+`content: "}"` from ending the match early.
+
+A declaration that is taken out leaves the separators around it behind. `size`
+first in the rule leaves the `;` that followed it leading the body; `size`
+last leaves the `;` that preceded it trailing. Neither is a syntax error in
+CSS, but a page rule that reads `{;margin:2cm}` is a page rule nobody wrote.
+
+A size in a unit `printToPDF` cannot take is not a reason to give up: the
+declaration still has an order, so the paper is swapped anyway. The
+conversion is asked for as a value that may be absent rather than as a
+thrown error, because a caller that cannot convert a unit still wants to
+know the order the two lengths were written in.
+
 ## The printable width
 
 The printable width in CSS pixels, or 0 when it cannot be worked out. Zero
@@ -73,6 +103,8 @@ answer them cannot answer the font question either.
 
 The DOM domain caches a document, so it is the document pushed after the
 content is set that the check queries, not whatever this enabled against.
+Without the domain the deadline still applies, so nothing is lost but the
+early signal — which is not worth failing a render over.
 
 ## The favicon
 
@@ -162,4 +194,5 @@ measurement rather than on position in the returned list.
 **The linked stylesheets** are fetched before the synchronous script runs.
 Contained on purpose: any failure here — a hung fetch, a closed socket — must
 leave the audit running as before, without the linked sources, rather than
-break it.
+break it. A failure there is not a finding: the audit runs without the linked
+sources.

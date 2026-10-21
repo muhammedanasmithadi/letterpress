@@ -1116,10 +1116,7 @@ function watchTab(tab: Tab): TabWatch {
         crashed = true;
       });
     })
-    .catch(() => {
-      // Without the domain the deadline still applies. Nothing is lost but the
-      // early signal, so this is not worth failing a render over.
-    });
+    .catch(() => {});
 
   return { alive: () => !crashed, dialogs: () => dialogs, errors: () => errors };
 }

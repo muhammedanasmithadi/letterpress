@@ -220,6 +220,24 @@ describe('the tools', () => {
     expect(result.structuredContent.probe[0]!.cause).toBe('flex-gap');
   }, 120_000);
 
+  test('the stdio server reads and writes anywhere, because its caller owns the machine', async () => {
+    const out = join(dir, 'stdio.pdf');
+    const reply = await legacy(1, 'tools/call', {
+      name: 'render_html',
+      arguments: {
+        html: '<!doctype html><html lang="en"><head><style>@page{size:A4;margin:12mm}</style></head><body><p>x</p></body></html>',
+        outputPath: out,
+      },
+    });
+    const result = resultOf(reply) as unknown as {
+      isError?: boolean;
+      structuredContent: { path: string };
+    };
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent.path).toBe(out);
+    expect((await Bun.file(out).arrayBuffer()).byteLength).toBeGreaterThan(1000);
+  }, 120_000);
+
   test('a tool nobody has heard of is a protocol error', async () => {
     const reply = await legacy(1, 'tools/call', { name: 'make_coffee', arguments: {} });
     expect(errorOf(reply).code).toBe(-32602);

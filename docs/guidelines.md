@@ -35,7 +35,13 @@ Baseline 2026-10-10, updated 2026-10-21. Bun + TypeScript 7.0.2 codebase
 
 - `bun run comments` — the comment count. The guidelines' own tree check bans
   comments outright, which is right for a greenfield repository and wrong for
-  one with 1,776 of them; the ratchet is how the burn-down is visible.
+  one with 1,776 of them; the ratchet is how the burn-down is visible. The
+  count comes from the parser rather than from a scanner, and the walk reaches
+  the tokens rather than only the nodes: a comment inside an empty block
+  belongs to no node, and a walk over the nodes alone does not see it. That
+  hole let 26 comments survive the first removal while the count said zero,
+  so `test/comments.test.ts` now holds the gate to the shapes it has to tell
+  apart.
 - `bun run cleanup` — kills the browsers and servers an interrupted test run
   leaves behind. It matches on the profile directory, not the binary name, so
   it cannot touch a browser that is not ours.

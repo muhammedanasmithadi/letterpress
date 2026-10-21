@@ -365,6 +365,30 @@ dies under memory pressure takes longer to say so, and a ten-second budget is
 not enough on a machine with less than a gigabyte free. The budget is twenty
 seconds, and the test's own timeout is thirty.
 
+## Three things the tests say
+
+A repaired font descriptor must fail on the missing reference, not on
+something incidental that a rewritten cross-reference table happened to
+break.
+
+A stream that is not one, or not one this can inflate, is not a finding here.
+
+Empty bodies occur by design in the fuzz corpus — a tenth of documents — and
+the joins hold either way.
+
+## What a shared server will not do
+
+The render endpoint accepts no path and no url, so the tools on the same route
+accept neither: a path is a file-read primitive for every local process on the
+machine, and a url is a way to make the server fetch whatever the caller named
+and get the answer back in the rendered document. The body is read with the
+same cap, the document is bounded by the same page limit, the render takes a
+slot in the same queue, and two callers do not get the same file.
+
+The other side of that: the stdio server reads and writes anywhere, because
+its caller is whoever started the process, and that caller can already do
+both.
+
 ## The agent surfaces
 
 The listing and the implementation of a tool are one structure, so a tool

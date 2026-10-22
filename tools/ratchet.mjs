@@ -2,7 +2,7 @@ import { $ } from 'bun';
 import { readFileSync, existsSync } from 'node:fs';
 
 const BASELINE = new URL('../waivers/baseline.lizard.txt', import.meta.url);
-const LIZARD = (process.env.LIZARD_BIN ?? 'uvx lizard').split(' ');
+const LIZARD = (process.env.LIZARD_BIN ?? 'uvx lizard==1.24.1').split(' ');
 const out = await $`${LIZARD} -C 15 -L 200 --csv src/`.text();
 const known = new Set(
   existsSync(BASELINE)

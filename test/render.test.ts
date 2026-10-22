@@ -110,6 +110,27 @@ test('remote requests are blocked by default and reported as findings', async ()
   expect(r.info.pages).toBeGreaterThan(0);
 }, 30_000);
 
+test('a local service is not reached when the network is not allowed', async () => {
+  let hits = 0;
+  const server = createServer((_req, res) => {
+    hits++;
+    res.writeHead(200, { 'content-type': 'text/plain' });
+    res.end('secret');
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  try {
+    const doc = `<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:10mm}</style>
+<img src="http://127.0.0.1:${port}/secret.png" width="10" height="10">
+<p>Still renders.</p>`;
+    const r = await render(browser, { html: doc });
+    expect(hits).toBe(0);
+    expect(r.findings.map((f) => f.code)).toContain('network-blocked');
+  } finally {
+    server.close();
+  }
+}, 30_000);
+
 test('allowing network clears the findings', async () => {
   const doc = `<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:10mm}</style>
 <p>No remote assets here.</p>`;

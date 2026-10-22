@@ -1,5 +1,4 @@
 import { deflateSync } from 'node:zlib';
-import { inflateSync } from 'node:zlib';
 import {
   dictOf,
   inflatedStream,
@@ -9,6 +8,7 @@ import {
   objsByNum,
   trySplit,
   type Obj,
+  cappedInflate,
 } from './pdfparts.ts';
 
 const PRESENTATION_FORMS: ReadonlyArray<readonly [number, number]> = [
@@ -177,7 +177,7 @@ function fixCMapBoth(cmap: string): string | undefined {
 
 function rewrittenStream(o: Obj, cmap: string): Buffer {
   const compressed = deflateSync(Buffer.from(cmap, LATIN1));
-  const dict = dictOf(o).replace(/\/Length\s+\d+/, `/Length ${compressed.length}`);
+  const dict = dictOf(o).replace(/\/Length\s+(?:\d+\s+0\s+R|\d+)/, `/Length ${compressed.length}`);
   return Buffer.concat([
     Buffer.from(`${dict}\nstream\n`, LATIN1),
     compressed,
@@ -203,7 +203,7 @@ export function fixToUnicode(pdf: Uint8Array): Uint8Array {
   for (const num of targets) {
     const o = byNum.get(num);
     if (!o) continue;
-    const raw = inflatedStream(o, inflateSync);
+    const raw = inflatedStream(o, cappedInflate);
     if (!raw) continue;
     const next = fixCMapBoth(raw.toString(LATIN1));
     if (next !== undefined) fixed.set(num, next);
@@ -230,7 +230,7 @@ export function unresolvedLigatures(pdf: Uint8Array): Array<{ cp: number; expans
     }
   };
   for (const o of parts.objs) {
-    const raw = inflatedStream(o, inflateSync);
+    const raw = inflatedStream(o, cappedInflate);
     if (!raw) continue;
     const cmap = raw.toString(LATIN1);
     scanBfchar(cmap, note);

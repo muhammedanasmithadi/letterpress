@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { lstatSync, readlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -351,6 +351,9 @@ function refuseForSandbox(request: RenderRequest, ctx: McpContext): string | nul
   if (request.path !== undefined) {
     return 'a file on the server is not read; send the html instead';
   }
+  if (request.root !== undefined) {
+    return 'a directory to read assets from is not accepted; send the html instead';
+  }
   if (request.url !== undefined) {
     return 'a url is not fetched; send the html instead';
   }
@@ -368,6 +371,8 @@ function nextOutputName(ctx: McpContext): string {
   return `output-${ctx.outputCount}.pdf`;
 }
 
+const OUTPUT_MAX_AGE_MS = 60 * 60 * 1000;
+
 async function sweepOlderOutputs(ctx: McpContext, keep: string): Promise<void> {
   let entries: string[];
   try {
@@ -376,10 +381,18 @@ async function sweepOlderOutputs(ctx: McpContext, keep: string): Promise<void> {
     return;
   }
   for (const name of entries) {
+    if (!name.startsWith('output-')) continue;
     const path = join(ctx.workDir, name);
     if (path === keep) continue;
-    if (!name.startsWith('output-')) continue;
-    await rm(path, { force: true }).catch(() => {});
+    try {
+      if (ctx.sandbox === undefined) {
+        await rm(path, { force: true });
+        continue;
+      }
+      const info = await stat(path);
+      if (Date.now() - info.mtimeMs < OUTPUT_MAX_AGE_MS) continue;
+      await rm(path, { force: true });
+    } catch {}
   }
 }
 

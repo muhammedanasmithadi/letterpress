@@ -28,6 +28,7 @@ export class Tab {
     } catch {
       return;
     }
+    if (msg === null || typeof msg !== 'object') return;
     if (msg.id != null) return this.#settle(msg);
     if (msg.method) this.#dispatch(msg.method, msg.params);
   }
@@ -221,10 +222,16 @@ export class Browser {
     if (!res.ok) throw new Error(`could not open tab: ${res.status} ${await res.text()}`);
     const target = (await res.json()) as { id: string; webSocketDebuggerUrl: string };
     const ws = new WebSocket(target.webSocketDebuggerUrl);
-    const tab = await new Promise<Tab>((res2, rej) => {
-      ws.onopen = () => res2(new Tab(target.id, ws));
-      ws.onerror = () => rej(new Error('cdp websocket failed to open'));
-    });
+    let tab: Tab;
+    try {
+      tab = await new Promise<Tab>((res2, rej) => {
+        ws.onopen = () => res2(new Tab(target.id, ws));
+        ws.onerror = () => rej(new Error('cdp websocket failed to open'));
+      });
+    } catch (e) {
+      await fetch(`http://127.0.0.1:${this.#port}/json/close/${target.id}`).catch(() => {});
+      throw e;
+    }
     this.#tabs.add(tab);
     return tab;
   }
@@ -287,13 +294,19 @@ export async function readDevToolsPort(proc: Subprocess, timeoutMs: number): Pro
   let buf = '';
   const deadline = Bun.nanoseconds() + timeoutMs * 1e6;
 
+  let exited = false;
   try {
     while (Bun.nanoseconds() < deadline) {
       const remaining = deadline - Bun.nanoseconds();
       const read = await Promise.race([
         reader.read(),
+        proc.exited.then(() => 'exited' as const),
         Bun.sleep(Math.max(0, remaining / 1e6)).then(() => 'timeout' as const),
       ]);
+      if (read === 'exited') {
+        exited = true;
+        break;
+      }
       if (read === 'timeout') break;
       const { value, done } = read;
       if (done) break;
@@ -313,5 +326,6 @@ export async function readDevToolsPort(proc: Subprocess, timeoutMs: number): Pro
       }
     }
   } catch {}
+  if (exited) throw new Error('chromium exited before it exposed a DevTools endpoint');
   throw new Error(`chromium exposed no DevTools endpoint in ${timeoutMs}ms:\n${buf.slice(0, 400)}`);
 }

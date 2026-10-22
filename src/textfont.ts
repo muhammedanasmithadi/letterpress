@@ -1,4 +1,3 @@
-import { inflateSync } from 'node:zlib';
 import {
   LATIN1,
   dictOf,
@@ -7,6 +6,7 @@ import {
   trySplit,
   type Obj,
   type Parts,
+  cappedInflate,
 } from './pdfparts.ts';
 
 export type FontTable = {
@@ -38,6 +38,8 @@ function subDictOf(dict: string, key: string): string {
 function fontDictOf(dict: string): string {
   return subDictOf(dict, 'Font');
 }
+
+const MAX_CID = 0xffff;
 
 export function parseW(dict: string): Map<number, number> {
   const at = /\/(?:W|w)\s*\[/.exec(dict);
@@ -72,7 +74,9 @@ export function parseW(dict: string): Map<number, number> {
     if (cid === null) cid = n;
     else if (last === null) last = n;
     else {
-      for (let c = cid; c <= last; c++) out.set(c, n);
+      const from = Math.max(0, Math.min(cid, MAX_CID));
+      const to = Math.max(0, Math.min(last, MAX_CID));
+      for (let c = from; c <= to; c++) out.set(c, n);
       cid = last = null;
     }
   }
@@ -106,7 +110,7 @@ export function parseCMap(cmap: string): Map<number, string> {
         for (let i = 0; lo + i <= hi && i < list.length; i++) out.set(lo + i, list[i]!);
       } else if (r[3]) {
         const base = r[3]!;
-        for (let c = lo; c <= hi && c - lo < 65536; c++) {
+        for (let c = lo; c <= hi && c - lo < MAX_CID + 1; c++) {
           let hex = '';
           for (let k = 0; k < base.length; k += 4) {
             hex += ((parseInt(base.slice(k, k + 4), 16) + (c - lo)) & 0xffff)
@@ -337,7 +341,9 @@ export function cmapStreams(pdf: Uint8Array): Map<number, string> {
     const raw = o.bytes.subarray(range.start, range.end);
     let text: string;
     try {
-      text = (/FlateDecode/.test(dictOf(o)) ? inflateSync(raw) : Buffer.from(raw)).toString(LATIN1);
+      text = (/FlateDecode/.test(dictOf(o)) ? cappedInflate(raw) : Buffer.from(raw)).toString(
+        LATIN1,
+      );
     } catch {
       continue;
     }

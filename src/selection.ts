@@ -1,5 +1,12 @@
-import { inflateSync } from 'node:zlib';
-import { LATIN1, dictOf, maskStrings, streamRange, trySplit, type Parts } from './pdfparts.ts';
+import {
+  LATIN1,
+  dictOf,
+  maskStrings,
+  streamRange,
+  trySplit,
+  type Parts,
+  cappedInflate,
+} from './pdfparts.ts';
 import { cmapStreams, fontsByContent, type FontTable } from './textfont.ts';
 
 const MIN_FLOW = 0.102;
@@ -173,7 +180,7 @@ export function textFlow(pdf: Uint8Array): TextFlow | null {
     let text: string;
     try {
       const raw = o.bytes.subarray(range.start, range.end);
-      text = (/FlateDecode/.test(dict) ? inflateSync(raw) : Buffer.from(raw)).toString(LATIN1);
+      text = (/FlateDecode/.test(dict) ? cappedInflate(raw) : Buffer.from(raw)).toString(LATIN1);
     } catch {
       continue;
     }

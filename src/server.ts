@@ -319,7 +319,7 @@ async function mcpResponse(request: Request, session: Session): Promise<Response
   } catch (e) {
     return mcpError(null, -32700, `the body is not JSON: ${(e as Error).message}`);
   }
-  if (msg === null || typeof msg !== 'object' || Array.isArray(msg)) {
+  if (msg === null || typeof msg !== 'object') {
     return mcpError(null, -32600, 'the body must be a JSON-RPC message');
   }
 
@@ -331,10 +331,12 @@ async function mcpResponse(request: Request, session: Session): Promise<Response
     });
   }
 
-  const mismatch = headerMismatch(request, msg);
-  if (mismatch) return mcpError(idOf(msg), -32020, mismatch);
+  if (!Array.isArray(msg)) {
+    const mismatch = headerMismatch(request, msg);
+    if (mismatch) return mcpError(idOf(msg), -32020, mismatch);
+  }
 
-  const reply = await handle(session, msg as never);
+  const reply = await handle(session, msg as never, request.headers.get('mcp-protocol-version'));
   if (reply === null || (Array.isArray(reply) && reply.length === 0)) {
     return new Response(null, { status: 202 });
   }
@@ -390,14 +392,13 @@ function paramMismatch(request: Request, msg: Record<string, unknown>): string |
   const args = (msg['params'] as Record<string, unknown> | undefined)?.['arguments'] as
     | Record<string, unknown>
     | undefined;
-  if (args === undefined) return null;
   let problem: string | null = null;
   request.headers.forEach((value, name) => {
     if (problem !== null) return;
     if (!name.toLowerCase().startsWith('mcp-param-')) return;
     const key = name.slice('mcp-param-'.length);
     const sent = decodeHeaderValue(value);
-    const inBody = args[key];
+    const inBody = args?.[key];
     if (inBody === undefined) {
       problem = `${name} header value '${value}' has no counterpart in the body`;
       return;
@@ -470,10 +471,16 @@ async function readCapped(
 
 export async function startServer(opts: ServerOptions = {}) {
   const profile = await mkdtemp(join(tmpdir(), 'letterpress-server-'));
-  const browser = await Browser.launch({
-    profile,
-    extraArgs: opts.browserArgs,
-  });
+  let browser: Browser;
+  try {
+    browser = await Browser.launch({
+      profile,
+      extraArgs: opts.browserArgs,
+    });
+  } catch (e) {
+    await rm(profile, { recursive: true, force: true }).catch(() => {});
+    throw e;
+  }
   opts.onReady?.(browser);
 
   const mcpWorkDir = await mkdtemp(join(tmpdir(), 'letterpress-mcp-'));
@@ -550,7 +557,13 @@ export async function startServer(opts: ServerOptions = {}) {
               { status: 405 },
             );
           }
-          return mcpResponse(request, mcpSession);
+          const mcpWork = mcpResponse(request, mcpSession);
+          inFlight.add(mcpWork);
+          try {
+            return await mcpWork;
+          } finally {
+            inFlight.delete(mcpWork);
+          }
         }
 
         if (url.pathname === '/findings') {
@@ -865,7 +878,7 @@ export async function startServer(opts: ServerOptions = {}) {
     for (const waiter of waiters.splice(0)) waiter();
 
     if (inFlight.size) {
-      await Promise.race([Promise.allSettled(inFlight), Bun.sleep(4_000)]);
+      await Promise.race([Promise.allSettled(inFlight), Bun.sleep(MAX_TIMEOUT_MS + 5_000)]);
     }
 
     server.stop(true);

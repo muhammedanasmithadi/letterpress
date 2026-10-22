@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { launchTestServer, serverOrigin, type TestServer } from './servers.ts';
-import { limitFromEnv } from '../src/server.ts';
+import { limitFromEnv, startServer } from '../src/server.ts';
 import { pdfInfo, pdfText } from './poppler.ts';
 
 let s: TestServer;
@@ -36,6 +36,24 @@ describe('health', () => {
 
     expect(body.port).toBe(s.server.port as number);
   });
+});
+
+describe('a server that cannot start', () => {
+  test('it leaves no profile directory behind', async () => {
+    const { readdirSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const before = readdirSync(tmpdir()).filter((n) => n.startsWith('letterpress-server-'));
+    const was = process.env.HTML2PDF_CHROMIUM;
+    process.env.HTML2PDF_CHROMIUM = '/nonexistent/chromium-binary';
+    try {
+      await expect(startServer({ port: 0 })).rejects.toThrow();
+    } finally {
+      if (was === undefined) delete process.env.HTML2PDF_CHROMIUM;
+      else process.env.HTML2PDF_CHROMIUM = was;
+    }
+    const after = readdirSync(tmpdir()).filter((n) => n.startsWith('letterpress-server-'));
+    expect(after.length).toBe(before.length);
+  }, 30_000);
 });
 
 describe('render', () => {

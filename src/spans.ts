@@ -1,4 +1,4 @@
-import { deflateSync, inflateSync } from 'node:zlib';
+import { deflateSync } from 'node:zlib';
 import {
   LATIN1,
   dictOf,
@@ -9,6 +9,7 @@ import {
   trySplit,
   type Obj,
   type Parts,
+  cappedInflate,
 } from './pdfparts.ts';
 import { cmapStreams, fontsByContent, type FontTable } from './textfont.ts';
 
@@ -72,7 +73,7 @@ function stripInStream(o: Obj, fonts: Map<string, FontTable> | undefined, stats:
   let text: string;
   try {
     const raw = o.bytes.subarray(range.start, range.end);
-    text = (compressed ? inflateSync(raw) : Buffer.from(raw)).toString(LATIN1);
+    text = (compressed ? cappedInflate(raw) : Buffer.from(raw)).toString(LATIN1);
   } catch {
     return o;
   }
@@ -118,7 +119,7 @@ function stripInStream(o: Obj, fonts: Map<string, FontTable> | undefined, stats:
   const payload = Buffer.from(out, LATIN1);
   const bodyBytes = compressed ? deflateSync(payload) : payload;
   const head = dictOf(o)
-    .replace(/\/Length\s+\d+/, `/Length ${bodyBytes.length}`)
+    .replace(/\/Length\s+(?:\d+\s+0\s+R|\d+)/, `/Length ${bodyBytes.length}`)
     .trim();
   return {
     num: o.num,

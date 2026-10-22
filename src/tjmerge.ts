@@ -1,5 +1,5 @@
 import { fontsByContent } from './textfont.ts';
-import { deflateSync, inflateSync } from 'node:zlib';
+import { deflateSync } from 'node:zlib';
 import {
   LATIN1,
   dictOf,
@@ -10,6 +10,7 @@ import {
   trySplit,
   type Obj,
   type Parts,
+  cappedInflate,
 } from './pdfparts.ts';
 
 type Placed = { x: number; y: number; cid: number };
@@ -333,7 +334,7 @@ function decodeStream(o: Obj): { bytes: Buffer; compressed: boolean } | null {
   const compressed = /FlateDecode/.test(dict);
   const raw = o.bytes.subarray(range.start, range.end);
   try {
-    return { bytes: compressed ? inflateSync(raw) : Buffer.from(raw), compressed };
+    return { bytes: compressed ? cappedInflate(raw) : Buffer.from(raw), compressed };
   } catch {
     return null;
   }
@@ -399,7 +400,7 @@ export function mergeTextRuns(pdf: Uint8Array): { pdf: Uint8Array; stats: MergeS
     const payload = Buffer.from(rewritten, LATIN1);
     const body = decoded.compressed ? deflateSync(payload) : payload;
     const head = dictOf(o)
-      .replace(/\/Length\s+\d+/, `/Length ${body.length}`)
+      .replace(/\/Length\s+(?:\d+\s+0\s+R|\d+)/, `/Length ${body.length}`)
       .trim();
     return {
       num: o.num,

@@ -1,6 +1,7 @@
 import type { Finding } from './render.ts';
 import type { Tab } from './browser.ts';
 import { collectLinkedCss } from './pageside.ts';
+import { FINDINGS } from './findings.ts';
 
 const AUDIT = String.raw`
 (() => {
@@ -424,6 +425,20 @@ const AUDIT = String.raw`
 })()
 `;
 
+function checkedFindings(value: unknown[]): Finding[] {
+  const out: Finding[] = [];
+  for (const one of value) {
+    if (!one || typeof one !== 'object') continue;
+    const finding = one as { code?: unknown; message?: unknown };
+    const code = typeof finding.code === 'string' ? finding.code : '';
+    const spec = FINDINGS[code];
+    if (!spec) continue;
+    const message = typeof finding.message === 'string' ? finding.message : spec.summary;
+    out.push({ code, severity: spec.severity, message });
+  }
+  return out;
+}
+
 export async function audit(tab: Tab, timeoutMs: number): Promise<Finding[]> {
   try {
     try {
@@ -457,7 +472,7 @@ export async function audit(tab: Tab, timeoutMs: number): Promise<Finding[]> {
         },
       ];
     }
-    return value as Finding[];
+    return checkedFindings(value);
   } catch (e) {
     return [
       {

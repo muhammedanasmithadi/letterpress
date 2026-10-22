@@ -1,11 +1,10 @@
-const CHROMIUM = process.env.HTML2PDF_CHROMIUM ?? 'chromium';
-
 export function resolveChromium(): string {
+  const name = process.env.HTML2PDF_CHROMIUM ?? 'chromium';
   try {
-    return Bun.which(CHROMIUM) ?? CHROMIUM;
+    return Bun.which(name) ?? name;
   } catch {
     throw new Error(
-      `cannot find "${CHROMIUM}" on PATH. Install Chromium, or set HTML2PDF_CHROMIUM to its absolute path.`,
+      `cannot find "${name}" on PATH. Install Chromium, or set HTML2PDF_CHROMIUM to its absolute path.`,
     );
   }
 }

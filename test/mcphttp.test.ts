@@ -22,6 +22,12 @@ function post(body: unknown, headers: Record<string, string> = {}) {
   });
 }
 
+async function headerMismatch(r: Response): Promise<number> {
+  expect(r.status).toBe(400);
+  const body = (await r.json()) as { error: { code: number } };
+  return body.error.code;
+}
+
 function modern(body: Record<string, unknown>, headers: Record<string, string> = {}) {
   const method = String(body['method'] ?? '');
   const name = (body['params'] as Record<string, unknown> | undefined)?.['name'];
@@ -37,6 +43,42 @@ function modern(body: Record<string, unknown>, headers: Record<string, string> =
 }
 
 describe('the mcp endpoint', () => {
+  test('it answers a batch the way the stdio transport does', async () => {
+    const r = await post([
+      { jsonrpc: '2.0', id: 1, method: 'ping' },
+      { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+    ]);
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as Array<{ id: number }>;
+    expect(Array.isArray(body)).toBe(true);
+    expect(body.map((x) => x.id)).toEqual([1, 2]);
+  });
+
+  test('a version in the header makes it a modern request', async () => {
+    const r = await post(
+      { jsonrpc: '2.0', id: 3, method: 'tools/list' },
+      { 'mcp-protocol-version': '2026-07-28' },
+    );
+    const body = (await r.json()) as { error?: { code: number; message: string } };
+    expect(body.error?.code).toBe(-32602);
+    expect(body.error?.message).toContain('clientCapabilities');
+  });
+
+  test('a request with no version anywhere is a legacy request', async () => {
+    const r = await post({ jsonrpc: '2.0', id: 5, method: 'tools/list' });
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as { result: { resultType?: string } };
+    expect(body.result.resultType).toBeUndefined();
+  });
+
+  test('a custom parameter header with no counterpart is refused', async () => {
+    const r = await post(
+      { jsonrpc: '2.0', id: 4, method: 'tools/list' },
+      { 'mcp-param-severity': 'warn' },
+    );
+    expect(await headerMismatch(r)).toBe(-32020);
+  });
+
   test('it answers a discovery request', async () => {
     const r = await modern({ jsonrpc: '2.0', id: 1, method: 'server/discover' });
     expect(r.status).toBe(200);
@@ -243,6 +285,22 @@ describe('what a shared server will not do', () => {
     return body.result;
   }
 
+  test('a directory to read assets from is not accepted', async () => {
+    const result = await call({ html: '<p>x</p>', root: '/tmp' });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('send the html');
+  });
+
+  test("one caller does not delete another caller's document", async () => {
+    const first = await call({ html: '<p>one</p>' });
+    const second = await call({ html: '<p>two</p>' });
+    const a = (first.content[0]!.text.match(/wrote (\S+)/) ?? [])[1]!;
+    const b = (second.content[0]!.text.match(/wrote (\S+)/) ?? [])[1]!;
+    expect(a).not.toBe(b);
+    expect(await Bun.file(a).exists()).toBe(true);
+    expect(await Bun.file(b).exists()).toBe(true);
+  }, 120_000);
+
   test('a file on the server is not read', async () => {
     const result = await call({ path: '/etc/hostname' });
     expect(result.isError).toBe(true);
@@ -323,8 +381,6 @@ describe('the version header', () => {
         params: { name: 'render_html', arguments: { html: '<p>x</p>' } },
       }),
     });
-    expect(r.status).toBe(400);
-    const body = (await r.json()) as { error: { code: number } };
-    expect(body.error.code).toBe(-32020);
+    expect(await headerMismatch(r)).toBe(-32020);
   });
 });

@@ -1,4 +1,3 @@
-import { inflateSync } from 'node:zlib';
 import {
   inflatedStream,
   insertIntoDict,
@@ -9,6 +8,7 @@ import {
   trySplit,
   type Obj,
   type Parts,
+  cappedInflate,
 } from './pdfparts.ts';
 
 type Table = { offset: number; length: number };
@@ -123,7 +123,7 @@ export function flagsFrom(font: Sfnt, current: number): number {
 
 function embeddedFont(o: Obj): Buffer | undefined {
   if (!/\/Length1\s+\d+/.test(o.bytes.toString(LATIN1))) return undefined;
-  return inflatedStream(o, inflateSync);
+  return inflatedStream(o, cappedInflate);
 }
 
 type DescriptorFix = { flags: number; capHeight?: number };

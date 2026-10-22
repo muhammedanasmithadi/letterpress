@@ -78,8 +78,9 @@ function modernResult(body: Json): Json {
 export async function handle(
   session: Session,
   msg: Message | Message[],
+  headerVersion?: string | null,
 ): Promise<Reply | Reply[] | null> {
-  if (Array.isArray(msg)) return handleBatch(session, msg);
+  if (Array.isArray(msg)) return handleBatch(session, msg, headerVersion);
   if (msg.method === undefined) return null;
   if (msg.id === undefined) {
     return null;
@@ -89,20 +90,28 @@ export async function handle(
   const version = declaredVersion(msg);
   if (version !== null && !isSupportedModern(version)) {
     return fail(id, -32022, 'Unsupported protocol version', {
-      supported: [MODERN_VERSION],
+      supported: [MODERN_VERSION, ...LEGACY_VERSIONS],
       requested: version,
     });
   }
 
-  if (version !== null && metaOf(msg)[META_CLIENT_CAPS] === undefined) {
+  const modern = version !== null || headerVersion === MODERN_VERSION;
+  if (modern && metaOf(msg)[META_CLIENT_CAPS] === undefined) {
     return fail(id, -32602, `a modern request must carry ${META_CLIENT_CAPS} in _meta`);
   }
 
   if (msg.id === null) {
     return fail(null, -32600, 'a request must have an id, and null is not one');
   }
+  return dispatch(session, id, msg, modern);
+}
 
-  const modern = version !== null;
+function dispatch(
+  session: Session,
+  id: string | number,
+  msg: Message,
+  modern: boolean,
+): Reply | Promise<Reply> {
   if (msg.method === 'server/discover') return discover(id, modern);
   if (msg.method === 'initialize') return initialize(id, msg, modern);
   if (msg.method === 'ping') return ok(id, modern ? modernResult({}) : {});
@@ -112,10 +121,14 @@ export async function handle(
   return fail(id, -32601, `Method not found: ${msg.method}`);
 }
 
-async function handleBatch(session: Session, msgs: Message[]): Promise<Reply[]> {
+async function handleBatch(
+  session: Session,
+  msgs: Message[],
+  headerVersion?: string | null,
+): Promise<Reply[]> {
   const replies: Reply[] = [];
   for (const one of msgs) {
-    const reply = await handle(session, one);
+    const reply = await handle(session, one, headerVersion);
     if (reply !== null && !Array.isArray(reply)) replies.push(reply);
   }
   return replies;

@@ -33,7 +33,11 @@ Baseline 2026-10-10, updated 2026-10-21. Bun + TypeScript 7.0.2 codebase
 
 ## The gates this repository adds that the guidelines do not
 
-- `bun run ratchet` — the complexity gate. A function over the limit must be in
+- `bun run ratchet` — the complexity gate. The lizard it runs is pinned to
+  the version the build installs, because the count it reports is the count
+  the gate is about: a newer lizard counts a branch differently, and a gate
+  that answers one way on a machine and another way in the build is a gate
+  whose answer is the machine's. A function over the limit must be in
   the baseline, and a baseline entry that is no longer a breach fails the gate:
   a stale baseline is how a gate stops meaning anything, and it is also how a
   parser that mis-reads a file hides the breaches after it. A function whose

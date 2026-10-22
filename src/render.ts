@@ -267,7 +267,12 @@ const SERVED_DOCUMENT = 'input.html';
 const OVERRIDE_DOCUMENT = 'override.html';
 
 export function confinedTo(dir: string, name: string): boolean {
-  return join(dir, name).startsWith(dir + '/');
+  const base = normalizeDir(dir);
+  return join(base, name).startsWith(base + '/');
+}
+
+export function normalizeDir(dir: string): string {
+  return resolve(dir);
 }
 
 type RefusalReason = 'outside-root' | 'document';
@@ -526,11 +531,22 @@ async function serveWorkDir(dir: string): Promise<{ origin: string; stop: () => 
     idleTimeout: 10,
     async fetch(request) {
       const path = new URL(request.url).pathname;
-      const name = path === '/' ? SERVED_DOCUMENT : decodeURIComponent(path.slice(1));
+      let name: string;
+      try {
+        name = path === '/' ? SERVED_DOCUMENT : decodeURIComponent(path.slice(1));
+      } catch {
+        return new Response('bad request', { status: 400 });
+      }
+      if (name.includes('\0')) return new Response('bad request', { status: 400 });
 
       const resolved = join(dir, name);
       if (!confinedTo(dir, name)) return new Response('forbidden', { status: 403 });
-      const file = Bun.file(resolved);
+      let file: ReturnType<typeof Bun.file>;
+      try {
+        file = Bun.file(resolved);
+      } catch {
+        return new Response('bad request', { status: 400 });
+      }
       if (!(await file.exists())) return new Response('not found', { status: 404 });
       return new Response(file);
     },
@@ -587,8 +603,8 @@ export const EMPTY_INPUT_MESSAGE =
 export async function render(browser: Browser, req: RenderRequest): Promise<RenderResult> {
   const started = Bun.nanoseconds();
   const timeoutMs = req.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const tmp = process.env.TMPDIR ?? '/tmp';
-  const dir = `${tmp}/letterpress-${process.pid}-${workDirCounter++}`;
+  const tmp = normalizeDir(process.env.TMPDIR ?? '/tmp');
+  const dir = join(tmp, `letterpress-${process.pid}-${workDirCounter++}`);
   const findings: Finding[] = [...noScriptFindings(req)];
   const blocked: string[] = [];
 
@@ -656,13 +672,14 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
           timeoutMs,
         )
         .then((r: { result?: { value?: PageSideReport } }) => r.result?.value);
-      if (report) findings.push(...pageSideFindings(report, printableWidth));
+      const checked = checkedReport(report);
+      if (checked) findings.push(...pageSideFindings(checked, printableWidth));
       findings.push(...scriptErrorFindings(alive.errors()));
       findings.push(...(await fontFindings(tab, timeoutMs)));
 
       const { raw } = await printPdf(tab, req, override, declaresPaper, timeoutMs, timedOutRef);
 
-      findings.push(...langFinding(report, raw));
+      findings.push(...langFinding(checked, raw));
 
       const pdfTitle = pdfTitleFor(req);
 
@@ -893,8 +910,26 @@ function pageSideFindings(report: PageSideReport, printableWidthPx: number): Fin
   return out;
 }
 
+function checkedReport(report: PageSideReport | undefined): PageSideReport | undefined {
+  if (!report || typeof report !== 'object') return undefined;
+  const count = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const overflowing = Array.isArray(report.overflowing)
+    ? report.overflowing
+        .filter((o): o is { what: string; widthPx: number } => !!o && typeof o === 'object')
+        .map((o) => ({ what: String(o.what ?? ''), widthPx: count(o.widthPx) }))
+    : [];
+  return {
+    lang: typeof report.lang === 'string' ? report.lang : '',
+    imagesWithoutAlt: count(report.imagesWithoutAlt),
+    imagesEmptyAlt: count(report.imagesEmptyAlt),
+    imagesDecorative: count(report.imagesDecorative),
+    figuresWithoutCaption: count(report.figuresWithoutCaption),
+    overflowing,
+  };
+}
+
 function langFinding(report: PageSideReport | undefined, raw: Uint8Array): Finding[] {
-  if (!report || report.lang.trim()) return [];
+  if (!report || typeof report.lang !== 'string' || report.lang.trim()) return [];
   const declared = /\/Lang\s*\(([^)]*)\)/.exec(new TextDecoder('latin1').decode(raw))?.[1];
   return [
     {
@@ -1038,10 +1073,10 @@ function paperParams(
   };
 }
 
-const LOOPBACK_ONLY = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$)/i;
+const NEVER = /(?!)/;
 
 function loopbackPattern(server: { origin: string } | undefined): RegExp {
-  if (!server) return LOOPBACK_ONLY;
+  if (!server) return NEVER;
   return new RegExp(`^${server.origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`, 'i');
 }
 
@@ -1434,7 +1469,12 @@ async function prepareSource(
   if (fastPath) srcUrl = 'about:blank';
   else srcUrl = isRemote ? src.url : `${server!.origin}/input.html`;
   if (override && !fastPath) {
-    await Bun.write(join(dir, OVERRIDE_DOCUMENT), override);
+    try {
+      await Bun.write(join(dir, OVERRIDE_DOCUMENT), override);
+    } catch (e) {
+      server?.stop();
+      throw e;
+    }
     srcUrl = `${server!.origin}/override.html`;
   }
 

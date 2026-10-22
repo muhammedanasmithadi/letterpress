@@ -54,6 +54,20 @@ to reach the entry point to raise an error. It used to, and the entry point
 reaches the renderer, so importing the parser loaded the renderer with it:
 78 milliseconds before, 20 after.
 
+The version in the header is the transport's claim and the version in the
+body is the message's, and the reply follows the era of the request. A client
+that says the modern revision in the header and leaves it out of the body is
+making a modern request, and a modern request has to carry its capabilities:
+it is told so rather than answered in a shape it did not ask for. The same
+error code reports the same list of versions whichever way it is caught.
+
+A batch is a batch on both transports. The session handler has always
+answered one, and the http route refused it, so the two transports disagreed
+about the same message.
+
+A custom parameter header with no counterpart in the body is a disagreement,
+whether the body carries arguments or not.
+
 The two subcommands take the flags that make sense for them and refuse the
 others, because a flag a subcommand ignores is a flag the reader believes was
 used. `letterpress page` takes `--format` and `--margin`; `letterpress
@@ -132,6 +146,15 @@ render endpoint already enforces is in it:
 The rules are one object rather than a set of optional fields, because an
 optional field is a security property that is off by default and invisible in
 the type: a caller that forgets to set it gets no confinement and no error.
+
+A directory to read the document's assets from is refused, the way a path
+is. It is a way of naming files for the server to read, and to have read in
+the page, and the server is a shared daemon. The endpoint that renders takes
+no path and no directory, and the tools on the same route take neither.
+
+The documents a server has written are kept for an hour and swept after
+that, rather than swept as they are superseded. One caller of a shared
+server was told a path, and another caller's render must not delete it.
 
 ## The model context protocol over HTTP
 

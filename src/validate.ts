@@ -1,4 +1,3 @@
-import { inflateSync } from 'node:zlib';
 import type { Finding } from './render.ts';
 import {
   inflatedStream,
@@ -9,6 +8,7 @@ import {
   trySplit,
   type Obj,
   type Parts,
+  cappedInflate,
 } from './pdfparts.ts';
 import { finalCheckFinding, selectionFinding } from './render.ts';
 
@@ -87,7 +87,7 @@ function pageContent(parts: Parts, o: Obj): string | undefined {
   const stream = parts.objs.find((x) => x.num === ref);
   if (!stream) return undefined;
   const body = /\/Filter\s*\/FlateDecode/.test(streamDict(stream))
-    ? inflatedStream(stream, inflateSync)
+    ? inflatedStream(stream, cappedInflate)
     : plainStream(stream);
   return body?.toString('latin1');
 }
@@ -152,7 +152,8 @@ function structureFindings(pdf: Uint8Array, text: string): Finding[] {
   const census = mcidCensus(pdf);
   const out: Finding[] = [];
   const orphans = census.present.filter((m) => !census.named.has(m));
-  const ghosts = [...census.named].filter((m) => !census.present.includes(m));
+  const present = new Set(census.present);
+  const ghosts = [...census.named].filter((m) => !present.has(m));
 
   if (orphans.length > 0) {
     out.push({

@@ -15,7 +15,13 @@ function silentStderr(): {
 }
 
 function fakeProc(stderr: ReadableStream<Uint8Array>): Parameters<typeof readDevToolsPort>[0] {
-  return { stderr, exited: Promise.resolve(0) } as unknown as Parameters<
+  return { stderr, exited: new Promise<number>(() => {}) } as unknown as Parameters<
+    typeof readDevToolsPort
+  >[0];
+}
+
+function deadProc(stderr: ReadableStream<Uint8Array>): Parameters<typeof readDevToolsPort>[0] {
+  return { stderr, exited: Promise.resolve(1) } as unknown as Parameters<
     typeof readDevToolsPort
   >[0];
 }
@@ -48,6 +54,15 @@ describe('readDevToolsPort', () => {
     expect(await call).toBe(9222);
     expect(Date.now() - started).toBeLessThan(4_000);
   }, 10_000);
+
+  test('a Chromium that has already died is not a Chromium that hung', async () => {
+    const { stream } = silentStderr();
+    const started = Date.now();
+    await expect(readDevToolsPort(deadProc(stream), 30_000)).rejects.toThrow(
+      /exited before it exposed a DevTools endpoint/,
+    );
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
 
   test('stderr keeps being drained after the port is known', async () => {
     const TOTAL = 64;

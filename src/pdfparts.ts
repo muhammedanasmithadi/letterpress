@@ -1,3 +1,4 @@
+import { inflateSync } from 'node:zlib';
 export type Obj = { num: number; bytes: Buffer };
 export type Parts = { head: Buffer; objs: Obj[]; trailer: Buffer };
 
@@ -6,6 +7,14 @@ export function objsByNum(parts: Parts): Map<number, Obj> {
 }
 
 export const LATIN1 = 'latin1' as BufferEncoding;
+
+const MAX_OBJECT_NUMBER = 1_000_000;
+
+const MAX_INFLATE = 64 * 1024 * 1024;
+
+export function cappedInflate(raw: Buffer): Buffer {
+  return inflateSync(raw, { maxOutputLength: MAX_INFLATE });
+}
 const NEWLINE = Buffer.from('\n', LATIN1);
 
 function asBuffer(pdf: Uint8Array): Buffer {
@@ -34,18 +43,24 @@ function dictClose(window: string): number {
 
 export function isEncrypted(pdf: Uint8Array): boolean {
   const buf = asBuffer(pdf);
-  const at = buf.indexOf('\ntrailer\n');
+  const at = findTrailer(buf);
   if (at === -1) return false;
-  const end = buf.indexOf('\nstartxref', at);
-  const trailer = buf.subarray(at + 1, end === -1 ? buf.length : end).toString(LATIN1);
+  const end = buf.indexOf('startxref', at);
+  const trailer = buf.subarray(at, end === -1 ? buf.length : end).toString(LATIN1);
   return /\/Encrypt\b/.test(maskStrings(trailer));
+}
+
+export function findTrailer(text: Buffer | string): number {
+  const source = typeof text === 'string' ? text : text.toString(LATIN1);
+  const m = /(?:^|\n)[ \t]*trailer[ \t]*(?:\r?\n|$)/.exec(source);
+  return m ? m.index : -1;
 }
 
 export function hasPostTrailerObjects(pdf: Uint8Array): boolean {
   const text = asBuffer(pdf).toString(LATIN1);
-  const trailerAt = text.indexOf('\ntrailer\n');
-  if (trailerAt === -1) return false;
-  return /(?:^|\n)\d+ \d+ obj\b/.test(text.slice(trailerAt));
+  const at = findTrailer(text);
+  if (at === -1) return false;
+  return /(?:^|\n)\d+ \d+ obj\b/.test(text.slice(at));
 }
 
 function sliceObject(text: string, raw: Buffer, num: number, from: number, next: number): Obj {
@@ -80,7 +95,7 @@ export function split(raw: Buffer): Parts {
   for (const m of text.matchAll(/(?:^|\n)(\d+) \d+ obj\b/g)) {
     starts.push({ num: Number(m[1]), at: m.index + (m.index > 0 && m[0][0] !== '0' ? 1 : 0) });
   }
-  const trailerAt = text.indexOf('\ntrailer\n');
+  const trailerAt = findTrailer(text);
   const first = starts[0];
   if (first === undefined || trailerAt === -1) throw new Error('not a linear pdf');
   const bodyStarts = starts.filter((s) => s.at < trailerAt);
@@ -113,7 +128,8 @@ export function join(head: Buffer, objs: Obj[], trailer: Buffer): Buffer {
     parts.push(NEWLINE);
     length += 1;
   }
-  const size = Math.max(...objs.map((o) => o.num)) + 1;
+  const highest = Math.max(...objs.map((o) => o.num));
+  const size = (Number.isSafeInteger(highest) && highest < MAX_OBJECT_NUMBER ? highest : 0) + 1;
   const xrefAt = length;
   parts.push(Buffer.from(`xref\n0 ${size}\n0000000000 65535 f \n`, LATIN1));
   for (let n = 1; n < size; n++) {
@@ -385,10 +401,12 @@ export function streamRange(bytes: Uint8Array): { start: number; end: number } |
   const marker = text.match(/stream\r?\n/);
   if (!marker || marker.index === undefined) return undefined;
   const start = marker.index + marker[0].length;
-  const end = text.lastIndexOf('\nendstream');
-
+  const end = text.lastIndexOf('endstream');
   if (end < start) return undefined;
-  return { start, end };
+  let stop = end;
+  if (stop > start && text[stop - 1] === '\n') stop--;
+  if (stop > start && text[stop - 1] === '\r') stop--;
+  return { start, end: stop };
 }
 
 export function inflatedStream(o: Obj, inflate: (b: Buffer) => Buffer): Buffer | undefined {

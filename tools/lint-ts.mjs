@@ -25,10 +25,15 @@ function commentsOf(sf, text) {
       found.push({ text: r, pos: sf.getLineAndCharacterOfPosition(r.pos) });
     for (const r of ts.getTrailingCommentRanges(text, node.getEnd()) ?? [])
       found.push({ text: r, pos: sf.getLineAndCharacterOfPosition(r.pos) });
-    ts.forEachChild(node, visit);
+    for (const child of node.getChildren(sf)) visit(child);
   };
   visit(sf);
-  return found;
+  const seen = new Set();
+  return found.filter((c) => {
+    if (seen.has(c.text.pos)) return false;
+    seen.add(c.text.pos);
+    return true;
+  });
 }
 
 for (const f of ROOTS.flatMap(files)) {

@@ -95,6 +95,14 @@ The mask itself is built from slices rather than from one character at a
 time. A masked copy of a content stream is megabytes of allocation, and
 thirteen thousand objects times a dozen passes is a lot of that.
 
+## The network
+
+A loopback address is not a special case. The only loopback the renderer may
+reach is the one it started itself, to serve the document's own assets, and
+a document that was sent to a server over http has none. Before, a document
+sent over http could reach any service on the machine, and no finding was
+reported, because the exemption was decided before the allowance was.
+
 ## The printable width
 
 The printable width in CSS pixels, or 0 when it cannot be worked out. Zero

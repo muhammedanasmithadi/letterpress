@@ -1,4 +1,4 @@
-import { deflateSync, inflateSync } from 'node:zlib';
+import { deflateSync } from 'node:zlib';
 import {
   insertIntoDict,
   isEncrypted,
@@ -9,6 +9,7 @@ import {
   trySplit,
   type Obj,
   type Parts,
+  cappedInflate,
 } from './pdfparts.ts';
 
 export function pdfString(value: string): string {
@@ -282,7 +283,7 @@ function xmpPayload(pdf: Uint8Array): string | undefined {
   const raw = stream.bytes.subarray(range.start, range.end);
   if (!/\/FlateDecode/.test(stream.bytes.toString(LATIN1))) return raw.toString('utf8');
   try {
-    return inflateSync(raw).toString('utf8');
+    return cappedInflate(raw).toString('utf8');
   } catch {
     return raw.toString('utf8');
   }

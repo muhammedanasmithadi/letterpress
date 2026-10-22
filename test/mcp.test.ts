@@ -107,7 +107,7 @@ describe('the handshake', () => {
     });
     const error = errorOf(reply) as { code: number; data: { supported: string[] } };
     expect(error.code).toBe(-32022);
-    expect(error.data.supported).toEqual([MODERN_VERSION]);
+    expect(error.data.supported).toEqual([MODERN_VERSION, ...LEGACY_VERSIONS]);
   });
 
   test('a modern request without the required client capabilities is malformed', async () => {

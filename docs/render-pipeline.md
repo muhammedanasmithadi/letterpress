@@ -95,6 +95,17 @@ The mask itself is built from slices rather than from one character at a
 time. A masked copy of a content stream is megabytes of allocation, and
 thirteen thousand objects times a dozen passes is a lot of that.
 
+## The request
+
+A request may name one source: the text, a file, or a url. A request that
+names two is a request whose answer depends on which one is read first, and
+the loser still has a say: the title of the pdf came from the file that was
+never opened. Such a request is refused.
+
+A deadline of nothing is a deadline that fires at once, and the number of
+pixels an image is measured in is a whole number. The command line checks
+both, and the library checks them now, so the two agree.
+
 ## The deadline
 
 The deadline closes the tab, and a tab that is closed while the renderer is

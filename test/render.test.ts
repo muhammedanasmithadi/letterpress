@@ -97,6 +97,18 @@ body { font-family: sans-serif }
   expect(text).toContain('page 3 of 3');
 }, 30_000);
 
+test('a request that cannot be rendered as asked is refused', async () => {
+  await expect(render(browser, { html: '<p>x</p>', url: 'https://example.com/' })).rejects.toThrow(
+    /more than one source/,
+  );
+  await expect(render(browser, { html: '<p>x</p>', timeoutMs: 0 })).rejects.toThrow(
+    /at least 1000ms/,
+  );
+  await expect(render(browser, { html: '<p>x</p>', maxImagePpi: -1 })).rejects.toThrow(
+    /whole number of pixels/,
+  );
+}, 30_000);
+
 test('remote requests are blocked by default and reported as findings', async () => {
   const doc = `<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:10mm}</style>
 <link rel="stylesheet" href="https://example.invalid/x.css">

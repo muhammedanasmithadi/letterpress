@@ -495,6 +495,26 @@ function looksBinary(html: string): string | undefined {
   return undefined;
 }
 
+function refuseUnusableRequest(req: RenderRequest, timeoutMs: number): void {
+  const named = [req.html !== undefined, req.path !== undefined, req.url !== undefined].filter(
+    Boolean,
+  ).length;
+  if (named > 1) {
+    throw new Error(
+      `the request names more than one source. give one of: html, path, url, not more than one.`,
+    );
+  }
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 1_000) {
+    throw new Error(`the timeout must be at least 1000ms, got ${timeoutMs}.`);
+  }
+  if (
+    req.maxImagePpi !== undefined &&
+    (!Number.isInteger(req.maxImagePpi) || req.maxImagePpi < 0)
+  ) {
+    throw new Error(`the image size must be a whole number of pixels, got ${req.maxImagePpi}.`);
+  }
+}
+
 function refusePastDeadline(timedOut: { timedOut: boolean }, timeoutMs: number): void {
   if (!timedOut.timedOut) return;
   throw new Error(
@@ -615,6 +635,7 @@ export async function render(browser: Browser, request: RenderRequest): Promise<
   const req = withPaper(request);
   const started = Bun.nanoseconds();
   const timeoutMs = req.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  refuseUnusableRequest(req, timeoutMs);
   const tmp = normalizeDir(process.env.TMPDIR ?? '/tmp');
   const dir = join(tmp, `letterpress-${process.pid}-${workDirCounter++}`);
   const findings: Finding[] = [...noScriptFindings(req)];

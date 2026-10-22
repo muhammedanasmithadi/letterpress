@@ -218,6 +218,7 @@ export class Browser {
   async newTab(url = 'about:blank'): Promise<Tab> {
     const res = await fetch(`http://127.0.0.1:${this.#port}/json/new?${encodeURIComponent(url)}`, {
       method: 'PUT',
+      signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`could not open tab: ${res.status} ${await res.text()}`);
     const target = (await res.json()) as { id: string; webSocketDebuggerUrl: string };
@@ -229,7 +230,9 @@ export class Browser {
         ws.onerror = () => rej(new Error('cdp websocket failed to open'));
       });
     } catch (e) {
-      await fetch(`http://127.0.0.1:${this.#port}/json/close/${target.id}`).catch(() => {});
+      await fetch(`http://127.0.0.1:${this.#port}/json/close/${target.id}`, {
+        signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+      }).catch(() => {});
       throw e;
     }
     this.#tabs.add(tab);
@@ -239,7 +242,9 @@ export class Browser {
   async closeTab(tab: Tab) {
     tab.close();
     this.#tabs.delete(tab);
-    await fetch(`http://127.0.0.1:${this.#port}/json/close/${tab.id}`).catch(() => {});
+    await fetch(`http://127.0.0.1:${this.#port}/json/close/${tab.id}`, {
+      signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+    }).catch(() => {});
   }
 
   async close() {

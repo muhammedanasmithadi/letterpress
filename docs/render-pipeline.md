@@ -95,6 +95,17 @@ The mask itself is built from slices rather than from one character at a
 time. A masked copy of a content stream is megabytes of allocation, and
 thirteen thousand objects times a dozen passes is a lot of that.
 
+## The deadline
+
+The deadline closes the tab, and a tab that is closed while the renderer is
+working on the pdf it has already produced leaves the work to finish and the
+answer to be a success. The deadline is a promise about the answer, so the
+answer has to notice it: the render refuses, and says that it was cut short
+rather than that the socket closed.
+
+The request is read as a copy, so a caller who passes a frozen request gets a
+render and not an error, and their object is not changed underneath them.
+
 ## The network
 
 A loopback address is not a special case. The only loopback the renderer may

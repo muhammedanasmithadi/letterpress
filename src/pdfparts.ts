@@ -403,9 +403,12 @@ export function streamRange(bytes: Uint8Array): { start: number; end: number } |
   const start = marker.index + marker[0].length;
   const end = text.lastIndexOf('endstream');
   if (end < start) return undefined;
+  // The payload ends before the line feed that precedes the keyword. A
+  // carriage return before that is a byte of the payload and not part of the
+  // end of the line: a writer that ends its data with one means the length
+  // it declares counts it.
   let stop = end;
   if (stop > start && text[stop - 1] === '\n') stop--;
-  if (stop > start && text[stop - 1] === '\r') stop--;
   return { start, end: stop };
 }
 

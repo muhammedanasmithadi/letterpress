@@ -495,11 +495,22 @@ function looksBinary(html: string): string | undefined {
   return undefined;
 }
 
+function refusePastDeadline(timedOut: { timedOut: boolean }, timeoutMs: number): void {
+  if (!timedOut.timedOut) return;
+  throw new Error(
+    `the render took longer than ${timeoutMs}ms and was cut short. the document is ` +
+      `larger than the deadline allows, or the browser stopped answering.`,
+  );
+}
+
+function withPaper(request: RenderRequest): RenderRequest {
+  return { ...request, format: parseFormat(request.format) };
+}
+
 async function resolveSource(
   req: RenderRequest,
   dir: string,
 ): Promise<{ html: string; url: string; source: string }> {
-  req.format = parseFormat(req.format);
   if (req.html != null) {
     await Bun.write(join(dir, SERVED_DOCUMENT), req.html);
     return { html: req.html, url: `${dir}/input.html`, source: 'html' };
@@ -600,7 +611,8 @@ export const EMPTY_INPUT_MESSAGE =
   'the input is empty. a 0-byte file renders as one blank page and reports success; ' +
   'check that the file has content, or that the command producing it wrote to stdout.';
 
-export async function render(browser: Browser, req: RenderRequest): Promise<RenderResult> {
+export async function render(browser: Browser, request: RenderRequest): Promise<RenderResult> {
+  const req = withPaper(request);
   const started = Bun.nanoseconds();
   const timeoutMs = req.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const tmp = normalizeDir(process.env.TMPDIR ?? '/tmp');
@@ -691,6 +703,8 @@ export async function render(browser: Browser, req: RenderRequest): Promise<Rend
         keepLigatureSpans: req.keepLigatureSpans === true,
         findings,
       });
+
+      refusePastDeadline(timedOutRef, timeoutMs);
 
       const failedFinal = finalCheckFinding(pdf);
       if (failedFinal) findings.push(failedFinal);

@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { Browser } from '../src/browser.ts';
 import { render } from '../src/render.ts';
-import { pdfText, pdfToPng } from './poppler.ts';
+import { pdfText, pdfToPng, pdfWords } from './poppler.ts';
 
 const display = process.env.DISPLAY;
 const canRunHeadful = Boolean(display);
@@ -148,3 +149,97 @@ describe('headless is the default', () => {
     expect(r.info.pages).toBe(1);
   });
 });
+
+describe("the rewritten document is the browser's document", () => {
+  const MERGE_DOC = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Merge</title>
+<style>@page{size:A4;margin:15mm} body{font-family:"Noto Serif",serif;font-size:11pt}</style></head>
+<body><h1>Heading</h1>
+<p>Paragraph text with enough words in it to fill a line or two of the page, so that the text runs are
+long enough for the difference to show.</p>
+<p>A second paragraph, because the first one is short.</p></body></html>`;
+
+  test('the folding of the text runs keeps the text, the words and the page', async () => {
+    const profile = await mkdtemp(join(tmpdir(), 'letterpress-merge-'));
+    const browser = await Browser.launch({ profile });
+    let ours: Uint8Array;
+    let theirs: Uint8Array;
+    try {
+      ours = (await render(browser, { html: MERGE_DOC, author: 'Merge' })).pdf;
+      const tab = await browser.newTab('about:blank');
+      await tab.send('Page.enable');
+      const frameId = (await tab.send('Page.getFrameTree')).frameTree.frame.id;
+      await tab.send('Page.setDocumentContent', { frameId, html: MERGE_DOC });
+      const printed = await tab.send('Page.printToPDF', {
+        printBackground: true,
+        preferCSSPageSize: true,
+      });
+      theirs = new Uint8Array(Buffer.from(printed.data, 'base64'));
+    } finally {
+      await browser.close();
+      await rm(profile, { recursive: true, force: true }).catch(() => {});
+    }
+
+    expect(await pdfText(ours)).toBe(await pdfText(theirs));
+    expect((await pdfWords(ours)).map((w) => [w.text, w.xMin, w.xMax])).toEqual(
+      (await pdfWords(theirs)).map((w) => [w.text, w.xMin, w.xMax]),
+    );
+
+    const a = await gray(ours, 72, join(tmpdir(), 'lp-merge-ours'));
+    const b = await gray(theirs, 72, join(tmpdir(), 'lp-merge-theirs'));
+    try {
+      expect(a.length).toBe(1);
+      expect(b.length).toBe(1);
+      const left = pgmPixels(a[0]!);
+      const right = pgmPixels(b[0]!);
+      const differing = countDifferent(left, right);
+      const total = left.length;
+      expect(differing / total).toBeLessThan(0.001);
+    } finally {
+      for (const f of [...a, ...b]) await rm(f, { force: true }).catch(() => {});
+    }
+  }, 180_000);
+});
+
+async function gray(bytes: Uint8Array, dpi: number, prefix: string): Promise<string[]> {
+  const path = join(tmpdir(), `lp-merge-${process.pid}-${Math.random().toString(36).slice(2)}.pdf`);
+  await Bun.write(path, bytes);
+  try {
+    await Bun.$`gs -q -dNOPAUSE -dBATCH -sDEVICE=pgmraw -r${dpi} -sOutputFile=${prefix} ${path}`.quiet();
+    const dir = dirname(prefix);
+    const stem = basename(prefix);
+    const entries = await readdir(dir).catch(() => [] as string[]);
+    return entries
+      .filter((n) => n === stem || n.startsWith(`${stem}-`))
+      .filter((n) => !n.endsWith('.pdf'))
+      .sort()
+      .map((n) => join(dir, n));
+  } finally {
+    await rm(path, { force: true }).catch(() => {});
+  }
+}
+
+function pgmPixels(file: string): Uint8Array {
+  const raw = readFileSync(file);
+  let at = 0;
+  const line = (): string => {
+    let out = '';
+    while (at < raw.length && raw[at] !== 10) out += String.fromCharCode(raw[at++]!);
+    at++;
+    return out;
+  };
+  if (line().trim() !== 'P5') throw new Error('not a graymap');
+  for (;;) {
+    const text = line().trim();
+    if (text.startsWith('#')) continue;
+    if (text.split(/\s+/).length === 2) break;
+  }
+  line();
+  return raw.subarray(at);
+}
+
+function countDifferent(left: Uint8Array, right: Uint8Array): number {
+  if (left.length !== right.length) return left.length;
+  let n = 0;
+  for (let i = 0; i < left.length; i++) if (left[i] !== right[i]) n++;
+  return n;
+}

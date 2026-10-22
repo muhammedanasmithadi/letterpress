@@ -125,6 +125,24 @@ a document that was sent to a server over http has none. Before, a document
 sent over http could reach any service on the machine, and no finding was
 reported, because the exemption was decided before the allowance was.
 
+## Folding the text runs
+
+Chromium writes one text-showing operator per glyph, each preceded by a move
+to the place that glyph goes. A reader that splits a text item at every
+showing operator then hands a reader one item per letter, and selecting a
+paragraph gives you one letter at a time.
+
+The text runs are folded into one array per block, which is one showing
+operator and so one item. The cost is that a position inside an array is
+derived from the font's advance rather than declared, and a reader that rounds
+the advance draws a glyph a fraction of a point from where the document put
+it. Ghostscript does; poppler does not, and the two files are identical to
+poppler at every resolution.
+
+The words are in the same places either way, and the text is the same. The
+difference was measured at 0.05% of the page for a document that drifts, and
+a test in `test/parity.test.ts` holds it to a tenth of a percent.
+
 ## The printable width
 
 The printable width in CSS pixels, or 0 when it cannot be worked out. Zero

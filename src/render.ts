@@ -808,7 +808,10 @@ function repairDocument(input: RepairInput): RepairResult {
       message:
         runs.merged > 0
           ? `folded ${runs.merged} of ${runs.blocks} text blocks into TJ arrays, ` +
-            `${described.byteLength - merged.byteLength} bytes smaller, glyph positions verified unchanged` +
+            `${described.byteLength - merged.byteLength} bytes smaller. the text is one item per ` +
+            `block now, which is what a reader needs to select a paragraph, and a reader that ` +
+            `measures the font's own advance rather than the position the document gave a glyph ` +
+            `may draw that glyph a fraction of a point from where the document put it` +
             `${refusedRuns(runs.refused)}.`
           : `left all ${runs.blocks} text blocks alone: none is the shape this rewrites.`,
     });

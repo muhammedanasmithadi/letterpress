@@ -53,13 +53,14 @@ Chromium prints the pdf and this project then rewrites it. The rewriting is
 where the time goes, and it goes on one thing: the pdf is parsed into its
 objects, and the parts are read from there. A 1.9 MB document from 38 pages:
 
-| measurement                               | before   | after    |
-| ----------------------------------------- | -------- | -------- |
-| parses of the same bytes in one render    | 35       | 20       |
-| time in the parse, per render             | 3 115 ms | 318 ms   |
-| text masked to find a keyword, per render | 180.7 MB | 77.8 MB  |
-| the whole render, best of ten             | 6 248 ms | 2 587 ms |
-| the same render for a one-page document   | 1 643 ms | 1 631 ms |
+| measurement                            | before   | after    |
+| -------------------------------------- | -------- | -------- |
+| parses of the same bytes in one render | 35       | 20       |
+| the time in the parses, per render     | 3 269 ms | 316 ms   |
+| the text masked to find a keyword      | 180.7 MB | 52.2 MB  |
+| the whole render of a 38-page table    | 5 498 ms | 1 672 ms |
+| the whole render of a 12-page text     | 665 ms   | 429 ms   |
+| the whole render of a 1-page document  | 399 ms   | 352 ms   |
 
 The before column is the tree this work started from and the after column is
 the tree it ended with, measured by running the two alternately so that the
@@ -71,8 +72,14 @@ allocations and a busy machine objects to that more.
 
 The parse is the whole of the difference. A 38-page document is parsed
 thirty-five times in one render, and each parse copies the document to look
-for one keyword in it. The document is parsed twenty times now, and the copies
-are gone.
+for one keyword in it: 180 MB of text masked, in a million and a half calls.
+The document is parsed twenty times now, over 52 MB, and the copies are gone.
+A parse went from 93 ms to 16 ms, and the render from 5 498 ms to 1 672 ms.
+
+How much it saves depends on the document. The savings are in the work per
+text block, so a document made of tables -- thousands of cells, each a block
+of its own -- gains the most, and a document of plain paragraphs gains
+about a third.
 
 What the mask was for: the `stream` keyword is where a stream begins, and the
 old way of finding it was to copy the whole object with the string literals

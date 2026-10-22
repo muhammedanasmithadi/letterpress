@@ -4,6 +4,7 @@ import { cappedInflate, isEncrypted, trySplit } from '../src/pdfparts.ts';
 import { stripRedundantSpans } from '../src/spans.ts';
 import { setDocTitle } from '../src/meta.ts';
 import { validate } from '../src/validate.ts';
+import { verify } from '../src/verify.ts';
 import { assemblePdf } from './fixtures.ts';
 
 function pdf(objs: string[], trailer = '<< /Root 1 0 R >>'): Uint8Array {
@@ -51,6 +52,27 @@ describe('a document that says anything', () => {
     expect(() => stripRedundantSpans(file)).not.toThrow();
     expect(() => setDocTitle(file, 'T')).not.toThrow();
   }, 30_000);
+});
+
+describe('a document a reader would open', () => {
+  test('a little something in front of the header is still a document', () => {
+    const file = Buffer.concat([
+      Buffer.from('F9 junk before the header\n', 'latin1'),
+      Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n', 'latin1'),
+    ]);
+    const result = validate(new Uint8Array(file));
+    expect(result.findings.map((f) => f.code)).not.toContain('not-a-pdf');
+  });
+
+  test('objects written with more than one space are still objects', () => {
+    const file = Buffer.from(
+      '%PDF-1.4\n1  0  obj\n<< /Type /Catalog >>\nendobj\n' +
+        'trailer\n<< /Root 1 0 R /Size 2 >>\nstartxref\n9\n%%EOF\n',
+      'latin1',
+    );
+    const result = verify(new Uint8Array(file));
+    expect(result.failures.filter((f) => f.includes('does not exist'))).toEqual([]);
+  });
 });
 
 describe('a document with windows line endings', () => {

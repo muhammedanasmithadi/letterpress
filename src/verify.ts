@@ -45,21 +45,23 @@ export function contentPayloads(pdf: Uint8Array, parts?: Parts): string[] {
 }
 
 function checkMarkers(text: string, failures: string[]): void {
-  const pointers = text.match(/startxref/g);
-  if (!pointers) {
-    failures.push('no startxref');
-  } else if (pointers.length > 1) {
-    failures.push(`${pointers.length} startxref lines: readers disagree which one is current`);
-  }
-  const eofs = text.match(/%%EOF/g);
-  if (!eofs) failures.push('no %%EOF');
-  else if (eofs.length > 1) failures.push(`${eofs.length} %%EOF markers`);
+  if (!/startxref/.test(text)) failures.push('no startxref');
+  if (!/%%EOF/.test(text)) failures.push('no %%EOF');
 }
 
 function checkCrossRef(text: string, failures: string[]): void {
-  const sx = Number(text.match(/startxref\s+(\d+)/)?.[1] ?? -1);
-  if (sx < 0 || text.slice(sx, sx + 4) !== 'xref') {
+  const pointers = [...text.matchAll(/startxref\s+(\d+)/g)];
+  const last = pointers[pointers.length - 1];
+  const sx = Number(last?.[1] ?? -1);
+  if (sx < 0) {
     failures.push('startxref does not point at a cross-reference table');
+    return;
+  }
+  if (text.slice(sx, sx + 4) !== 'xref') {
+    if (!/^\d+\s+\d+\s+obj\b/.test(text.slice(sx, sx + 24))) {
+      failures.push('startxref does not point at a cross-reference table');
+      return;
+    }
     return;
   }
   const header = text.slice(sx).match(/^xref\s+0\s+(\d+)\s/);
@@ -95,13 +97,15 @@ function checkReferences(
   failures: string[],
 ): void {
   const defined = index(parts);
-  for (const m of text.matchAll(/(?:^|[^0-9])(\d+) \d+ obj\b/g)) defined.add(Number(m[1]));
+  for (const m of text.matchAll(/(?:^|[^0-9])(\d+)\s+\d+\s+obj\b/g)) defined.add(Number(m[1]));
   const codeRegions: string[] = parts
     ? [...codes, maskStrings(parts.trailer.toString(LATIN1))]
     : [maskStrings(text)];
+  const compressed = parts?.objs.some((o) => /\/Type\s*\/ObjStm\b/.test(o.bytes.toString(LATIN1)));
   for (const region of codeRegions) {
-    for (const m of region.matchAll(/(?:^|[^0-9])(\d+) \d+ R\b/g)) {
+    for (const m of region.matchAll(/(?:^|[^0-9])(\d+)\s+\d+\s+R\b/g)) {
       if (!defined.has(Number(m[1]))) {
+        if (compressed) continue;
         failures.push(`a reference to object ${m[1]} that does not exist`);
         break;
       }

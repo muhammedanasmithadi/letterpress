@@ -6,6 +6,21 @@ modules here are `src/pdfparts.ts` (splitting a file into objects),
 repair modules: `src/spans.ts`, `src/tjmerge.ts`, `src/tounicode.ts`,
 `src/fontdesc.ts`, `src/textfont.ts`.
 
+## The shapes a reader accepts
+
+A cross-reference stream is an object, and it is what every writer from pdf
+1.5 onwards produces, so a pointer to one is a pointer to a cross-reference
+table. A file that has been updated has more than one pointer and more than
+one end of file marker, and the last of each is the one a reader uses. The
+tokens of a pdf are separated by any whitespace, so `1  0  obj` is an object
+header. A reader looks for the header in the first thousand and twenty-four
+bytes, so a file with a little something in front of it is still a file.
+
+An object that lives inside an object stream is not in the file as an object,
+and a reference to one of them is not a dangling reference. The splitter
+cannot see inside a compressed stream, so such a reference is not reported
+rather than reported wrongly.
+
 ## Splitting a file
 
 `split()` reads a PDF into its objects and the trailer. Two things make it

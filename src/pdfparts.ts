@@ -92,7 +92,7 @@ export function split(raw: Buffer): Parts {
   const text = raw.toString(LATIN1);
 
   const starts: Array<{ num: number; at: number }> = [];
-  for (const m of text.matchAll(/(?:^|\n)(\d+) \d+ obj\b/g)) {
+  for (const m of text.matchAll(/(?:^|\n)(\d+)\s+\d+\s+obj\b/g)) {
     starts.push({ num: Number(m[1]), at: m.index + (m.index > 0 && m[0][0] !== '0' ? 1 : 0) });
   }
   const trailerAt = findTrailer(text);

@@ -101,7 +101,7 @@ export function validate(pdf: Uint8Array): Validation {
   const findings: Finding[] = [];
   const text = Buffer.from(pdf).toString('latin1');
 
-  if (!text.startsWith('%PDF-')) {
+  if (!text.slice(0, 1024).includes('%PDF-')) {
     findings.push({
       code: 'not-a-pdf',
       severity: 'error',

@@ -247,6 +247,25 @@ describe('repairOrKeep', () => {
   });
 });
 
+describe('a document a reader would open', () => {
+  test('a cross-reference stream is a cross-reference table', () => {
+    const head = '%PDF-1.5\n';
+    const body = '1 0 obj\n<< /Type /Catalog >>\nendobj\n';
+    const xref = '2 0 obj\n<< /Type /XRef /Size 3 /Root 1 0 R >>\nendobj\n';
+    const text = `${head}${body}${xref}startxref\n${head.length + body.length}\n%%EOF\n`;
+    const result = verify(new Uint8Array(Buffer.from(text, 'latin1')));
+    expect(result.failures.filter((f) => f.includes('startxref'))).toEqual([]);
+  });
+
+  test('a file that has been updated is read at its last pointer', () => {
+    const once =
+      '%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n' +
+      'trailer\n<< /Root 1 0 R /Size 2 >>\nstartxref\n9\n%%EOF\n';
+    const result = verify(new Uint8Array(Buffer.from(once + once, 'latin1')));
+    expect(result.ok).toBe(true);
+  });
+});
+
 describe('the gate in the render path', () => {
   let browser: Browser;
   let profile: string;

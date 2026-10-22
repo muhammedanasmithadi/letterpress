@@ -56,18 +56,23 @@ objects, and the parts are read from there. A 1.9 MB document from 38 pages:
 | measurement                               | before   | after    |
 | ----------------------------------------- | -------- | -------- |
 | parses of the same bytes in one render    | 35       | 20       |
+| time in the parse, per render             | 3 115 ms | 318 ms   |
 | text masked to find a keyword, per render | 180.7 MB | 77.8 MB  |
-| time in the mask, per render              | ~6.0 s   | ~1.2 s   |
-| time in the parse, per render             | ~9.6 s   | ~4.0 s   |
-| the whole render, best of sixteen         | 6 011 ms | 2 398 ms |
-| the same render for a one-page document   | 882 ms   | 863 ms   |
+| the whole render, best of ten             | 6 248 ms | 2 587 ms |
+| the same render for a one-page document   | 1 643 ms | 1 631 ms |
 
-The numbers are from a machine under load as well as a quiet one, so the two
-tables do not agree with each other; the ratios do. The before column is the
-tree this work started from and the after column is the tree it ended with,
-measured by running the two alternately so that the load falls on both equally.
-The before column is the noisier of the two: the old code was spending its
-time in allocations, and the machine objected.
+The before column is the tree this work started from and the after column is
+the tree it ended with, measured by running the two alternately so that the
+load falls on both equally, and taking the best of ten of each. The numbers
+were taken on a machine with nothing else on it: the same measurement on a
+busy machine gives a different answer, and the old code's answer moves more
+than the new one's does, because the old code was spending its time in
+allocations and a busy machine objects to that more.
+
+The parse is the whole of the difference. A 38-page document is parsed
+thirty-five times in one render, and each parse copies the document to look
+for one keyword in it. The document is parsed twenty times now, and the copies
+are gone.
 
 What the mask was for: the `stream` keyword is where a stream begins, and the
 old way of finding it was to copy the whole object with the string literals

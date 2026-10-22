@@ -16,6 +16,12 @@ tokens of a pdf are separated by any whitespace, so `1  0  obj` is an object
 header. A reader looks for the header in the first thousand and twenty-four
 bytes, so a file with a little something in front of it is still a file.
 
+The bytes of a stream may hold anything, and a document that says "1 0 obj"
+on a line of its own is a document that explains pdf syntax. The end of an
+object with a stream is found from its own endstream rather than from the next
+header, and the endstream that ends it is the one the end of the object
+follows, because a payload may name the keyword itself.
+
 An object that lives inside an object stream is not in the file as an object,
 and a reference to one of them is not a dangling reference. The splitter
 cannot see inside a compressed stream, so such a reference is not reported

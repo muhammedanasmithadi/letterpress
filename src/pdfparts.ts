@@ -68,11 +68,6 @@ function sliceObject(text: string, raw: Buffer, num: number, from: number, next:
   const marker = findStream(window, 'newline');
   let to: number;
   if (marker !== -1) {
-    // The bytes of a stream may hold anything, and a header inside it is not
-    // a header, so the end of this object is found from its own endstream
-    // rather than from the next header, which may be inside the stream. The
-    // payload may also name the keyword itself, and the one that ends the
-    // object is the one the end of the object follows.
     const endKw = endstreamOf(text, from + marker);
     if (endKw !== -1) {
       let end = endKw + '\nendstream'.length;
@@ -93,12 +88,6 @@ function sliceObject(text: string, raw: Buffer, num: number, from: number, next:
   return { num, bytes: raw.subarray(from, to) };
 }
 
-/**
- * Where the stream that starts at `from` ends.
- *
- * The keyword that ends a stream is followed by the end of the object, and a
- * payload that names the keyword itself is not followed by it.
- */
 function endstreamOf(text: string, from: number): number {
   let at = from;
   for (;;) {
@@ -128,9 +117,6 @@ export function split(raw: Buffer): Parts {
     const next = bodyStarts[at + 1];
     const obj = sliceObject(text, raw, s.num, s.at, next === undefined ? trailerAt : next.at);
     objs.push(obj);
-    // The bytes of a stream may hold anything, and the text of a document
-    // may say "1 0 obj" on a line of its own. A header inside a stream is
-    // not a header, so the ones that fall inside this object are skipped.
     const end = s.at + obj.bytes.length;
     while (at + 1 < bodyStarts.length && bodyStarts[at + 1]!.at < end) at++;
     at++;

@@ -124,15 +124,19 @@ async function readStdin({
   let total = 0;
 
   const pump = (async () => {
-    for await (const chunk of Bun.stdin.stream()) {
-      total += (chunk as Uint8Array).byteLength;
+    const reader = Bun.stdin.stream().getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value as Uint8Array;
+      total += chunk.byteLength;
       if (total > maxBytes) {
         throw new Error(
           `stdin is over the ${(maxBytes / 1048576).toFixed(0)}MB limit at ${(total / 1048576).toFixed(1)}MB. ` +
             `write the document to a file and pass the path.`,
         );
       }
-      chunks.push(chunk as Uint8Array);
+      chunks.push(chunk);
     }
     return chunks;
   })();

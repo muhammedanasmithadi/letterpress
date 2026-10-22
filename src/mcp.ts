@@ -208,8 +208,11 @@ export async function newSession(): Promise<Session> {
 export async function serve(session: Session): Promise<void> {
   const decoder = new TextDecoder();
   let buffer = '';
-  for await (const chunk of Bun.stdin.stream()) {
-    buffer += decoder.decode(chunk, { stream: true });
+  const reader = Bun.stdin.stream().getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
     let newline = buffer.indexOf('\n');
     while (newline >= 0) {
       const line = buffer.slice(0, newline).trim();

@@ -95,7 +95,7 @@ export function wideGaps(limitEm = 0.6): WideGap[] {
     if (!text.nodeValue || !text.nodeValue.trim()) continue;
     const range = document.createRange();
     range.selectNodeContents(text);
-    for (const r of range.getClientRects()) {
+    for (const r of Array.from(range.getClientRects())) {
       if (r.width > 0 && r.height > 0)
         runs.push({
           left: r.left,
@@ -173,7 +173,7 @@ export function wideGaps(limitEm = 0.6): WideGap[] {
 }
 
 export async function collectLinkedCss(): Promise<number> {
-  const urls = [...document.querySelectorAll('link[rel="stylesheet"]')]
+  const urls = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
     .map((l) => (l as HTMLLinkElement).href)
     .filter((h) => h && !h.startsWith('data:'))
     .slice(0, 8);
@@ -209,7 +209,7 @@ export function pageSideReport(printableWidthPx: number): PageSideReport {
     if (printableWidthPx <= 0) return found;
     const pageBox = document.body.getBoundingClientRect().width;
     const seen = new Set<string>();
-    for (const el of document.body.querySelectorAll<HTMLElement>('*')) {
+    for (const el of Array.from(document.body.querySelectorAll<HTMLElement>('*'))) {
       const rect = el.getBoundingClientRect();
       const fixed = el.style.width.endsWith('px');
       const limit = fixed ? printableWidthPx : pageBox;
@@ -228,7 +228,7 @@ export function pageSideReport(printableWidthPx: number): PageSideReport {
   let imagesWithoutAlt = 0;
   let imagesEmptyAlt = 0;
   let imagesDecorative = 0;
-  for (const img of document.images) {
+  for (const img of Array.from(document.images)) {
     const role = img.getAttribute('role') ?? '';
     if (role === 'presentation' || role === 'none') {
       imagesDecorative++;
@@ -240,7 +240,7 @@ export function pageSideReport(printableWidthPx: number): PageSideReport {
   }
 
   let figuresWithoutCaption = 0;
-  for (const fig of document.querySelectorAll('figure')) {
+  for (const fig of Array.from(document.querySelectorAll('figure'))) {
     if (!fig.querySelector('figcaption')) figuresWithoutCaption++;
   }
 
@@ -258,7 +258,7 @@ export function fontProbe(): Array<{ family: string; elements: number }> {
   const generic =
     /^(serif|sans-serif|monospace|cursive|fantasy|system-ui|ui-|math|emoji|fangsong|inherit|initial)$/i;
   const drawsText = (el: Element): boolean => {
-    for (const node of el.childNodes) {
+    for (const node of Array.from(el.childNodes)) {
       if (node.nodeType === 3 && (node.textContent ?? '').trim()) return true;
     }
     return false;
@@ -274,7 +274,7 @@ export function fontProbe(): Array<{ family: string; elements: number }> {
 
   const counts = new Map<string, number>();
   const first = new Map<string, HTMLElement>();
-  for (const el of document.body.querySelectorAll<HTMLElement>('*')) {
+  for (const el of Array.from(document.body.querySelectorAll<HTMLElement>('*'))) {
     if (!drawsText(el)) continue;
     const want = wanted(el);
     if (!want) continue;
@@ -284,7 +284,7 @@ export function fontProbe(): Array<{ family: string; elements: number }> {
   if (!counts.size) return [];
 
   const loaded = new Set<string>();
-  for (const face of document.fonts) {
+  for (const face of Array.from(document.fonts as unknown as Iterable<FontFace>)) {
     if (face.status === 'loaded') loaded.add(face.family);
   }
 

@@ -1637,7 +1637,8 @@ function selectionReasons(flow: NonNullable<ReturnType<typeof textFlow>>): strin
   if (flow.tooWide > 0) {
     why.push(
       `${flow.tooWide} word spaces stretched past it, the widest to ` +
-        `${flow.widest.toFixed(2)} em -- text-align:justify on a short measure is the usual cause`,
+        `${flow.widest.toFixed(2)} em -- text-align:justify on a short measure, ` +
+        `or letter-spacing, can cause this`,
     );
   }
   if (flow.jump > 0) {
@@ -1652,7 +1653,7 @@ function selectionReasons(flow: NonNullable<ReturnType<typeof textFlow>>): strin
   if (flow.backwards > 0) {
     why.push(
       `${flow.backwards} moves back inside a line, which ends a text item -- ` +
-        `right-to-left text does this by design`,
+        `right-to-left text and negative letter-spacing do this by design`,
     );
   }
   if (flow.unreadable > 0) {
@@ -1664,7 +1665,7 @@ function selectionReasons(flow: NonNullable<ReturnType<typeof textFlow>>): strin
     why.push(
       `${flow.spans} marked-content spans carrying /ActualText, each a place a ` +
         `browser may end a text item regardless of spacing. chromium emits them ` +
-        `around ligatures, but not every span is one`,
+        `around ligatures and complex-script shaping, but not every span is one`,
     );
   }
   return why;

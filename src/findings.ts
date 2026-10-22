@@ -109,9 +109,15 @@ export const FINDINGS: Record<string, FindingSpec> = {
     summary: 'a character no installed font covers, so it prints as a blank box',
   },
   'network-blocked': { severity: 'warn', summary: 'a remote request was blocked, with its URL' },
+  'content-unreadable': {
+    severity: 'error',
+    summary:
+      "a page's content stream cannot be decoded, so the page is blank or wrong in every reader",
+  },
   'not-a-pdf': {
     severity: 'error',
-    summary: 'the file does not begin with `%PDF-`; an error, and nothing else is reported',
+    summary:
+      'the file has no `%PDF-` header in its first thousand and twenty-four bytes; an error, and nothing else is reported',
   },
   'orientation-ignored': {
     severity: 'error',

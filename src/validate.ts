@@ -23,7 +23,7 @@ type McidCensus = {
   role: Map<string, string>;
 };
 
-const K_FORMS = /\/K\s*(\[[\s\S]*?\]|\d+\s+0\s+R|\d+)(?![\d.])/g;
+const K_FORMS = /\/K\s*(\[[^\]]{0,8192}\]|\d+\s+0\s+R|\d+)(?![\d.])/g;
 const STRUCT_ROOT = /\/StructTreeRoot\s+(\d+) 0 R/;
 
 export function mcidCensus(pdf: Uint8Array): McidCensus {
@@ -124,6 +124,8 @@ export function validate(pdf: Uint8Array): Validation {
     return { findings, ok: false };
   }
 
+  findings.push(...unreadablePages(pdf));
+
   const structural = finalCheckFinding(pdf);
   if (structural) findings.push(structural);
 
@@ -132,6 +134,29 @@ export function validate(pdf: Uint8Array): Validation {
 
   findings.push(...structureFindings(pdf, text));
   return { findings, ok: !findings.some((f) => f.severity === 'error') };
+}
+
+function unreadablePages(pdf: Uint8Array): Finding[] {
+  const parts = trySplit(pdf);
+  if (!parts) return [];
+  const out: Finding[] = [];
+  for (const o of parts.objs) {
+    if (!/\/Type\s*\/Page\b/.test(dict(o))) continue;
+    const ref = Number(/\/Contents\s+(\d+)\s+0\s+R/.exec(dict(o))?.[1]);
+    if (!ref) continue;
+    const stream = parts.objs.find((x) => x.num === ref);
+    if (!stream) continue;
+    if (!/\/Filter\s*\/FlateDecode/.test(streamDict(stream))) continue;
+    if (inflatedStream(stream, cappedInflate) !== undefined) continue;
+    out.push({
+      code: 'content-unreadable',
+      severity: 'error',
+      message:
+        `the content of page object ${o.num} cannot be decoded, so the page is blank or ` +
+        `wrong in every reader. the stream says it is compressed and does not decompress.`,
+    });
+  }
+  return out;
 }
 
 function structureFindings(pdf: Uint8Array, text: string): Finding[] {

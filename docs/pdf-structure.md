@@ -16,6 +16,10 @@ tokens of a pdf are separated by any whitespace, so `1  0  obj` is an object
 header. A reader looks for the header in the first thousand and twenty-four
 bytes, so a file with a little something in front of it is still a file.
 
+A content stream that says it is compressed and does not decode leaves the
+page blank in every reader, and saying so is the difference between a
+document that is fine and a document that is not.
+
 The bytes of a stream may hold anything, and a document that says "1 0 obj"
 on a line of its own is a document that explains pdf syntax. The end of an
 object with a stream is found from its own endstream rather than from the next

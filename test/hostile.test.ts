@@ -77,6 +77,18 @@ describe('a document a reader would open', () => {
     expect(parts?.objs.map((o) => o.num)).toEqual([1, 2, 3, 4]);
   });
 
+  test('a page whose content cannot be decoded is reported', () => {
+    const file = [
+      '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+      '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
+      '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>\nendobj\n',
+      '4 0 obj\n<< /Length 20 /Filter /FlateDecode >>\nstream\nnot compressed at all\nendstream\nendobj\n',
+    ].join('');
+    const text = `%PDF-1.4\n${file}trailer\n<< /Root 1 0 R /Size 5 >>\nstartxref\n9\n%%EOF\n`;
+    const result = validate(new Uint8Array(Buffer.from(text, 'latin1')));
+    expect(result.findings.map((f) => f.code)).toContain('content-unreadable');
+  });
+
   test('objects written with more than one space are still objects', () => {
     const file = Buffer.from(
       '%PDF-1.4\n1  0  obj\n<< /Type /Catalog >>\nendobj\n' +

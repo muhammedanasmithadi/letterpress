@@ -93,6 +93,12 @@ The dictionary of an object is read from the front of it, so the stream after
 the dictionary is never turned into a string to be thrown away. A dictionary
 longer than the window falls back to the whole object, which is rare.
 
+The payload of a stream ends before the line feed that precedes the
+`endstream` keyword, and the carriage return before that is a byte of the
+payload: a writer that ends its data with one means the length it declares
+counts it. The keyword may also have no line feed before it at all, which the
+spec allows and which a reader that insists on one will refuse to open.
+
 Three more things cost a copy of the whole document each and now cost none
 of it. The check that every reference resolves built a map of every object's
 text when it only ever asked whether a number was in it. The check that a

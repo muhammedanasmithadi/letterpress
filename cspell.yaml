@@ -19,6 +19,7 @@ words:
     'fontdesc',
     'baselined',
     'bfrange',
+    'endstream',
     'beginbfrange',
     'untransformable',
     'codespacerange',

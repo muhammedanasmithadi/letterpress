@@ -68,12 +68,17 @@ function sliceObject(text: string, raw: Buffer, num: number, from: number, next:
   const marker = findStream(window, 'newline');
   let to: number;
   if (marker !== -1) {
-    const endKw = window.lastIndexOf('\nendstream');
+    // The bytes of a stream may hold anything, and a header inside it is not
+    // a header, so the end of this object is found from its own endstream
+    // rather than from the next header, which may be inside the stream. The
+    // payload may also name the keyword itself, and the one that ends the
+    // object is the one the end of the object follows.
+    const endKw = endstreamOf(text, from + marker);
     if (endKw !== -1) {
       let end = endKw + '\nendstream'.length;
-      const tail = /^\s*endobj/.exec(window.slice(end));
+      const tail = /^\s*endobj/.exec(text.slice(end));
       if (tail) end += tail[0].length;
-      to = from + end;
+      to = end;
     } else {
       to = next;
     }
@@ -85,7 +90,23 @@ function sliceObject(text: string, raw: Buffer, num: number, from: number, next:
     const m = /\bendobj[ \t]*[\r\n]/.exec(maskedWindow.slice(after));
     to = m ? from + after + m.index + 6 : next;
   }
-  return { num, bytes: raw.subarray(from, Math.min(to, next)) };
+  return { num, bytes: raw.subarray(from, to) };
+}
+
+/**
+ * Where the stream that starts at `from` ends.
+ *
+ * The keyword that ends a stream is followed by the end of the object, and a
+ * payload that names the keyword itself is not followed by it.
+ */
+function endstreamOf(text: string, from: number): number {
+  let at = from;
+  for (;;) {
+    const found = text.indexOf('\nendstream', at);
+    if (found === -1) return -1;
+    if (/^\s*endobj/.test(text.slice(found + '\nendstream'.length))) return found;
+    at = found + 1;
+  }
 }
 
 export function split(raw: Buffer): Parts {
@@ -101,10 +122,18 @@ export function split(raw: Buffer): Parts {
   const bodyStarts = starts.filter((s) => s.at < trailerAt);
   if (bodyStarts.length === 0) throw new Error('no objects before the trailer');
   const objs: Obj[] = [];
-  for (const [i, s] of bodyStarts.entries()) {
-    const from = s.at;
-    const n = bodyStarts[i + 1];
-    objs.push(sliceObject(text, raw, s.num, from, n === undefined ? trailerAt : n.at));
+  let at = 0;
+  while (at < bodyStarts.length) {
+    const s = bodyStarts[at]!;
+    const next = bodyStarts[at + 1];
+    const obj = sliceObject(text, raw, s.num, s.at, next === undefined ? trailerAt : next.at);
+    objs.push(obj);
+    // The bytes of a stream may hold anything, and the text of a document
+    // may say "1 0 obj" on a line of its own. A header inside a stream is
+    // not a header, so the ones that fall inside this object are skipped.
+    const end = s.at + obj.bytes.length;
+    while (at + 1 < bodyStarts.length && bodyStarts[at + 1]!.at < end) at++;
+    at++;
   }
 
   const oldStartxref = text.indexOf('\nstartxref', trailerAt);

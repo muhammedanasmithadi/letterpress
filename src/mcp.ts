@@ -7,7 +7,7 @@ export const LEGACY_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-
 const SERVER_INFO = { name: 'letterpress', version: '0.1.0' };
 
 const INSTRUCTIONS =
-  'Render HTML to PDF through Chromium own print engine, and check PDFs that already exist. ' +
+  "Render HTML to PDF through Chromium's own print engine, and check PDFs that already exist. " +
   'A render reports findings: severity error means the PDF is not the document you asked for, ' +
   'warn means something is degraded, and info is a note. Call list_findings to find out what a code means.';
 

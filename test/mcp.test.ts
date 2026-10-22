@@ -142,6 +142,27 @@ describe('the tools', () => {
     }
   });
 
+  test('the words the agent reads carry their possessives', async () => {
+    const reply = await legacy(1, 'tools/list');
+    const tools = (resultOf(reply) as unknown as { tools: Array<Record<string, unknown>> }).tools;
+    const strings: string[] = [];
+    for (const tool of tools) {
+      strings.push(String(tool['description']));
+      const schema = tool['inputSchema'] as {
+        properties?: Record<string, { description?: string }>;
+      };
+      for (const property of Object.values(schema.properties ?? {}))
+        strings.push(String(property.description ?? ''));
+    }
+    const initialized = resultOf(await legacy(0, 'initialize'));
+    strings.push(String(initialized['instructions'] ?? ''));
+
+    const slip = /(?<![\w'])(?!(?:its|their|his|her|our|your|my)\b)[A-Za-z]+ own\b/;
+    for (const s of strings) {
+      expect([s.match(slip)?.[0] ?? null, s]).toEqual([null, s]);
+    }
+  });
+
   test('the modern listing carries a result type and a cache lifetime', async () => {
     const reply = await modern(1, 'tools/list');
     const result = resultOf(reply);

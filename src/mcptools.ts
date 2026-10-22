@@ -101,7 +101,7 @@ const RENDER_SCHEMA = {
     root: {
       type: 'string',
       description:
-        'the directory the document may read its assets from. defaults to the document own directory.',
+        "the directory the document may read its assets from. defaults to the document's own directory.",
     },
     outputPath: {
       type: 'string',
@@ -163,7 +163,7 @@ export const TOOLS: Tool[] = [
     name: 'render_html',
     title: 'Render HTML to PDF',
     description:
-      'Print HTML to PDF through Chromium own print engine, and report what the document got wrong. ' +
+      "Print HTML to PDF through Chromium's own print engine, and report what the document got wrong. " +
       'Returns the path the pdf was written to, the findings, and what the finished file turned out to be. ' +
       'A finding of severity error means the pdf is not the document you asked for.',
     inputSchema: RENDER_SCHEMA as unknown as Record<string, unknown>,
@@ -182,7 +182,7 @@ export const TOOLS: Tool[] = [
     name: 'page_rules',
     title: 'Explain the paper rules',
     description:
-      'Say what the renderer would make of a document own @page rules: the paper and margin it ' +
+      "Say what the renderer would make of a document's own @page rules: the paper and margin it " +
       'declares, what --landscape would do to them, and what --format and --margin would change. ' +
       'Use this before rendering when the paper matters, and after when a document did not come out ' +
       'on the sheet you expected.',
@@ -493,7 +493,7 @@ function renderRequestFrom(args: Record<string, unknown>): {
   if (margin !== undefined && format === undefined) {
     return {
       request: {},
-      error: 'margin only applies with format, because the document own @page wins otherwise.',
+      error: "margin only applies with format, because the document's own @page wins otherwise.",
     };
   }
 

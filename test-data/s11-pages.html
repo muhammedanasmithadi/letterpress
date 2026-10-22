@@ -1,0 +1,15 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Named pages</title>
+<style>@page{size:A4;margin:18mm;@bottom-center{content:counter(page) " of " counter(pages)}}
+@page big{size:A3 landscape;margin:10mm}
+@page :first{margin:30mm}
+@page:left{@bottom-left{content:"left"}}
+@page:right{@bottom-right{content:"right"}}
+body{font-family:serif;font-size:11pt}
+.big{page:big}
+</style></head>
+<body>
+<h1>Named pages</h1>
+<p>First page, with a wide margin from @page :first.</p>
+<div class="big"><h2>A landscape page</h2><p>This is A3 landscape via a named page.</p><p>More content here.</p></div>
+<h2>Back to portrait</h2><p>Back to A4 portrait after the named page.</p>
+</body></html>

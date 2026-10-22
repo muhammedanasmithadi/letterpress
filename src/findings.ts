@@ -187,7 +187,9 @@ export const FINDINGS: Record<string, FindingSpec> = {
   'text-runs-merged': {
     severity: 'info',
     summary:
-      'per-glyph text positioning folded into TJ arrays, glyph positions verified unchanged; also reports any block left alone',
+      'per-glyph text positioning folded into TJ arrays, so a reader can select a paragraph; ' +
+      "a reader that measures the font's own advance may draw a glyph a fraction of a point " +
+      'from where the document put it; also reports any block left alone',
   },
   'unfilled-placeholder': { severity: 'error', summary: 'the document still contains `{{token}}`' },
   'unsupported-paged-media': {

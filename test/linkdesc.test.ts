@@ -149,6 +149,16 @@ describe('link descriptions', () => {
       body: `<p><a href="https://a.example/">café — 日本語</a></p>`,
       wanted: [['https://a.example/', 'café — 日本語']],
     },
+
+    'an anchor that paints nothing between two that do': {
+      body:
+        `<p><a href="https://a.example/">link-1</a> <a href="https://empty.example/"></a> ` +
+        `<a href="https://b.example/">link-2</a></p>`,
+      wanted: [
+        ['https://a.example/', 'link-1'],
+        ['https://b.example/', 'link-2'],
+      ],
+    },
   };
 
   for (const [name, { body, wanted }] of Object.entries(CASES)) {
@@ -167,6 +177,21 @@ describe('link descriptions', () => {
       ['https://x.example/', 'a logo'],
       ['https://x.example/', 'a logo'],
     ]);
+  }, 90_000);
+
+  test('a link that the print hides is reported rather than losing the descriptions in silence', async () => {
+    const body =
+      `<p><a href="https://a.example/">visible</a></p>` +
+      `<style>@media print{.gone{display:none}}</style>` +
+      `<p class="gone"><a href="https://b.example/">hidden in print</a></p>` +
+      `<p><a href="https://c.example/">another visible</a></p>`;
+    const r = await render(browser, { html: DOC(body), author: 't' });
+    const f = r.findings.find((x) => x.code === 'link-descriptions-skipped');
+    expect(f).toBeDefined();
+    expect(f!.severity).toBe('warn');
+    expect(f!.message).toMatch(/2 links/);
+    expect(f!.message).toMatch(/3 descriptions/);
+    expect(verify(r.pdf).ok).toBe(true);
   }, 90_000);
 
   test('a document with no links is untouched', async () => {
@@ -220,7 +245,8 @@ describe('link descriptions', () => {
         html: DOC(
           `<p><a href="https://a.example/">visible</a></p>` +
             `<p><a href="https://b.example/"><img src="${GIF}" alt="from alt"></a></p>` +
-            `<p><a href="https://c.example/page"></a></p>`,
+            `<p><a href="https://c.example/page"><img src="${GIF}"></a></p>` +
+            `<p><a href="https://d.example/empty"></a></p>`,
         ),
       });
       await Bun.sleep(200);

@@ -87,6 +87,11 @@ export const FINDINGS: Record<string, FindingSpec> = {
     summary:
       'redundant `/ActualText` spans around ligatures were removed; extraction verified unchanged',
   },
+  'link-descriptions-skipped': {
+    severity: 'warn',
+    summary:
+      'the links could not be matched one for one with the text that describes them, so none of them was described',
+  },
   'margin-ignored': {
     severity: 'warn',
     summary: '`--margin` was dropped: the document declares `@page margin`',

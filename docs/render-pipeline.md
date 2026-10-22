@@ -250,6 +250,31 @@ gaps, and had eight. Helpers are therefore nested inside the function that
 ships them, and the render reports a probe that throws rather than handing
 back an empty result.
 
+## The link descriptions
+
+Chromium writes a link annotation with its address and its rectangle, and
+nothing that says what the link _is_. A screen reader announces the address,
+which is a poor description of "the terms of service". The tool writes the
+text of the anchor into the annotation's `/Contents`.
+
+The page-side script returns one description per anchor, in the order the
+document has them, and the printed file has one link element per anchor that
+Chromium printed. The two lists are paired one for one.
+
+An anchor that paints nothing gets no annotation and no element in the
+structure tree, so the script skips it. One empty anchor in a paragraph would
+otherwise put every description after it on the wrong link, or lose them all.
+An anchor is skipped when it has no box with a width: an empty anchor has a
+box of zero width, and an anchor inside a `display: none` element has no box
+at all.
+
+The pairing needs the two lists to be the same length. When they are not — a
+link that the print hides with `@media print`, for instance, which is on the
+screen when the script runs and gone from the printed page — the descriptions
+are left off rather than guessed at, and the finding
+`link-descriptions-skipped` says so. A description on the wrong link is worse
+than no description at all.
+
 ## The page-side findings
 
 The audit runs as a synchronous script in the page and reports what it found.

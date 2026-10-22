@@ -4,7 +4,7 @@ import { Browser, type Tab } from './browser.ts';
 import { fixFontDescriptors, unresolvedFontMetrics } from './fontdesc.ts';
 import { addMetadata, isVolatileTitle, readDocInfo, setDocTitle } from './meta.ts';
 import { fixToUnicode } from './tounicode.ts';
-import { LINK_DESC_JS, fixLinkDescs, parseLinkDescs } from './linkdesc.ts';
+import { LINK_DESC_JS, fixLinkDescs, linkDescPairing, parseLinkDescs } from './linkdesc.ts';
 import { fixRedundantFigures, redundantFigureCount } from './figrole.ts';
 import { textFlow } from './selection.ts';
 import { mergeTextRuns } from './tjmerge.ts';
@@ -787,13 +787,27 @@ function repairDocument(input: RepairInput): RepairResult {
   let described = gated(raw, 'ToUnicode', fixToUnicode, rejected, findings);
   described = gated(described, 'font descriptor', fixFontDescriptors, rejected, findings);
   if (linkDescs) {
-    described = gated(
-      described,
-      'link description',
-      (p) => fixLinkDescs(p, linkDescs),
-      rejected,
-      findings,
-    );
+    const pairing = linkDescPairing(described, linkDescs);
+    if (pairing.ok) {
+      described = gated(
+        described,
+        'link description',
+        (p) => fixLinkDescs(p, linkDescs),
+        rejected,
+        findings,
+      );
+    } else if (pairing.why === 'count') {
+      findings.push({
+        code: 'link-descriptions-skipped',
+        severity: 'warn',
+        message:
+          `the document has ${pairing.links} link${pairing.links === 1 ? '' : 's'} in its ` +
+          `structure tree and the page gave ${pairing.descs} description` +
+          `${pairing.descs === 1 ? '' : 's'} for them, so the two could not be matched one for one ` +
+          `and none of them was written. the links are all there and they work; they have no ` +
+          `description for a screen reader.`,
+      });
+    }
   }
 
   described = repairFigures(described, rejected, findings);

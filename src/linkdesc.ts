@@ -14,6 +14,8 @@ import { pdfValue } from './meta.ts';
 export const LINK_DESC_JS = `(() => {
   const out = [];
   for (const a of document.querySelectorAll('a[href]')) {
+    const painted = [...a.getClientRects()].some((r) => r.width > 0 && r.height > 0);
+    if (!painted) continue;
     let text = (a.textContent || '').replace(/\\s+/g, ' ').trim();
     if (!text) {
       const img = a.querySelector('img[alt]');
@@ -59,6 +61,27 @@ export function linkAnnotations(parts: Parts, linkNum: number): number[] {
   return out;
 }
 
+export type LinkDescPairing = {
+  ok: boolean;
+  why: 'paired' | 'none' | 'encrypted' | 'unreadable' | 'count';
+  links: number;
+  descs: number;
+};
+
+export function linkDescPairing(pdf: Uint8Array, descs: string[]): LinkDescPairing {
+  if (descs.length === 0) return { ok: true, why: 'none', links: 0, descs: 0 };
+  if (isEncrypted(pdf)) return { ok: false, why: 'encrypted', links: 0, descs: descs.length };
+  const parts = trySplit(pdf);
+  if (!parts) return { ok: false, why: 'unreadable', links: 0, descs: descs.length };
+  const links = linkOrder(parts).length;
+  return {
+    ok: links === descs.length,
+    why: links === descs.length ? 'paired' : 'count',
+    links,
+    descs: descs.length,
+  };
+}
+
 export function fixLinkDescs(pdf: Uint8Array, descs: string[]): Uint8Array {
   if (descs.length === 0) return pdf;
   if (isEncrypted(pdf)) return pdf;
@@ -67,7 +90,6 @@ export function fixLinkDescs(pdf: Uint8Array, descs: string[]): Uint8Array {
 
   const links = linkOrder(parts);
   if (links.length !== descs.length) return pdf;
-
   const byNum = objsByNum(parts);
   let changed = 0;
   links.forEach((linkNum, index) => {

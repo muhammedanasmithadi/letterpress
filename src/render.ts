@@ -808,7 +808,7 @@ function repairDocument(input: RepairInput): RepairResult {
       message:
         runs.merged > 0
           ? `folded ${runs.merged} of ${runs.blocks} text blocks into TJ arrays, ` +
-            `${described.byteLength - merged.byteLength} bytes smaller. the text is one item per ` +
+            `${sizeChange(described.byteLength, merged.byteLength)}. the text is one item per ` +
             `block now, which is what a reader needs to select a paragraph, and a reader that ` +
             `measures the font's own advance rather than the position the document gave a glyph ` +
             `may draw that glyph a fraction of a point from where the document put it` +
@@ -1744,6 +1744,12 @@ function ligatureSpanFinding(
         : `left all ${spans.seen} /ActualText spans in place: /ToUnicode does not ` +
           `resolve them to the same text, so each is the only copy of it.`,
   };
+}
+
+function sizeChange(before: number, after: number): string {
+  const delta = before - after;
+  if (delta === 0) return 'the same size';
+  return delta > 0 ? `${delta} bytes smaller` : `${-delta} bytes larger`;
 }
 
 function refusedRuns(refused: number): string {

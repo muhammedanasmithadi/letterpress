@@ -124,10 +124,28 @@ describe('merging text runs', () => {
       const r = await render(browser, { html: page(name, css, body), author: 'tj' });
       const message = said(r, 'text-runs-merged');
       expect([name, message !== undefined]).toEqual([name, true]);
-      expect([name, /glyph positions verified unchanged/.test(message!)]).toEqual([name, true]);
+      expect([name, /the text is one item per block now/.test(message!)]).toEqual([name, true]);
       expect([name, /left all \d+ text blocks alone/.test(message!)]).toEqual([name, false]);
+      expect([name, /bytes (smaller|larger)|the same size/.test(message!)]).toEqual([name, true]);
+      expect([name, /-\d+ bytes/.test(message!)]).toEqual([name, false]);
     }
   }, 300_000);
+
+  test('a document that the fold makes larger says so', async () => {
+    const html =
+      '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">' +
+      '<style>@page{size:A4;margin:18mm;@bottom-center{content:counter(page);font:9pt serif}}' +
+      'body{font-family:"Noto Naskh Arabic",serif;font-size:13pt;line-height:1.8}</style></head>' +
+      '<body><h1>الفصل الأول</h1>' +
+      '<p>السابق ثلاثة يمر بأسفل، ومن ثم نزل. The official fish fills five dozen liquor jugs.</p>' +
+      '<p>الأرقام ٢٠٢٦-١٠-٠٣ والتاريخ يظهر معكوسا في السياق من اليسار إلى اليمين.</p>' +
+      '<p>الفصل الثاني من الكتاب، ونص آخر ليملأ السطر.</p></body></html>';
+    const r = await render(browser, { html, author: 'tj' });
+    const message = said(r, 'text-runs-merged');
+    expect(message).toBeDefined();
+    expect(message).not.toMatch(/-\d+ bytes/);
+    expect(message).toMatch(/bytes (smaller|larger)|the same size/);
+  }, 120_000);
 
   test('merging an already merged file changes nothing', async () => {
     const before = await chromiumPrint(page('prose', DOCS[0]![1], DOCS[0]![2]));

@@ -275,6 +275,16 @@ are left off rather than guessed at, and the finding
 `link-descriptions-skipped` says so. A description on the wrong link is worse
 than no description at all.
 
+One of the printed links can carry the pairing without offering anywhere to
+write: an anchor to another place in the document, or to a relative file path,
+gets a link element in the structure tree and no annotation at all — measured
+against a raw Chromium print, which also writes none — because the print
+engine only annotates an anchor whose destination is an address. Those
+descriptions are not written either, and the pairing still holds, since it
+counts elements and the element is there. Nothing about the document is
+wrong: the links work in the file the print produced, they simply have no
+annotation to describe.
+
 ## The page-side findings
 
 The audit runs as a synchronous script in the page and reports what it found.

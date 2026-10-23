@@ -292,28 +292,40 @@ function clampedUrlPath(rel: string): string {
   return out.join('/');
 }
 
-const REF_PATTERNS: ReadonlyArray<{ re: RegExp; candidates?: true }> = [
-  { re: /(?:src|href)\s*=\s*["']([^"']+)["']/gi },
-  { re: /(?:src|href)\s*=\s*([^\s>]+)/gi },
-  { re: /\bsrcset\s*=\s*["']([^"']+)["']/gi, candidates: true },
-  { re: /url\(\s*["']?([^"')]+)["']?\s*\)/gi },
-  { re: /@import\s+["']([^"']+)["']/gi },
-  { re: /\b(?:import|export)\b[^;'"]*?\bfrom\s*["']([^"']+)["']/g },
-  { re: /\bimport\s*["']([^"']+)["']/g },
-  { re: /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g },
-];
+const NAV_HREF_TAGS = new Set(['a', 'area', 'base']);
 
+const TAG_OPEN = /<\s*([\w-]+)\b[^>]*>/gi;
+const SRC_ATTR = /(?:src|href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
+const QUOTED_SRCSET = /\bsrcset\s*=\s*["']([^"']+)["']/gi;
 const NOT_A_LOCAL_FILE = /^(?:https?:|data:|blob:|file:|#|mailto:|\/\/)/i;
 
+const REF_PATTERNS: ReadonlyArray<RegExp> = [
+  /url\(\s*["']?([^"')]+)["']?\s*\)/gi,
+  /@import\s+["']([^"']+)["']/gi,
+  /\b(?:import|export)\b[^;'"]*?\bfrom\s*["']([^"']+)["']/g,
+  /\bimport\s*["']([^"']+)["']/g,
+  /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
+];
+
+function* tagRefs(text: string): Generator<string> {
+  for (const tag of text.matchAll(TAG_OPEN)) {
+    if (NAV_HREF_TAGS.has(tag[1]!.toLowerCase())) continue;
+    const body = tag[0];
+    for (const m of body.matchAll(SRC_ATTR)) {
+      const value = m[1] ?? m[2] ?? m[3] ?? '';
+      if (value) yield value;
+    }
+    for (const m of body.matchAll(QUOTED_SRCSET)) {
+      for (const entry of m[1]!.split(',')) yield entry.trim().split(/\s+/)[0]!;
+    }
+  }
+}
+
 function* refsIn(text: string): Generator<string> {
-  for (const { re, candidates } of REF_PATTERNS) {
+  yield* tagRefs(text);
+  for (const re of REF_PATTERNS) {
     for (const m of text.matchAll(re)) {
-      const raw = (m[1] ?? '').replace(/["']/g, '');
-      if (candidates) {
-        for (const entry of raw.split(',')) yield entry.trim().split(/\s+/)[0] ?? '';
-      } else {
-        yield raw;
-      }
+      yield (m[1] ?? '').replace(/["']/g, '');
     }
   }
 }

@@ -255,6 +255,36 @@ describe('stageAssets', () => {
     }
   });
 
+  const stage = async (html: string) => {
+    const root = await mkdtemp(join(tmpdir(), 'lp-nav-'));
+    const work = await mkdtemp(join(tmpdir(), 'lp-navwork-'));
+    try {
+      return await stageAssets(html, join(root, 'index.html'), work);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(work, { recursive: true, force: true });
+    }
+  };
+
+  test('an anchor href is navigation, and nothing is staged or refused for it', async () => {
+    const refused = await stage(
+      '<a href="/pricing">Pricing</a><a href="./report.html">Full report</a>' +
+        '<a href="https://example.com/x">External</a><a href="#terms">Terms</a>',
+    );
+    expect(refused).toEqual([]);
+  });
+
+  test('an image inside an anchor and a stylesheet are still assets', async () => {
+    const refused = await stage(
+      '<a href="/pricing"><img src="/pricing.png"></a><link rel="stylesheet" href="/etc/passwd.css">',
+    );
+    const whys = refused.map((r) => r.why);
+    expect(whys).toContain('outside-root');
+    expect(refused.some((r) => r.ref.endsWith('.png'))).toBe(true);
+    expect(refused.some((r) => r.ref.endsWith('.css'))).toBe(true);
+    expect(refused.some((r) => r.ref.includes('/pricing"'))).toBe(false);
+  });
+
   test('two stylesheets importing each other terminate', async () => {
     const { root, work } = await site();
     try {

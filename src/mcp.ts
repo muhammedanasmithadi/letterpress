@@ -48,6 +48,16 @@ function fail(id: string | number | null, code: number, message: string, data?: 
   };
 }
 
+function internalReply(label: string, id: string | number | null, e: unknown): Reply | null {
+  const reason = e instanceof Error ? e.message : String(e);
+  if (id === null) {
+    process.stderr.write(`letterpress-mcp: ignoring ${label} that answered nothing: ${reason}\n`);
+    return null;
+  }
+  process.stderr.write(`letterpress-mcp: answered ${label} with an internal error: ${reason}\n`);
+  return fail(id, -32603, `internal error: ${reason}`);
+}
+
 function metaOf(msg: Message): Json {
   const meta = (msg.params as Json | undefined)?.['_meta'];
   return meta && typeof meta === 'object' ? (meta as Json) : {};
@@ -128,10 +138,26 @@ async function handleBatch(
 ): Promise<Reply[]> {
   const replies: Reply[] = [];
   for (const one of msgs) {
-    const reply = await handle(session, one, headerVersion);
+    const reply = await handleOneInBatch(session, one, headerVersion);
     if (reply !== null && !Array.isArray(reply)) replies.push(reply);
   }
   return replies;
+}
+
+async function handleOneInBatch(
+  session: Session,
+  one: Message,
+  headerVersion?: string | null,
+): Promise<Reply | Reply[] | null> {
+  if (one === null || typeof one !== 'object' || Array.isArray(one)) {
+    return fail(null, -32600, 'a batch member must be a request object, not this');
+  }
+  try {
+    return await handle(session, one, headerVersion);
+  } catch (e) {
+    const id = typeof one.id === 'string' || typeof one.id === 'number' ? one.id : null;
+    return internalReply('a batch member', id, e);
+  }
 }
 
 function discover(id: string | number, modern: boolean): Reply {
@@ -224,7 +250,11 @@ export async function serve(session: Session): Promise<void> {
   }
 }
 
-async function respond(session: Session, line: string): Promise<void> {
+export async function respond(
+  session: Session,
+  line: string,
+  call: (s: Session, msg: Message) => Promise<Reply | Reply[] | null> = handle,
+): Promise<void> {
   let msg: Message;
   try {
     msg = JSON.parse(line) as Message;
@@ -232,8 +262,18 @@ async function respond(session: Session, line: string): Promise<void> {
     process.stderr.write('letterpress-mcp: ignoring a line that is not JSON\n');
     return;
   }
-  const reply = await handle(session, msg);
-  if (reply === null) return;
+  if (msg === null || typeof msg !== 'object') {
+    process.stderr.write('letterpress-mcp: ignoring a line that is not a request object\n');
+    return;
+  }
+  let reply: Reply | Reply[] | null;
+  try {
+    reply = await call(session, msg);
+  } catch (e) {
+    const id = typeof msg.id === 'string' || typeof msg.id === 'number' ? msg.id : null;
+    reply = internalReply('a line', id, e);
+  }
+  if (reply === null || (Array.isArray(reply) && reply.length === 0)) return;
   try {
     process.stdout.write(`${JSON.stringify(reply)}\n`);
   } catch {}

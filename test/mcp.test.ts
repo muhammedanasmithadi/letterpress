@@ -3,7 +3,14 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { handle, newSession, LEGACY_VERSIONS, MODERN_VERSION, type Session } from '../src/mcp.ts';
+import {
+  handle,
+  newSession,
+  LEGACY_VERSIONS,
+  MODERN_VERSION,
+  respond,
+  type Session,
+} from '../src/mcp.ts';
 import { TOOLS } from '../src/mcptools.ts';
 import { closeContext } from '../src/mcptools.ts';
 
@@ -433,6 +440,128 @@ describe('the messages a server may be sent', () => {
 
     const alive = await send({ jsonrpc: '2.0', id: 33, method: 'ping' });
     expect(alive).not.toBeNull();
+  });
+});
+
+describe('the stdio line responder', () => {
+  async function withPipes(out: string[], err: string[], body: () => Promise<void>): Promise<void> {
+    const stdoutWrite = process.stdout.write;
+    const stderrWrite = process.stderr.write;
+    process.stdout.write = ((s: string | Uint8Array) => {
+      out.push(String(s));
+      return true;
+    }) as typeof stdoutWrite;
+    process.stderr.write = ((s: string | Uint8Array) => {
+      err.push(String(s));
+      return true;
+    }) as typeof stderrWrite;
+    try {
+      await body();
+    } finally {
+      process.stdout.write = stdoutWrite;
+      process.stderr.write = stderrWrite;
+    }
+  }
+
+  const lineOf = (id: number): string =>
+    `${JSON.stringify({ jsonrpc: '2.0', id, method: 'ping' })}\n`;
+
+  test('a line that parses to null is noted, not crashed on, and the session goes on', async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    await withPipes(out, err, async () => {
+      await respond(session, 'null');
+      await respond(session, lineOf(40));
+    });
+    expect(out).toEqual(['{"jsonrpc":"2.0","id":40,"result":{}}\n']);
+    expect(err.join('')).toContain('not a request object');
+  });
+
+  test('a batch of only notifications is answered with nothing, not an empty array', async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    await withPipes(out, err, async () => {
+      await respond(
+        session,
+        '[{"jsonrpc":"2.0","method":"idle/x"},{"jsonrpc":"2.0","method":"idle/y"}]',
+      );
+      await respond(session, lineOf(41));
+    });
+    expect(out).toEqual(['{"jsonrpc":"2.0","id":41,"result":{}}\n']);
+  });
+
+  type BatchReply = Array<{
+    id: string | number | null;
+    error?: { code: number };
+    result?: unknown;
+  }>;
+
+  async function batchReplies(line: string): Promise<BatchReply> {
+    const out: string[] = [];
+    const err: string[] = [];
+    await withPipes(out, err, async () => respond(session, line));
+    expect(out.length).toBe(1);
+    return JSON.parse(out[0]!) as BatchReply;
+  }
+
+  async function badMemberAnswered32600(line: string, goodId: number): Promise<void> {
+    const replies = await batchReplies(line);
+    expect(replies.length).toBe(2);
+    expect(replies[0]!.id).toBeNull();
+    expect(replies[0]!.error!.code).toBe(-32600);
+    expect(replies[1]!.id).toBe(goodId);
+    expect(replies[1]!.result).toEqual({});
+  }
+
+  test('a batch with a null member answers the member -32600 and the rest normally', async () => {
+    await badMemberAnswered32600(
+      JSON.stringify([
+        null,
+        { jsonrpc: '2.0', method: 'idle/x' },
+        { jsonrpc: '2.0', id: 42, method: 'ping' },
+      ]),
+      42,
+    );
+  });
+
+  test('a batch member that is itself an array is answered -32600, not descended into', async () => {
+    await badMemberAnswered32600(
+      JSON.stringify([
+        [{ jsonrpc: '2.0', id: 45, method: 'ping' }],
+        { jsonrpc: '2.0', id: 46, method: 'ping' },
+      ]),
+      46,
+    );
+  });
+
+  test('a handler that throws is answered with -32603 and the id echoed back', async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    await withPipes(out, err, async () => {
+      await respond(session, lineOf(43), async () => {
+        throw new Error('simulated interior failure');
+      });
+    });
+    expect(out.length).toBe(1);
+    const reply = JSON.parse(out[0]!) as { id: number; error: { code: number; message: string } };
+    expect(reply.id).toBe(43);
+    expect(reply.error.code).toBe(-32603);
+    expect(reply.error.message).toContain('internal error');
+    expect(reply.error.message).toContain('simulated interior failure');
+    expect(err.join('')).toContain('internal error');
+  });
+
+  test('a handler failure with an unidentifiable id is noted, not answered', async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    await withPipes(out, err, async () => {
+      await respond(session, '{"jsonrpc":"2.0","method":"ping"}\n', async () => {
+        throw new Error('simulated interior failure');
+      });
+      await respond(session, lineOf(44));
+    });
+    expect(out).toEqual(['{"jsonrpc":"2.0","id":44,"result":{}}\n']);
+    expect(err.join('')).toContain('answered nothing');
   });
 });
 

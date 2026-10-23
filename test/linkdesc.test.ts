@@ -48,6 +48,19 @@ function readAnnots(pdf: Uint8Array): Array<[string, string]> {
   return out;
 }
 
+function readLinkAlts(pdf: Uint8Array): string[] {
+  const parts = trySplit(pdf);
+  if (!parts) throw new Error('unparseable');
+  const out: string[] = [];
+  for (const num of linkOrder(parts)) {
+    const o = parts.objs.find((x) => x.num === num);
+    if (!o) continue;
+    const alt = /\/Alt\s*(\((?:[^()\\]|\\.)*\)|<[0-9A-Fa-f\s]*>)/.exec(dictOf(o))?.[1];
+    out.push(alt ? decode(alt) : '');
+  }
+  return out;
+}
+
 describe('insertIntoDict', () => {
   test('inserts inside the outer dictionary, not a nested one', () => {
     const obj =
@@ -169,6 +182,41 @@ describe('link descriptions', () => {
       expect(verify(r.pdf).ok).toBe(true);
     }, 90_000);
   }
+
+  test('a link the print cannot navigate is described on its structure element', async () => {
+    const body = `<p><a href="#nowhere">Data policy</a></p>`;
+    const r = await render(browser, { html: DOC(body), author: 't' });
+    expect(readAnnots(r.pdf)).toEqual([]);
+    expect(readLinkAlts(r.pdf)).toEqual(['Data policy']);
+    expect(verify(r.pdf).ok).toBe(true);
+  }, 90_000);
+
+  test('documents of such links keep the descriptions in document order', async () => {
+    const body =
+      `<p><a href="#terms">Terms of service</a></p>` +
+      `<p><a href="#privacy">Data policy</a></p>` +
+      `<p><a href="#api">API policy</a></p>`;
+    const r = await render(browser, { html: DOC(body), author: 't' });
+    expect(readAnnots(r.pdf)).toEqual([]);
+    expect(readLinkAlts(r.pdf)).toEqual(['Terms of service', 'Data policy', 'API policy']);
+    expect(verify(r.pdf).ok).toBe(true);
+  }, 90_000);
+
+  test('an annotatable link keeps its description on the annotation, not also as alt', async () => {
+    const body = `<p><a href="https://a.example/">ext</a></p><p><a href="#nowhere">int</a></p>`;
+    const r = await render(browser, { html: DOC(body), author: 't' });
+    expect(readAnnots(r.pdf)).toEqual([['https://a.example/', 'ext']]);
+    expect(readLinkAlts(r.pdf)).toEqual(['', 'int']);
+  }, 90_000);
+
+  test('the alt on a structure element is idempotent', async () => {
+    const r = await render(browser, {
+      html: DOC(`<p><a href="#nowhere">int</a></p>`),
+      author: 't',
+    });
+    const once = Buffer.from(r.pdf);
+    expect(Buffer.from(fixLinkDescs(r.pdf, ['int'])).equals(once)).toBe(true);
+  }, 90_000);
 
   test('a link wrapping an image is described on both of its annotations', async () => {
     const body = `<p><a href="https://x.example/"><img src="${GIF}" alt="a logo"></a></p>`;

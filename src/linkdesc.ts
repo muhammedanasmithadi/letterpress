@@ -95,7 +95,22 @@ export function fixLinkDescs(pdf: Uint8Array, descs: string[]): Uint8Array {
   links.forEach((linkNum, index) => {
     const desc = (descs[index] ?? '').trim();
     if (!desc) return;
-    for (const annotNum of linkAnnotations(parts, linkNum)) {
+    const annots = linkAnnotations(parts, linkNum);
+    if (annots.length === 0) {
+      const link = byNum.get(linkNum);
+      if (link && !/\/Alt\b/.test(dictCode(link))) {
+        const next = Buffer.from(
+          insertIntoDict(link.bytes.toString(LATIN1), `/Alt ${pdfValue(desc)}`),
+          LATIN1,
+        );
+        if (!next.equals(link.bytes)) {
+          link.bytes = next;
+          changed++;
+        }
+      }
+      return;
+    }
+    for (const annotNum of annots) {
       const obj = byNum.get(annotNum);
       if (!obj) continue;
       const text = obj.bytes.toString(LATIN1);

@@ -1,4 +1,4 @@
-import type { Finding } from './render.ts';
+import type { Finding } from './findings.ts';
 import {
   inflatedStream,
   walkObjects,

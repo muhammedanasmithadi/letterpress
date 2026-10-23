@@ -1,5 +1,12 @@
 type FindingSeverity = 'error' | 'warn' | 'info';
 
+export type Finding = {
+  code: string;
+  severity: FindingSeverity;
+  message: string;
+  url?: string;
+};
+
 type FindingSpec = {
   severity: FindingSeverity;
   summary: string;

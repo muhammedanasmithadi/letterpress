@@ -15,6 +15,7 @@ import {
   pageSideReport,
   type PageSideReport,
 } from './pageside.ts';
+import type { Finding } from './findings.ts';
 import { stripRedundantSpans } from './spans.ts';
 import { repairOrKeep, verify } from './verify.ts';
 import { audit } from './lint.ts';
@@ -69,12 +70,7 @@ export function pageRangesProblem(value: string): string | null {
   return null;
 }
 
-export type Finding = {
-  code: string;
-  severity: 'error' | 'warn' | 'info';
-  message: string;
-  url?: string;
-};
+export type { Finding };
 
 export type RenderRequest = {
   html?: string;

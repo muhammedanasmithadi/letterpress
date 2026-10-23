@@ -1,4 +1,4 @@
-import type { Finding } from './render.ts';
+import type { Finding } from './findings.ts';
 import type { Tab } from './browser.ts';
 import { collectLinkedCss } from './pageside.ts';
 import { FINDINGS } from './findings.ts';

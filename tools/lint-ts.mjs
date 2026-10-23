@@ -90,8 +90,33 @@ for (const f of ROOTS.flatMap(files)) {
   }
 }
 
+const srcMods = new Map();
+for (const f of files('src')) {
+  const me = f.replace(/^src\//, '').replace(/\.ts$/, '');
+  const deps = new Set();
+  for (const m of readFileSync(f, 'utf8').matchAll(
+    /(?:import|export)\s[^;]*?from\s*['"](\.[^'"]+)['"]|import\(\s*['"](\.[^'"]+)['"]\s*\)/g,
+  )) {
+    deps.add((m[1] ?? m[2]).replace(/^\.\//, '').replace(/\.ts$/, ''));
+  }
+  srcMods.set(me, deps);
+}
+const seen = new Set();
+const walk = (node, stack) => {
+  if (stack.includes(node)) {
+    problems.push(`import cycle: ${[...stack.slice(stack.indexOf(node)), node].join(' -> ')}`);
+    return;
+  }
+  if (seen.has(node)) return;
+  seen.add(node);
+  for (const next of srcMods.get(node) ?? []) walk(next, [...stack, node]);
+};
+for (const node of srcMods.keys()) walk(node, []);
+
 if (problems.length > 0) {
   console.error(problems.join('\n'));
   process.exit(1);
 }
-console.log('lint-ts ok (as any, console, debugger, markers, interpolated page-side code: 0)');
+console.log(
+  'lint-ts ok (as any, console, debugger, markers, interpolated page-side code, import cycles among src: 0)',
+);

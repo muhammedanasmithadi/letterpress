@@ -945,9 +945,10 @@ function pageSideFindings(report: PageSideReport, printableWidthPx: number): Fin
       severity: 'warn',
       message:
         `${report.figuresWithoutCaption} figure element${report.figuresWithoutCaption === 1 ? '' : 's'} ` +
-        `without a figcaption. measured here, across seven markup shapes: chromium emits a ` +
-        `Figure role in the tagged pdf only when the figcaption is present, so the alt text ` +
-        `alone produces no structure for a screen reader to navigate by.`,
+        `the structure cannot name. measured here, across the markup shapes: an image ` +
+        `with alt text is tagged a Figure and reads the alt as its name, so a figure holding one is named ` +
+        `without a caption; an image with no alt, or text content, is tagged a Figure with no name, and an ` +
+        `empty figure gets no element at all. give the figure a figcaption, or describe the image with alt.`,
     });
   }
   if (printableWidthPx > 0 && report.overflowing.length > 0) {

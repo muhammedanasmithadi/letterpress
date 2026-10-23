@@ -241,7 +241,12 @@ export function pageSideReport(printableWidthPx: number): PageSideReport {
 
   let figuresWithoutCaption = 0;
   for (const fig of Array.from(document.querySelectorAll('figure'))) {
-    if (!fig.querySelector('figcaption')) figuresWithoutCaption++;
+    if (fig.querySelector('figcaption')) continue;
+    const named = Array.from(fig.querySelectorAll('img')).some(
+      (img) => (img.getAttribute('alt') ?? '').trim() !== '',
+    );
+    if (named) continue;
+    figuresWithoutCaption++;
   }
 
   return {
@@ -272,12 +277,59 @@ export function fontProbe(): Array<{ family: string; elements: number }> {
     return generic.test(want) ? '' : want;
   };
 
+  const asks: CSSStyleRule[] = [];
+  const seen = new Set<StyleSheet>();
+  const collect = (rules: CSSRuleList): void => {
+    for (const rule of Array.from(rules)) {
+      if (rule instanceof CSSStyleRule && rule.style?.fontFamily) asks.push(rule);
+      const nested = (rule as { cssRules?: CSSRuleList }).cssRules;
+      if (nested && nested.length) collect(nested);
+      if (rule instanceof CSSImportRule && rule.styleSheet && !seen.has(rule.styleSheet)) {
+        seen.add(rule.styleSheet);
+        try {
+          collect(rule.styleSheet.cssRules);
+        } catch {
+          continue;
+        }
+      }
+    }
+  };
+  for (const sheet of Array.from(document.styleSheets)) {
+    try {
+      collect(sheet.cssRules);
+    } catch {
+      continue;
+    }
+  }
+
+  const memo = new Map<Element, boolean>();
+  const askOn = (el: Element): boolean => {
+    for (let n: Element | null = el; n; n = n.parentElement) {
+      let hit = memo.get(n);
+      if (hit === undefined) {
+        const inline = (n as { style?: { fontFamily?: string } }).style?.fontFamily ?? '';
+        hit = inline !== '';
+        if (!hit) {
+          for (const rule of asks) {
+            if (n.matches(rule.selectorText)) {
+              hit = true;
+              break;
+            }
+          }
+        }
+        memo.set(n, hit);
+      }
+      if (hit) return true;
+    }
+    return false;
+  };
+
   const counts = new Map<string, number>();
   const first = new Map<string, HTMLElement>();
   for (const el of Array.from(document.body.querySelectorAll<HTMLElement>('*'))) {
     if (!drawsText(el)) continue;
     const want = wanted(el);
-    if (!want) continue;
+    if (!want || !askOn(el)) continue;
     counts.set(want, (counts.get(want) ?? 0) + 1);
     if (!first.has(want)) first.set(want, el);
   }
@@ -291,9 +343,8 @@ export function fontProbe(): Array<{ family: string; elements: number }> {
   const found: Array<{ family: string; elements: number }> = [];
   for (const [family, elements] of counts) {
     if (loaded.has(family)) continue;
-    if (found.length >= 20) break;
     first.get(family)!.setAttribute('data-lp-font', String(found.length));
     found.push({ family, elements });
   }
-  return found;
+  return found.slice(0, 20);
 }

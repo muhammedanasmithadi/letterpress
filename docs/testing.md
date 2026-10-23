@@ -220,9 +220,11 @@ the negative case is the one that matters most.
 not content". Reporting it would teach authors to avoid the mechanism that
 makes decorative images correct.
 
-Measured across seven markup shapes: Chromium emits a Figure role in the
-tagged PDF only when the `figcaption` is present, so alt text alone produces
-no structure for a screen reader to navigate by.
+Measured across the markup shapes: an image with alt text inside a `figure`
+is tagged a Figure whose name is the alt text, so that shape needs no
+`figcaption` to have structure. An image with no alt, or text content, is
+tagged a Figure with no name, and an empty `figure` gets no element at all —
+those are the shapes the finding counts.
 
 Before this existed the only finding was about text runs: nothing said the
 document had failed to run, so a caller could not tell the PDF apart from

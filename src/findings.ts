@@ -57,7 +57,7 @@ export const FINDINGS: Record<string, FindingSpec> = {
   'figure-uncaptioned': {
     severity: 'warn',
     summary:
-      'a `<figure>` has no `<figcaption>`, which is what makes Chromium emit a Figure role in the tagged pdf',
+      'a `<figure>` has no `<figcaption>` and nothing else names it: alt text on the image alone makes the pdf name that image a Figure',
   },
   'font-fallback': {
     severity: 'warn',

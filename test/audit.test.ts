@@ -736,13 +736,16 @@ describe('what the page said about itself', () => {
     expect(await one(`<img src="${PNG}" alt="" role="presentation">`)).not.toContain('missing-alt');
   }, 90_000);
 
-  test('a figure without a figcaption is reported', async () => {
-    expect(await one(`<figure><img src="${PNG}" alt="x"></figure>`)).toContain(
+  test('a figure without a naming structure is reported, a named one is not', async () => {
+    expect(await one(`<figure><img src="${PNG}" alt="x"></figure>`)).not.toContain(
       'figure-uncaptioned',
     );
     expect(
       await one(`<figure><img src="${PNG}" alt="x"><figcaption>c</figcaption></figure>`),
     ).not.toContain('figure-uncaptioned');
+    expect(await one(`<figure><img src="${PNG}"></figure>`)).toContain('figure-uncaptioned');
+    expect(await one(`<figure><p>explanatory text</p></figure>`)).toContain('figure-uncaptioned');
+    expect(await one(`<figure></figure>`)).toContain('figure-uncaptioned');
   }, 90_000);
 
   test('content wider than the sheet is reported, and only that', async () => {
@@ -850,6 +853,17 @@ describe('the typeface the pdf was actually set in', () => {
     const f = r.findings.find((x) => x.code === 'font-fallback')!;
     expect(f.message).toContain('Missing One (2 elements');
     expect(f.message).toContain('Missing Two (1 element');
+  }, 60_000);
+
+  test('a document that asks for nothing is not given the browser default as an ask', async () => {
+    const r = await render(browser, { html: '<html lang="en"><body><p>text</p></body></html>' });
+    expect(codes(r)).not.toContain('font-fallback');
+  }, 60_000);
+
+  test('a family named only in an @font-face descriptor is not an ask', async () => {
+    expect(
+      await one(`@font-face{font-family:"No Such Face Anywhere";src:url(gone.woff2)}`),
+    ).not.toContain('font-fallback');
   }, 60_000);
 
   test('an element that draws no text is not asked about', async () => {

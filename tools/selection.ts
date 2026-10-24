@@ -113,6 +113,27 @@ for (const file of files) {
       `${flow.jump} gaps over 3 em between blocks -- table cell padding and column gaps. ` +
         `A reader ends a text item at each, so a table selects one cell at a time.`,
     );
+    const gaps = (r.probe as WideGap[] | undefined) ?? [];
+    const jumps = gaps.filter((g) => g.em > 3);
+    if (jumps.length) {
+      for (const g of jumps) {
+        const how =
+          g.cause === 'flex-gap'
+            ? 'a flex gap'
+            : g.cause === 'grid-gap'
+              ? 'a grid gap'
+              : g.cause === 'table-cell'
+                ? 'table cell padding'
+                : g.cause === 'space-between'
+                  ? 'justify-content: space-between'
+                  : g.cause === 'margin'
+                    ? 'a margin'
+                    : 'a gap of untraced origin';
+        advice.push(
+          `${g.em.toFixed(2)} em at ${g.selector}\n           ${how}, next to "${g.text}"`,
+        );
+      }
+    }
   }
   if (flow.spans > 0) {
     advice.push(

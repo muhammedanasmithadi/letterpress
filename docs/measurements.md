@@ -353,3 +353,45 @@ phase before one is attempted.
   inputs with no real content; not worth repairing.
 - **`details` element (7.1, untagged content)**: Chromium leaves the element's
   content unmarked. Not addressable by retagging or RoleMap.
+
+## Battle test round 2: 37 diverse documents (HEAD 1be7042)
+
+Run on 2026-10-24, Fedora 44, Chromium 154. Results:
+
+**Verify (structural integrity): 37/37 pass, 0 failures.** Every document
+produces a valid PDF whose structure tree passes `verify()`.
+
+**PDF/UA oracle (106 rules):**
+
+- PASS 0 failed: all-repairs, article-aside, aside-in-main, col-images,
+  deep-list3, dl-dup-term, dl-empty-items, dl-nested, dup-sections,
+  empty-list(?), empty-section(?), flex-many, footnotes, grid-complex,
+  longdoc50, many-ligatures, math, mixed-lists, multicol, multi-nav,
+  nested-bq, nested-equal, nested-table, pagebreak, print-media,
+  single-item, table-complex, unicode, wide-table.
+- FAIL with only doc-inherent/known issues:
+  - canvas: 7.3 (figure needs alt text — Chromium draws canvas as bitmap,
+    no structure element; honest miss)
+  - deep-sect, list-blocks: 7.4.2 (heading sequence — source document
+    has no H1; honest miss, out by principle)
+  - details: 7.1 (untagged content — Chromium leaves details content
+    unmarked; honest miss, already recorded)
+  - empty-list, empty-section: 6.2/7.1/7.2 (degenerate inputs — honest miss)
+  - form-complex: 7.1 (content untagged — form controls not tagged by
+    Chromium; Chromium limitation)
+  - mixed-rtl: 7.21.7 x3, rtl-full: 7.21.7 x10 (ToUnicode zero glyphs
+    — Chromium subsetting bug; honest miss, already recorded)
+  - svg: 6.2 (MarkInfo), 7.1 (no structure hierarchy root — Chromium
+    renders SVG as graphics without structure elements; Chromium
+    limitation)
+
+**Interaction results:** All four repairs compose cleanly in a single
+document (all-repairs: role-retagged, role-mapped, list-bodied,
+ligature-spans, text-runs-merged → PASS 0 failed). Empty lists and empty
+sections fail only degenerate-metadata clauses (already recorded).
+
+Conclusion: every remaining pdf/ua failure is either Chromium
+not-emitting-structure-elements (canvas, svg, form controls), a source
+document choice (7.4.2 heading sequence), or an already-recorded honest
+miss (RTL, details, empty). There is no repairable gap left in the
+structure-tree repair space.

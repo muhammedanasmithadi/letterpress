@@ -321,7 +321,12 @@ export function dictCode(o: Obj): string {
   return maskStrings(dictOf(o));
 }
 
-function bracketed(text: string, at: number, open: string, close: string): string | undefined {
+export function bracketed(
+  text: string,
+  at: number,
+  open: string,
+  close: string,
+): string | undefined {
   const width = open.length;
   let depth = 0;
   for (let i = at; i + width <= text.length; i += width) {

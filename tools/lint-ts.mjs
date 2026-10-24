@@ -46,6 +46,8 @@ for (const f of ROOTS.flatMap(files)) {
   const visit = (node) => {
     if (ts.isAsExpression(node) && node.type.kind === ts.SyntaxKind.AnyKeyword)
       fail(f, node, 'as any');
+    if (node.kind === ts.SyntaxKind.AnyKeyword && node.parent.kind === ts.SyntaxKind.TypeAnnotation)
+      fail(f, node, ': any type annotation');
     if (ts.isPropertyAccessExpression(node) && node.expression.getText(sf) === 'console')
       fail(f, node, 'console.*');
     if (node.kind === ts.SyntaxKind.DebuggerStatement) fail(f, node, 'debugger');
@@ -118,5 +120,5 @@ if (problems.length > 0) {
   process.exit(1);
 }
 console.log(
-  'lint-ts ok (as any, console, debugger, markers, interpolated page-side code, import cycles among src: 0)',
+  'lint-ts ok (as any, : any type annotation, console, debugger, markers, interpolated page-side code, import cycles among src: 0)',
 );

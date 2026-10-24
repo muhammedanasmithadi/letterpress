@@ -348,3 +348,31 @@ export function fontProbe(): Array<{ family: string; elements: number }> {
   }
   return found.slice(0, 20);
 }
+
+export function roleCensus(): string {
+  const tags = new Set(['nav', 'main', 'section', 'header', 'footer', 'dl', 'dt', 'dd']);
+  const els = Array.from(
+    document.querySelectorAll('nav, main, section, header, footer, dl, dt, dd'),
+  );
+  for (const el of els) if (!tags.has(el.tagName.toLowerCase())) return '';
+  const index = new Map<Element, number>();
+  els.forEach((el, i) => index.set(el, i));
+  const out: Array<{ tag: string; text: string; owner: number }> = [];
+  els.forEach((el) => {
+    let owner = -1;
+    let p = el.parentElement;
+    while (p) {
+      if (index.has(p)) {
+        owner = index.get(p)!;
+        break;
+      }
+      p = p.parentElement;
+    }
+    out.push({
+      tag: el.tagName.toLowerCase(),
+      text: (el.textContent ?? '').replace(/\s+/g, ''),
+      owner,
+    });
+  });
+  return JSON.stringify(out);
+}

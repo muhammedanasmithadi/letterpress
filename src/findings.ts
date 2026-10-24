@@ -158,6 +158,12 @@ export const FINDINGS: Record<string, FindingSpec> = {
     severity: 'warn',
     summary: 'a repair was discarded because it did not leave a valid pdf; the file is unchanged',
   },
+  'role-retagged': {
+    severity: 'info',
+    summary:
+      'structure containers for nav/section/main/header/footer and definition lists were ' +
+      'given their semantic structure types; the page stream is byte-identical',
+  },
   'rtl-digit-run': {
     severity: 'warn',
     summary: '`2026-10-03` after Arabic prints as `03-10-2026`; wrap it in `<bdi dir="ltr">`',

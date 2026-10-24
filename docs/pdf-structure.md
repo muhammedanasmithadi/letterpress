@@ -312,3 +312,50 @@ dictionary carries several sub-dictionaries that look alike —
 `/ExtGState <</G3 3 0 R>> /XObject <</X22 22 0 R>> /Font <</F4 4 0 R>>` — so
 finding one by hand needs the same balanced scan, and a greedy or lazy search
 for the next `>>` lands inside whichever dictionary came first.
+
+## Retagging the anonymous containers
+
+Chromium tags `nav`, `section`, `main`, `header`, `footer`, `dl`, `dt`, and
+`dd` as bare `NonStruct` containers: the nesting and the marked content are
+all there, but every one of the eight carries the anonymous type, so a reader
+exploring by structure meets a list presented as an unlabeled box. `src/
+structroles.ts` gives each container the type its element names.
+
+The mapping is measured, not editorial. On a jsdom-free render checked against
+veraPDF's 106-rule PDF/UA set: `dl` becomes `L` and its items become `LI`,
+because `7.2` fails an `L` holding anything else ("may contain only L, LI and
+Caption") and fails an `LI` with block children ("may contain only Lbl and
+LBody"). `nav` and `section` become `Sect`, `main`, `header`, and `footer`
+become `Part` — the four role names a bare custom string would need (`Main`,
+`Header`, `Footer`, `Nav`) all fail `7.1`, so only the standard types pass.
+
+Identification is DOM-derived or nothing. The page-side census lists the eight
+tags in document order with normalized text and the index of the nearest
+census-tagged ancestor (an `owner`, -1 otherwise). Each container's decoded
+marked-content text must equal the element's text one for one after
+whitespace falls away; two unrelated containers with the same text are both
+left anonymous, equal-text containers nested in each other resolve to the
+outermost, and an element whose text the tree does not contain exactly is
+skipped without a finding. Ligatures come along: a span's `/ActualText` value
+is published at its `EMC` into the enclosing MCID, so `definition` reads as
+`definition` rather than `denition`.
+
+Skips are honesty, not polish. A leaf wrapper — one whose `/K` is a bare
+integer — is never a retag target, whatever its text says, because a re-run
+otherwise plans a retag onto an element that already has one. An `LI` is only
+planned under a fully planned `L`: veraPDF fails a mixed `L` (the paragraph
+inside a `dd` becomes a `P` child of the would-be `LI`) and fails an orphan
+`LI` whose list was skipped, so a `dl` whose items mismatch is skipped as a
+whole and stays tagged the way Chromium wrote it. The three outcomes — all
+eight retagged, landmarks retagged with the list skipped, everything
+anonymous — leave the reader with a tree that never claims more than the
+markup said.
+
+The tree keeps the leaves it had. The walk recurses through any tagged
+element, so a `dd` containing a paragraph contributes the paragraph's glyphs
+to its wrapper's text; retagging swaps only `/S /NonStruct` for the target
+type inside the object body, and the page stream is byte-identical, so text
+parity holds by construction. `verify()` gates the result like any other
+repair, and a success publishes the `role-retagged` finding with the counts
+per tag. The step runs after the figure repair and before text-run merging,
+because the census shape is the pre-merge stream.

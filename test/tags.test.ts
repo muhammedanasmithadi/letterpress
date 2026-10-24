@@ -108,26 +108,26 @@ describe('elements with no semantics are tagged NonStruct, which is correct', ()
   });
 });
 
-describe('known gaps, recorded rather than papered over', () => {
-  test('a description list produces no semantic role', async () => {
+describe('chromium tagging gaps are closed by the roles repair', () => {
+  test('a description list is retagged as a list with items', async () => {
     const r = await roles('<dl><dt>term</dt><dd>definition</dd></dl>');
 
-    expect(r.length, 'the document produced no structure elements at all').toBeGreaterThan(0);
-    expect(r.every((x) => x === 'NonStruct')).toBe(true);
+    expect(r.length, 'the document produced structure elements').toBeGreaterThan(0);
+    expect(r).toContain('L');
+    expect(r).toContain('LI');
   });
 
-  test('sectioning elements other than article and aside produce no role', async () => {
-    for (const html of [
-      '<section><p>x</p></section>',
-      '<nav>link</nav>',
-      '<main>body</main>',
-      '<header>head</header>',
-      '<footer>foot</footer>',
-    ]) {
+  test('sectioning elements become region containers', async () => {
+    for (const [html, role] of [
+      ['<section><p>x</p></section>', 'Sect'],
+      ['<nav>link</nav>', 'Sect'],
+      ['<main>body</main>', 'Part'],
+      ['<header>head</header>', 'Part'],
+      ['<footer>foot</footer>', 'Part'],
+    ] as Array<[string, string]>) {
       const r = await roles(html);
-
-      expect(r.length, `${html} produced no structure elements at all`).toBeGreaterThan(0);
-      expect(r.filter((x) => x === 'Sect')).toEqual([]);
+      expect(r.length, `${html} produced structure elements`).toBeGreaterThan(0);
+      expect(r).toContain(role);
     }
   });
 });

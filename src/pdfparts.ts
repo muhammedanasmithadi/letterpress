@@ -367,17 +367,23 @@ function refsIn(body: string, depth: number): number[] {
 }
 
 export function kidsOf(rawText: string): number[] {
-  const text = maskStrings(rawText);
-  const at = /\/K\s*/.exec(text);
-  if (!at) return [];
-  let i = at.index + at[0].length;
-  while (i < text.length && /\s/.test(text[i]!)) i++;
-  if (text[i] === '[') {
-    const body = bracketed(text, i, '[', ']');
+  const at = slashK(rawText);
+  if (at === undefined) return [];
+  if (at.value!.startsWith('[')) {
+    const body = bracketed(at.value!, 0, '[', ']');
     return body === undefined ? [] : refsIn(body, 0);
   }
-  const m = /^(\d+) 0 R/.exec(text.slice(i));
+  const m = /^(\d+) 0 R/.exec(at.value!);
   return m ? [Number(m[1])] : [];
+}
+
+export function slashK(rawText: string): { value: string } | undefined {
+  const text = maskStrings(rawText);
+  const at = /\/K\s*/.exec(text);
+  if (!at) return undefined;
+  let i = at.index + at[0].length;
+  while (i < text.length && /\s/.test(text[i]!)) i++;
+  return { value: text.slice(i) };
 }
 
 export function structElementsInOrder(parts: Parts, role: string): number[] {

@@ -23,7 +23,7 @@ const EMPTY: SpanStats = { seen: 0, stripped: 0, kept: 0 };
 
 const SPAN_OPEN = /\/Span\s*<<([^<>]*)>>\s*BDC/g;
 
-function unescapePdfString(s: string): string {
+export function unescapePdfString(s: string): string {
   const inner =
     s[0] === '<'
       ? Buffer.from(s.slice(1, -1).replace(/\s/g, ''), 'hex').toString(LATIN1)

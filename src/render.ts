@@ -13,11 +13,19 @@ import {
   fontProbe,
   measureImages,
   pageSideReport,
+  roleCensus,
   type PageSideReport,
 } from './pageside.ts';
 import type { Finding } from './findings.ts';
 import { stripRedundantSpans } from './spans.ts';
 import { repairOrKeep, verify } from './verify.ts';
+import {
+  applyRolePlan,
+  parseRoleCensus,
+  rolePlan,
+  type RoleElement,
+  type RolePlan,
+} from './structroles.ts';
 import { audit } from './lint.ts';
 import {
   declaredPageMargin,
@@ -713,7 +721,7 @@ export async function render(browser: Browser, request: RenderRequest): Promise<
       });
 
       const page = await readPage(tab, req, timeoutMs, findings);
-      const { probe, docMeta, linkDescs } = page;
+      const { probe, docMeta, linkDescs, roles } = page;
 
       const declaresPaper = await probeDeclaresPaper(tab, src.html, req, timeoutMs);
 
@@ -739,6 +747,7 @@ export async function render(browser: Browser, request: RenderRequest): Promise<
       const { pdf, rejected } = repairDocument({
         raw,
         linkDescs,
+        roles,
         pdfTitle,
         meta: pdfMeta(req, docMeta),
         keepLigatureSpans: req.keepLigatureSpans === true,
@@ -793,6 +802,7 @@ export async function render(browser: Browser, request: RenderRequest): Promise<
 type RepairInput = {
   raw: Uint8Array;
   linkDescs: ReturnType<typeof parseLinkDescs>;
+  roles: RoleElement[];
   pdfTitle: string;
   meta: { author: string; subject: string; keywords: string };
   keepLigatureSpans: boolean;
@@ -802,7 +812,7 @@ type RepairInput = {
 type RepairResult = { pdf: Uint8Array; rejected: Set<string> };
 
 function repairDocument(input: RepairInput): RepairResult {
-  const { raw, linkDescs, pdfTitle, meta, keepLigatureSpans, findings } = input;
+  const { raw, linkDescs, roles, pdfTitle, meta, keepLigatureSpans, findings } = input;
   const rejected = new Set<string>();
 
   let described = gated(raw, 'ToUnicode', fixToUnicode, rejected, findings);
@@ -832,6 +842,7 @@ function repairDocument(input: RepairInput): RepairResult {
   }
 
   described = repairFigures(described, rejected, findings);
+  described = repairStructRoles(described, roles, rejected, findings);
   described = repairTitle(described, pdfTitle, rejected, findings);
   described = gated(described, 'metadata', (p) => addMetadata(p, meta), rejected, findings);
 
@@ -1388,6 +1399,7 @@ async function readPage(
   probe: unknown;
   docMeta: { author?: string; subject?: string; keywords?: string };
   linkDescs: ReturnType<typeof parseLinkDescs>;
+  roles: RoleElement[];
 }> {
   await tab.send(
     'Runtime.evaluate',
@@ -1430,7 +1442,21 @@ async function readPage(
     .then((r: { result?: { value?: unknown } }) => r.result?.value)
     .catch(() => undefined);
 
-  return { probe, docMeta, linkDescs: parseLinkDescs(linkDescRaw) };
+  const roleRaw = await tab
+    .send(
+      'Runtime.evaluate',
+      { expression: `(${roleCensus})()`, returnByValue: true, awaitPromise: false },
+      timeoutMs,
+    )
+    .then((r: { result?: { value?: unknown } }) => r.result?.value)
+    .catch(() => undefined);
+
+  return {
+    probe,
+    docMeta,
+    linkDescs: parseLinkDescs(linkDescRaw),
+    roles: parseRoleCensus(roleRaw),
+  };
 }
 
 async function runPageProbe(
@@ -1747,6 +1773,45 @@ function repairFigures(
       `image. each image keeps its own description.`,
   });
   return attempt.pdf;
+}
+
+function repairStructRoles(
+  described: Uint8Array,
+  roles: RoleElement[],
+  rejected: Set<string>,
+  findings: Finding[],
+): Uint8Array {
+  if (roles.length === 0) return described;
+  const plan = rolePlan(described, roles);
+  if (plan.entries.length === 0) return described;
+  const attempt = repairOrKeep(described, (p) => applyRolePlan(p, plan));
+  if (attempt.failures.length) {
+    rejected.add('struct roles');
+    findings.push(rejectedRepair('struct roles', attempt.failures));
+    return described;
+  }
+  findings.push(structRolesFinding(plan.entries.length, plan));
+  return attempt.pdf;
+}
+
+function structRolesFinding(entries: number, plan: RolePlan): Finding {
+  const counts = new Map<string, number>();
+  for (const entry of plan.entries) {
+    counts.set(entry.tag, (counts.get(entry.tag) ?? 0) + 1);
+  }
+  const listed = [...counts.entries()].map(([tag, n]) => `${n} <${tag}>`).join(', ');
+  return {
+    code: 'role-retagged',
+    severity: 'info',
+    message:
+      `${entries} structure ${entries === 1 ? 'container' : 'containers'} retagged to their ` +
+      `semantic structure types (${listed}), because chromium writes these elements only as ` +
+      `anonymous containers and the structure tree loses the role. the repair works from the ` +
+      `document's own markup: each container's text in the page stream must match the element's ` +
+      `text one for one, and an element whose text the structure tree does not contain exactly ` +
+      `is left as printed, as is a definition list whose items hold block elements, because ` +
+      `retagging either would misstate what the document says.`,
+  };
 }
 
 function repairTitle(

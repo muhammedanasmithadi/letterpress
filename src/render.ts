@@ -20,6 +20,7 @@ import type { Finding } from './findings.ts';
 import { stripRedundantSpans } from './spans.ts';
 import { repairOrKeep, verify } from './verify.ts';
 import { applyRoleMap } from './rolemap.ts';
+import { applyListBody } from './listbody.ts';
 import {
   applyRolePlan,
   parseRoleCensus,
@@ -845,6 +846,7 @@ function repairDocument(input: RepairInput): RepairResult {
   described = repairFigures(described, rejected, findings);
   described = repairStructRoles(described, roles, rejected, findings);
   described = repairRoleMap(described, rejected, findings);
+  described = repairListBody(described, rejected, findings);
   described = repairTitle(described, pdfTitle, rejected, findings);
   described = gated(described, 'metadata', (p) => addMetadata(p, meta), rejected, findings);
 
@@ -1815,6 +1817,28 @@ function repairRoleMap(
       'non-standard structure types emitted by chromium (Aside) were mapped to their ' +
       'standard equivalents through the structure tree RoleMap, because pdf/ua requires ' +
       'every structure type to be a standard type or a mapped one.',
+  });
+  return attempt.pdf;
+}
+
+function repairListBody(
+  described: Uint8Array,
+  rejected: Set<string>,
+  findings: Finding[],
+): Uint8Array {
+  const attempt = repairOrKeep(described, (p) => applyListBody(p));
+  if (attempt.failures.length) {
+    rejected.add('list body');
+    findings.push(rejectedRepair('list body', attempt.failures));
+    return described;
+  }
+  if (!attempt.applied) return described;
+  findings.push({
+    code: 'list-bodied',
+    severity: 'info',
+    message:
+      'list items whose body was an anonymous container were given an LBody, because pdf/ua ' +
+      'requires an LI to contain only Lbl and LBody elements.',
   });
   return attempt.pdf;
 }

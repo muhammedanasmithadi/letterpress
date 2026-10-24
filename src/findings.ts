@@ -94,6 +94,12 @@ export const FINDINGS: Record<string, FindingSpec> = {
     summary:
       'redundant `/ActualText` spans around ligatures were removed; extraction verified unchanged',
   },
+  'list-bodied': {
+    severity: 'info',
+    summary:
+      'list items whose body was an anonymous container were given an LBody, because pdf/ua ' +
+      'requires an LI to contain only Lbl and LBody elements',
+  },
   'link-descriptions-skipped': {
     severity: 'warn',
     summary:

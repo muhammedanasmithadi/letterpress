@@ -340,9 +340,14 @@ phase before one is attempted.
   nested `ul`/`ol` (`deep-list`, `ol-deep`, `ul-nested`). Repair would require
   creating `LBody` struct elements and rewiring `/K` plus the ParentTree — a
   dict-level restructuring, not a byte swap.
-- **RTL text (7.21.7, ToUnicode values must be greater than zero)**: some glyphs
-  in RTL/Arabic content map to U+0000. Needs investigation of whether the
-  codepoint is recoverable from the font; may be a Chromium subsetting bug.
+- **RTL text (7.21.7, ToUnicode values must be greater than zero)**: measured on a
+  2-line Arabic document — 3 glyph IDs (0010, 0013, 013C) map to U+0000 in
+  Chromium's ToUnicode CMap. The embedded font's cmap table (NotoSansArabic
+  subset, 14 entries) was parsed: those 3 glyph IDs are NOT present in the
+  cmap table, so the codepoints are genuinely lost in the subset — Chromium
+  dropped the cmap entries for those glyphs during subsetting. Recovery from
+  the PDF alone is impossible; this is a Chromium subsetting bug, not a
+  repairable gap. Honest miss.
 - **Empty documents (`empty`, `dl-empty`)**: fail 6.2 (MarkInfo), 7.1 (structure
   hierarchy root), 7.2 (natural language for metadata). These are degenerate
   inputs with no real content; not worth repairing.

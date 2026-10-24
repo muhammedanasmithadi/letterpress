@@ -305,3 +305,26 @@ Chromium 154 with `--enable-blink-features=WebMCP`, against a page served from
 
 Two of the three are the kind of mistake that looks like a missing feature: the
 tool is registered, it is listed, and the call fails anyway.
+
+## The PDF/UA identification matrix
+
+Measured on Fedora 44, Chromium 154.0.8037.57, veraPDF 106 rules, against a
+letterpress-rendered page whose page stream and structure tree are otherwise
+unchanged. The XMP packet was rebuilt per variant by rewriting only the
+`/Metadata` stream of the same PDF, keeping the bytes identical elsewhere.
+
+| variant | `pdfuaid:part` | `pdfuaid:rev` | namespace                             | result              |
+| ------- | -------------- | ------------- | ------------------------------------- | ------------------- |
+| M0      | (none)         | (none)        | (none)                                | rule 5 fires        |
+| M1      | `1`            | (none)        | `http://www.aiim.org/pdfua/ns/id/`    | 106 rules, 0 failed |
+| M2      | `1`            | `2020`        | `http://www.aiim.org/pdfua/ns/id/`    | 106 rules, 0 failed |
+| M3      | `1`            | `2020`        | `http://example.invalid/pdfua/ns/id/` | rule 5 fires        |
+
+`rev` is optional for compliance (M1 and M2 both pass) but we ship M2: it
+names the revision we validate against, and a reader that checks the revision
+gets an answer. The namespace is the whole check (M3 fails with the right
+part and rev), so it is the registered AIIM URI and not a configurable value.
+The same oracle run on three document shapes (prose, roles, blocky `dl`)
+reports `PASS (106 rules, 0 failed)` for the prose and roles shapes; the
+blocky shape fails only 7.4.2, which comes from the source document and fails
+identically on the unpatched print.

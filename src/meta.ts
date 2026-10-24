@@ -145,6 +145,9 @@ export function isVolatileTitle(title: string): boolean {
   return /^(?:127\.0\.0\.1|localhost|\[::1\]):\d+\/\S*|^about:blank$/i.test(title);
 }
 
+const PDFUA_IDENT =
+  '<rdf:Description rdf:about="" xmlns:pdfuaid="http://www.aiim.org/pdfua/ns/id/" pdfuaid:part="1" pdfuaid:rev="2020"/>';
+
 export function buildXmp(info: DocInfo): string {
   const alt = (tag: string, value?: string) =>
     value === undefined
@@ -169,6 +172,7 @@ export function buildXmp(info: DocInfo): string {
 <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
 <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:pdf="http://ns.adobe.com/pdf/1.3/">
 ${alt('title', info.title)}${alt('description', info.subject)}${bag('creator', info.author)}${bag('subject', info.keywords)}${simple('xmp', 'CreatorTool', info.creator)}${simple('pdf', 'Producer', info.producer)}${simple('xmp', 'CreateDate', iso(info.created))}${simple('xmp', 'ModifyDate', iso(info.modified))}</rdf:Description>
+${PDFUA_IDENT}
 </rdf:RDF>
 </x:xmpmeta>
 <?xpacket end="w"?>`;

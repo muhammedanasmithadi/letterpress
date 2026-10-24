@@ -193,6 +193,25 @@ describe('buildXmp', () => {
     expect(xmp).not.toContain('<dc:subject>injected');
     expect(xmp).toContain('&lt;/dc:title&gt;');
   });
+
+  test('the packet names the pdfua revision it validates against', () => {
+    const xmp = buildXmp({ title: 'T' });
+
+    expect(xmp).toContain('xmlns:pdfuaid="http://www.aiim.org/pdfua/ns/id/"');
+    expect(xmp).toContain('pdfuaid:part="1"');
+    expect(xmp).toContain('pdfuaid:rev="2020"');
+    expect(xmp.match(/pdfuaid:part=/g)).toHaveLength(1);
+  });
+
+  test('a user value cannot add a pdfuaid description', () => {
+    const xmp = buildXmp({
+      title:
+        '</rdf:Description><rdf:Description rdf:about="" xmlns:pdfuaid="x" pdfuaid:part="999"/>',
+    });
+
+    expect(xmp.match(/<rdf:Description rdf:about="" xmlns:pdfuaid=/g)).toHaveLength(1);
+    expect(xmp).not.toContain('pdfuaid:part="999"');
+  });
 });
 
 describe('readDocInfo', () => {

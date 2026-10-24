@@ -359,3 +359,15 @@ parity holds by construction. `verify()` gates the result like any other
 repair, and a success publishes the `role-retagged` finding with the counts
 per tag. The step runs after the figure repair and before text-run merging,
 because the census shape is the pre-merge stream.
+
+## Naming the standard
+
+A file that claims PDF/UA conformance says so in its XMP packet, not in its
+page stream. The packet letterpress already writes carries the document
+metadata, so the identification is one more `rdf:Description` naming the
+registered AIIM namespace, `pdfuaid:part="1"`, and `pdfuaid:rev="2020"`. It
+is a constant, not a setting: it names the revision we validate against, and
+making it configurable would let a document claim a standard it was never
+checked against. The addition is additive — the page stream, the structure
+tree, and the `/Info` dictionary are byte-identical apart from the metadata
+object — and `verify()` gates the result the way it gates every other repair.

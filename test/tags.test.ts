@@ -130,6 +130,15 @@ describe('chromium tagging gaps are closed by the roles repair', () => {
       expect(r).toContain(role);
     }
   });
+
+  test('elements chromium types itself are left alone by the roles repair', async () => {
+    for (const html of ['<article>wrote in prose</article>', '<aside>wrote in prose</aside>']) {
+      const r = await render(browser, {
+        html: `<!doctype html><html lang="en"><meta charset="utf-8">${html}`,
+      });
+      expect(r.findings.find((f) => f.code === 'role-retagged')).toBeUndefined();
+    }
+  });
 });
 
 describe('the tree is structurally sound', () => {

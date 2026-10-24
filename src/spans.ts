@@ -34,14 +34,18 @@ function unescapePdfString(s: string): string {
   });
 }
 
-function codesIn(body: string): number[] {
-  const out: number[] = [];
-  for (const m of body.matchAll(/<([0-9A-Fa-f\s]*)>\s*(?:TJ|Tj)?/g)) {
-    const hex = (m[1] ?? '').replace(/\s/g, '');
-    if (hex.length % 4 === 0 && hex.length > 0) {
-      for (let i = 0; i < hex.length; i += 4) out.push(parseInt(hex.slice(i, i + 4), 16));
-    } else if (hex.length % 2 === 0) {
-      for (let i = 0; i < hex.length; i += 2) out.push(parseInt(hex.slice(i, i + 2), 16));
+function bodyText(body: string, start: FontTable | null, fonts: Map<string, FontTable>): string {
+  let table = start;
+  let out = '';
+  for (const m of body.matchAll(/\/(\w+)\s+[\d.]+\s+Tf|<([0-9A-Fa-f\s]*)>/g)) {
+    if (m[1] !== undefined) {
+      table = fonts.get(m[1]!) ?? table;
+      continue;
+    }
+    const hex = (m[2] ?? '').replace(/\s/g, '');
+    const width = hex.length > 0 && hex.length % 4 === 0 ? 4 : 2;
+    for (let i = 0; i + width <= hex.length; i += width) {
+      out += table ? table.unicodeOf(parseInt(hex.slice(i, i + width), 16)) : '';
     }
   }
   return out;
@@ -95,11 +99,7 @@ function stripInStream(o: Obj, fonts: Map<string, FontTable> | undefined, stats:
     const body = text.slice(bodyStart, emc);
 
     const table = fontBefore(text, m.index, fonts);
-    const resolved = table
-      ? codesIn(body)
-          .map((c) => table.unicodeOf(c))
-          .join('')
-      : '';
+    const resolved = bodyText(body, table, fonts);
     if (resolved && resolved === declared) {
       stats.stripped++;
       cuts.push({ start: m.index, end: bodyStart });

@@ -110,6 +110,14 @@ and it stays, because removing it would lose a character and leave the PDF
 quietly wrong. This is why the repair is safe to make the default rather than
 an option.
 
+The resolution follows the font active at each glyph, and a span body may
+restate its own font: when a span opens a text block, Chromium places the
+`Tf` inside the body, and the font from the previous run can lack the glyph
+entirely. Reading the body through the font named before the opener resolved
+an empty string, kept every such span as if it were the only copy of its
+text, and warned `selection-fragmented` on ordinary pages whose spans the
+font's `/ToUnicode` already resolved.
+
 The span is matched in Chromium's own shape, `/Span<</ActualText (fi) >> BDC`,
 and the dictionary body is `[^<>]*` and nothing more. The first version allowed
 `<<` and `>>` inside it, which is correct PDF and catastrophic here: the body

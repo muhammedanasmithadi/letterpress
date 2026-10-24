@@ -523,12 +523,24 @@ function refuseUnusableRequest(req: RenderRequest, timeoutMs: number): void {
   }
 }
 
-function refusePastDeadline(timedOut: { timedOut: boolean }, timeoutMs: number): void {
-  if (!timedOut.timedOut) return;
-  throw new Error(
+function deadlineWording(timedOut: { timedOut: boolean }, timeoutMs: number): string | null {
+  if (!timedOut.timedOut) return null;
+  return (
     `the render took longer than ${timeoutMs}ms and was cut short. the document is ` +
-      `larger than the deadline allows, or the browser stopped answering.`,
+    `larger than the deadline allows, or the browser stopped answering.`
   );
+}
+
+function rethrowAsDeadline(e: unknown, timedOut: { timedOut: boolean }, timeoutMs: number): void {
+  if (e instanceof Error && e.message === 'cdp socket closed') {
+    const wording = deadlineWording(timedOut, timeoutMs);
+    if (wording) throw new Error(wording);
+  }
+}
+
+function refusePastDeadline(timedOut: { timedOut: boolean }, timeoutMs: number): void {
+  const wording = deadlineWording(timedOut, timeoutMs);
+  if (wording) throw new Error(wording);
 }
 
 function withPaper(request: RenderRequest): RenderRequest {
@@ -735,11 +747,9 @@ export async function render(browser: Browser, request: RenderRequest): Promise<
 
       refusePastDeadline(timedOutRef, timeoutMs);
 
-      const failedFinal = finalCheckFinding(pdf);
-      if (failedFinal) findings.push(failedFinal);
+      pushFinding(findings, finalCheckFinding(pdf));
 
-      const fragmented = selectionFinding(pdf);
-      if (fragmented) findings.push(fragmented);
+      pushFinding(findings, selectionFinding(pdf));
 
       const info = inspect(pdf);
 
@@ -767,6 +777,9 @@ export async function render(browser: Browser, request: RenderRequest): Promise<
         source: src.source,
         probe,
       };
+    } catch (e) {
+      rethrowAsDeadline(e, timedOutRef, timeoutMs);
+      throw e;
     } finally {
       clearTimeout(deadline);
     }
@@ -911,6 +924,10 @@ async function printPdf(
       ? await drainStream(tab, res.stream, { timeoutMs })
       : new Uint8Array(Buffer.from(res.data, 'base64'));
   return { raw, useStream };
+}
+
+function pushFinding(findings: Finding[], finding: Finding | null): void {
+  if (finding) findings.push(finding);
 }
 
 function pageSideFindings(report: PageSideReport, printableWidthPx: number): Finding[] {

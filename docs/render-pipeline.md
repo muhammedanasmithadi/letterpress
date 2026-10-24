@@ -114,6 +114,13 @@ answer to be a success. The deadline is a promise about the answer, so the
 answer has to notice it: the render refuses, and says that it was cut short
 rather than that the socket closed.
 
+Closing the tab fails every call the renderer still has in flight, and each
+of those failures names the socket rather than the deadline. Measured on a
+page whose script never yields: the first such failure surfaced as an error
+about the transport, which is one a caller cannot act on. A failure naming
+that socket, thrown after the deadline has fired, is translated into the
+same cut-short refusal.
+
 The request is read as a copy, so a caller who passes a frozen request gets a
 render and not an error, and their object is not changed underneath them.
 

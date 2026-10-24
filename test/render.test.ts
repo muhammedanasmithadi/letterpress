@@ -186,6 +186,23 @@ test('a hanging document fails with an error instead of hanging', async () => {
   expect(elapsedMs).toBeLessThan(20_000);
 }, 40_000);
 
+test('a script that never yields is cut by the deadline with honest wording', async () => {
+  const started = Bun.nanoseconds();
+  let message = '';
+  try {
+    await render(browser, {
+      html: `<!doctype html><meta charset="utf-8"><h1>spinner</h1><p>prose.</p><script>while(true){}</script>`,
+      timeoutMs: 3_000,
+    });
+  } catch (e) {
+    message = e instanceof Error ? e.message : String(e);
+  }
+  const elapsedMs = (Bun.nanoseconds() - started) / 1e6;
+  expect(message).toMatch(/took longer than 3000ms and was cut short/);
+  expect(message).not.toContain('cdp socket closed');
+  expect(elapsedMs).toBeLessThan(20_000);
+}, 40_000);
+
 test('the browser still renders after a timeout', async () => {
   const r = await render(browser, { html: DOC });
   expect(r.info.pages).toBeGreaterThan(0);

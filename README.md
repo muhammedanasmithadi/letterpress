@@ -616,9 +616,11 @@ anything, not because the measurement changed.
 `bun tools/selection.ts <file.html>` measures the real numbers on your document: how
 many gaps there are, how wide the widest is, and how many ligature spans. It reads
 the document before it attributes a cause — where justification is absent it says
-so, rather than telling you to change a rule that is not there. It does not yet say
-which element each gap belongs to, so finding the eight flex or grid gaps in your
-document is still a job for the inspector.
+so, rather than telling you to change a rule that is not there. Each wide gap is
+attributed to the element that owns it, with the CSS cause (`flex-gap`,
+`grid-gap`, `table-cell`, `space-between`, `margin`, or `unknown`) and the text
+next to it, so the eight flex or grid gaps in your document are named in the
+report rather than left for the inspector.
 
 ## Templates
 

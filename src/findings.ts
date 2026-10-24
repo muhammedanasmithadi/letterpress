@@ -158,6 +158,13 @@ export const FINDINGS: Record<string, FindingSpec> = {
     severity: 'warn',
     summary: 'a repair was discarded because it did not leave a valid pdf; the file is unchanged',
   },
+  'role-mapped': {
+    severity: 'info',
+    summary:
+      'non-standard structure types emitted by chromium (Aside) were mapped to their ' +
+      'standard equivalents through the structure tree RoleMap, because pdf/ua requires ' +
+      'every structure type to be a standard type or a mapped one',
+  },
   'role-retagged': {
     severity: 'info',
     summary:

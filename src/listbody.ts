@@ -1,4 +1,4 @@
-import { trySplit, join, dictOf, kidsOf, type Obj } from './pdfparts.ts';
+import { trySplit, join, dictOf, slashK, bracketed, type Obj } from './pdfparts.ts';
 
 function liNumbers(parts: NonNullable<ReturnType<typeof trySplit>>): number[] {
   const out: number[] = [];
@@ -16,29 +16,73 @@ function isLegalChild(kd: Obj | undefined): boolean {
   return /\/S\s*\/Lbl\b/.test(d) || /\/S\s*\/LBody\b/.test(d);
 }
 
-function partitionKids(
-  kids: number[],
-  byNum: Map<number, Obj>,
-): { lbls: number[]; others: number[] } {
-  const lbls: number[] = [];
-  const others: number[] = [];
-  for (const k of kids) {
-    if (isLegalChild(byNum.get(k))) lbls.push(k);
-    else others.push(k);
+type Kid = { kind: 'ref'; num: number } | { kind: 'inline'; text: string };
+
+function parseKids(rawText: string): Kid[] {
+  const at = slashK(rawText);
+  if (at === undefined) return [];
+  let i = 0;
+  const rest = at.value;
+  if (rest === undefined) return [];
+  while (i < rest.length && /\s/.test(rest[i]!)) i++;
+  const kids: Kid[] = [];
+  if (rest[i] === '[') {
+    const end = rest.indexOf(']', i);
+    if (end === -1) return [];
+    const body = rest.slice(i + 1, end);
+    let j = 0;
+    while (j < body.length) {
+      if (body.startsWith('<<', j)) {
+        const inner = bracketed(body, j, '<<', '>>');
+        if (inner === undefined) break;
+        kids.push({ kind: 'inline', text: body.slice(j, j + inner.length + 4) });
+        j += inner.length + 4;
+        continue;
+      }
+      if (body[j] === '[') {
+        const inner = bracketed(body, j, '[', ']');
+        if (inner === undefined) break;
+        j += inner.length + 2;
+        continue;
+      }
+      const m = /^\s*(\d+) 0 R/.exec(body.slice(j));
+      if (m) {
+        kids.push({ kind: 'ref', num: Number(m[1]) });
+        j += m[0].length;
+        continue;
+      }
+      j++;
+    }
+    return kids;
+  }
+  const m = /^(\d+) 0 R/.exec(rest.slice(i));
+  return m ? [{ kind: 'ref', num: Number(m[1]) }] : [];
+}
+
+function partitionKids(kids: Kid[], byNum: Map<number, Obj>): { lbls: Kid[]; others: Kid[] } {
+  const lbls: Kid[] = [];
+  const others: Kid[] = [];
+  for (const kid of kids) {
+    if (kid.kind === 'ref' && isLegalChild(byNum.get(kid.num))) {
+      lbls.push(kid);
+    } else {
+      others.push(kid);
+    }
   }
   return { lbls, others };
 }
 
 function reparentChildren(
   byNum: Map<number, Obj>,
-  others: number[],
+  others: Kid[],
   fromNum: number,
   toNum: number,
 ): void {
   const pattern = new RegExp(`/P\\s+${fromNum}\\s+0\\s+R`);
   const replacement = `/P ${toNum} 0 R`;
-  for (const k of others) {
-    const kd = byNum.get(k);
+  for (const kid of others) {
+    if (kid.kind !== 'ref') continue;
+    const kd = byNum.get(kid.num);
     if (!kd) continue;
     const text = kd.bytes.toString('latin1');
     if (!pattern.test(text)) continue;
@@ -46,9 +90,14 @@ function reparentChildren(
   }
 }
 
-function rewriteLiK(liText: string, newKids: number[]): string | null {
+function kidToKString(kid: Kid): string {
+  if (kid.kind === 'ref') return `${kid.num} 0 R`;
+  return kid.text;
+}
+
+function rewriteLiK(liText: string, newKids: Kid[]): string | null {
   const pattern = /\/K\s*(?:\[[^\]]*\]|\d+\s+0\s+R)/;
-  const replacement = `/K [${newKids.map((k) => `${k} 0 R`).join(' ')}]`;
+  const replacement = `/K [${newKids.map(kidToKString).join(' ')}]`;
   const next = liText.replace(pattern, replacement);
   return next === liText ? null : next;
 }
@@ -68,14 +117,14 @@ export function applyListBody(pdf: Uint8Array): Uint8Array {
   for (const liNum of lis) {
     const li = byNum.get(liNum);
     if (!li) continue;
-    const kids = kidsOf(li.bytes.toString('latin1'));
+    const kids = parseKids(li.bytes.toString('latin1'));
     if (kids.length === 0) continue;
 
     const { lbls, others } = partitionKids(kids, byNum);
     if (others.length === 0) continue;
 
     const lbodyNum = nextNum++;
-    const lbodyKids = others.map((k) => `${k} 0 R`).join(' ');
+    const lbodyKids = others.map(kidToKString).join(' ');
     newObjs.push({
       num: lbodyNum,
       bytes: Buffer.from(
@@ -86,7 +135,10 @@ export function applyListBody(pdf: Uint8Array): Uint8Array {
 
     reparentChildren(byNum, others, liNum, lbodyNum);
 
-    const newLiText = rewriteLiK(li.bytes.toString('latin1'), [...lbls, lbodyNum]);
+    const newLiText = rewriteLiK(li.bytes.toString('latin1'), [
+      ...lbls,
+      { kind: 'ref', num: lbodyNum },
+    ]);
     if (!newLiText) continue;
     li.bytes = Buffer.from(newLiText, 'latin1');
     changed = true;

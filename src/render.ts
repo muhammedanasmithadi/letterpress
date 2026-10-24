@@ -19,6 +19,7 @@ import {
 import type { Finding } from './findings.ts';
 import { stripRedundantSpans } from './spans.ts';
 import { repairOrKeep, verify } from './verify.ts';
+import { applyRoleMap } from './rolemap.ts';
 import {
   applyRolePlan,
   parseRoleCensus,
@@ -843,6 +844,7 @@ function repairDocument(input: RepairInput): RepairResult {
 
   described = repairFigures(described, rejected, findings);
   described = repairStructRoles(described, roles, rejected, findings);
+  described = repairRoleMap(described, rejected, findings);
   described = repairTitle(described, pdfTitle, rejected, findings);
   described = gated(described, 'metadata', (p) => addMetadata(p, meta), rejected, findings);
 
@@ -1791,6 +1793,29 @@ function repairStructRoles(
     return described;
   }
   findings.push(structRolesFinding(plan.entries.length, plan));
+  return attempt.pdf;
+}
+
+function repairRoleMap(
+  described: Uint8Array,
+  rejected: Set<string>,
+  findings: Finding[],
+): Uint8Array {
+  const attempt = repairOrKeep(described, (p) => applyRoleMap(p));
+  if (attempt.failures.length) {
+    rejected.add('role map');
+    findings.push(rejectedRepair('role map', attempt.failures));
+    return described;
+  }
+  if (!attempt.applied) return described;
+  findings.push({
+    code: 'role-mapped',
+    severity: 'info',
+    message:
+      'non-standard structure types emitted by chromium (Aside) were mapped to their ' +
+      'standard equivalents through the structure tree RoleMap, because pdf/ua requires ' +
+      'every structure type to be a standard type or a mapped one.',
+  });
   return attempt.pdf;
 }
 

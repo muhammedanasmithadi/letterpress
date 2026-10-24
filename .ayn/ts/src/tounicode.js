@@ -1,0 +1,256 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ligatureExpansion = ligatureExpansion;
+exports.fixCMap = fixCMap;
+exports.fixToUnicode = fixToUnicode;
+exports.unresolvedLigatures = unresolvedLigatures;
+const node_zlib_1 = require("node:zlib");
+const pdfparts_ts_1 = require("./pdfparts.ts");
+const PRESENTATION_FORMS = [
+    [0xfb00, 0xfb4f],
+    [0xfe10, 0xfe1f],
+    [0xfe50, 0xfe6f],
+    [0xfe70, 0xfeff],
+    [0xff00, 0xffef],
+];
+const LETTERS = /^\p{L}+$/u;
+const inPresentationForm = (cp) => PRESENTATION_FORMS.some(([lo, hi]) => cp >= lo && cp <= hi);
+function ligatureExpansion(cp) {
+    if (!Number.isInteger(cp) || cp < 0 || cp > 0x10ffff)
+        return undefined;
+    if (cp >= 0xd800 && cp <= 0xdfff)
+        return undefined;
+    if (!inPresentationForm(cp))
+        return undefined;
+    const ch = String.fromCodePoint(cp);
+    const expanded = ch.normalize('NFKC');
+    if (expanded === ch)
+        return undefined;
+    if ([...expanded].length < 2)
+        return undefined;
+    if (!LETTERS.test(expanded))
+        return undefined;
+    return expanded;
+}
+const hex = (n, width = 4) => n.toString(16).toUpperCase().padStart(width, '0');
+function readDest(hexText) {
+    if (hexText.length % 4 !== 0)
+        return undefined;
+    let out = '';
+    for (let i = 0; i < hexText.length; i += 4) {
+        out += String.fromCharCode(parseInt(hexText.slice(i, i + 4), 16));
+    }
+    return out;
+}
+function writeDest(text) {
+    let out = '';
+    for (let i = 0; i < text.length; i++)
+        out += hex(text.charCodeAt(i));
+    return out;
+}
+function fixCMap(cmap) {
+    let changed = false;
+    const fixBlock = (body) => body.replace(/<([0-9A-Fa-f]+)>[ \t]*<([0-9A-Fa-f]{4})>(?=[ \t]*(?:<|\r?\n|$))/g, (match, key, destHex) => {
+        const dest = readDest(destHex);
+        if (dest === undefined || dest.length !== 1)
+            return match;
+        const expansion = ligatureExpansion(dest.charCodeAt(0));
+        if (!expansion)
+            return match;
+        changed = true;
+        return `<${key}> <${writeDest(expansion)}>`;
+    });
+    const out = cmap.replace(/beginbfchar([\s\S]*?)endbfchar/g, (_whole, body) => `beginbfchar${fixBlock(body)}endbfchar`);
+    if (!changed)
+        return undefined;
+    return out;
+}
+function rangeRow(line) {
+    const arr = line.match(/^<([0-9A-Fa-f]+)>\s*\[([\s\S]*)\]$/);
+    const inc = line.match(/^<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]{4})>$/);
+    const destinations = [];
+    if (arr) {
+        const lo = parseInt(arr[1], 16);
+        [...arr[2].matchAll(/<([0-9A-Fa-f]+)>/g)].forEach((d, i) => destinations.push({ gid: lo + i, cp: parseInt(d[1].slice(0, 4), 16) }));
+    }
+    else if (inc) {
+        const lo = parseInt(inc[1], 16);
+        const hi = parseInt(inc[2], 16);
+        const base = parseInt(inc[3], 16);
+        if (hi < lo)
+            return null;
+        for (let gid = lo; gid <= hi && gid - lo <= 0xffff; gid++)
+            destinations.push({ gid, cp: base + (gid - lo) });
+    }
+    else {
+        return null;
+    }
+    const entries = [];
+    let affected = false;
+    for (const { gid, cp } of destinations) {
+        const expansion = ligatureExpansion(cp);
+        if (expansion)
+            affected = true;
+        entries.push(`<${hex(gid)}> <${writeDest(expansion ?? String.fromCharCode(cp))}>`);
+    }
+    return { entries, affected };
+}
+function fixRanges(cmap) {
+    let hit = false;
+    const needsWork = [
+        ...cmap.matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]{4})>/g),
+    ].some((m) => {
+        const lo = parseInt(m[1], 16);
+        const hi = parseInt(m[2], 16);
+        const base = parseInt(m[3], 16);
+        if (hi < lo || hi - lo > 0xffff)
+            return false;
+        for (let gid = lo; gid <= hi; gid++) {
+            if (ligatureExpansion(base + (gid - lo)) !== undefined)
+                return true;
+        }
+        return false;
+    });
+    const needsArray = [...cmap.matchAll(/<([0-9A-Fa-f]+)>\s*\[([\s\S]*?)\]/g)].some((m) => [...m[2].matchAll(/<([0-9A-Fa-f]+)>/g)].some((d) => [...d[1].matchAll(/.{4}/g)].some((u) => ligatureExpansion(parseInt(u[0], 16)) !== undefined)));
+    if (!needsWork && !needsArray)
+        return undefined;
+    const blocks = [...cmap.matchAll(/(\d+) beginbfrange\r?\n([\s\S]*?)\r?\nendbfrange/g)];
+    let out = '';
+    let cursor = 0;
+    for (const block of blocks) {
+        const [whole, , body = ''] = block;
+        const keep = [];
+        const added = [];
+        for (const raw of body.split('\n')) {
+            const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+            const row = rangeRow(line);
+            if (row === null) {
+                keep.push(line);
+                continue;
+            }
+            if (row.affected) {
+                added.push(...row.entries);
+                hit = true;
+            }
+            else
+                keep.push(line);
+        }
+        out += cmap.slice(cursor, block.index);
+        cursor = block.index + whole.length;
+        const affectedThisBlock = added.length > 0;
+        if (!affectedThisBlock) {
+            out += whole;
+            continue;
+        }
+        const pieces = [];
+        if (keep.length)
+            pieces.push(`${keep.length} beginbfrange\n${keep.join('\n')}\nendbfrange`);
+        if (added.length)
+            pieces.push(`${added.length} beginbfchar\n${added.join('\n')}\nendbfchar`);
+        out += pieces.join('\n');
+    }
+    out += cmap.slice(cursor);
+    return hit ? out : undefined;
+}
+function fixCMapBoth(cmap) {
+    const ranged = fixRanges(cmap);
+    const chars = fixCMap(ranged ?? cmap);
+    if (ranged === undefined && chars === undefined)
+        return undefined;
+    return chars ?? ranged;
+}
+function rewrittenStream(o, cmap) {
+    const compressed = (0, node_zlib_1.deflateSync)(Buffer.from(cmap, pdfparts_ts_1.LATIN1));
+    const dict = (0, pdfparts_ts_1.dictOf)(o).replace(/\/Length\s+(?:\d+\s+0\s+R|\d+)/, `/Length ${compressed.length}`);
+    return Buffer.concat([
+        Buffer.from(`${dict}\nstream\n`, pdfparts_ts_1.LATIN1),
+        compressed,
+        Buffer.from('\nendstream\nendobj\n', pdfparts_ts_1.LATIN1),
+    ]);
+}
+function fixToUnicode(pdf) {
+    if ((0, pdfparts_ts_1.isEncrypted)(pdf))
+        return pdf;
+    const parts = (0, pdfparts_ts_1.trySplit)(pdf);
+    if (!parts)
+        return pdf;
+    const byNum = (0, pdfparts_ts_1.objsByNum)(parts);
+    const targets = new Set();
+    for (const o of parts.objs) {
+        const m = o.bytes.toString(pdfparts_ts_1.LATIN1).match(/\/ToUnicode\s+(\d+)\s+0\s+R/);
+        if (m)
+            targets.add(Number(m[1]));
+    }
+    if (!targets.size)
+        return pdf;
+    const fixed = new Map();
+    for (const num of targets) {
+        const o = byNum.get(num);
+        if (!o)
+            continue;
+        const raw = (0, pdfparts_ts_1.inflatedStream)(o, pdfparts_ts_1.cappedInflate);
+        if (!raw)
+            continue;
+        const next = fixCMapBoth(raw.toString(pdfparts_ts_1.LATIN1));
+        if (next !== undefined)
+            fixed.set(num, next);
+    }
+    if (!fixed.size)
+        return pdf;
+    const objs = parts.objs.map((o) => {
+        const cmap = fixed.get(o.num);
+        return cmap === undefined ? o : { num: o.num, bytes: rewrittenStream(o, cmap) };
+    });
+    return (0, pdfparts_ts_1.join)(parts.head, objs, parts.trailer);
+}
+function unresolvedLigatures(pdf) {
+    const parts = (0, pdfparts_ts_1.trySplit)(pdf);
+    if (!parts)
+        return [];
+    const out = [];
+    const seen = new Set();
+    const note = (cp) => {
+        const expansion = ligatureExpansion(cp);
+        if (expansion && !seen.has(cp)) {
+            seen.add(cp);
+            out.push({ cp, expansion });
+        }
+    };
+    for (const o of parts.objs) {
+        const raw = (0, pdfparts_ts_1.inflatedStream)(o, pdfparts_ts_1.cappedInflate);
+        if (!raw)
+            continue;
+        const cmap = raw.toString(pdfparts_ts_1.LATIN1);
+        scanBfchar(cmap, note);
+        scanBfrange(cmap, note);
+    }
+    return out;
+}
+function scanBfchar(cmap, note) {
+    for (const m of cmap.matchAll(/beginbfchar\r?\n([\s\S]*?)\r?\nendbfchar/g)) {
+        for (const e of m[1].matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g)) {
+            for (let i = 0; i + 4 <= e[2].length; i += 4)
+                note(parseInt(e[2].slice(i, i + 4), 16));
+        }
+    }
+}
+function scanBfrange(cmap, note) {
+    for (const m of cmap.matchAll(/beginbfrange\r?\n([\s\S]*?)\r?\nendbfrange/g)) {
+        for (const e of m[1].matchAll(/<([0-9A-Fa-f]+)>\s*(?:<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>|\[\s*([\s\S]*?)\s*\])/g)) {
+            const lo = parseInt(e[1], 16);
+            if (e[2]) {
+                const hi = parseInt(e[2], 16);
+                const base = parseInt(e[3].slice(0, 4), 16);
+                for (let gid = lo; gid <= hi && gid - lo <= 0xffff; gid++)
+                    note(base + (gid - lo));
+            }
+            else {
+                for (const d of (e[4] ?? '').matchAll(/<([0-9A-Fa-f]+)>/g)) {
+                    for (let k = 0; k + 4 <= d[1].length; k += 4)
+                        note(parseInt(d[1].slice(k, k + 4), 16));
+                }
+            }
+        }
+    }
+}
+//# sourceMappingURL=tounicode.js.map

@@ -328,3 +328,23 @@ The same oracle run on three document shapes (prose, roles, blocky `dl`)
 reports `PASS (106 rules, 0 failed)` for the prose and roles shapes; the
 blocky shape fails only 7.4.2, which comes from the source document and fails
 identically on the unpatched print.
+
+## Measured limitations (not yet repaired)
+
+Battle-tested across 48 diverse documents at HEAD 5f01187. The failures below are
+real and measured; none has a repair yet, and each needs its own measurement
+phase before one is attempted.
+
+- **Native lists (7.2, `LI` may contain only `Lbl` and `LBody`)**: Chromium tags
+  `<li>` as `LI` with its content directly inside, no `LBody` wrapper. Fails on
+  nested `ul`/`ol` (`deep-list`, `ol-deep`, `ul-nested`). Repair would require
+  creating `LBody` struct elements and rewiring `/K` plus the ParentTree — a
+  dict-level restructuring, not a byte swap.
+- **RTL text (7.21.7, ToUnicode values must be greater than zero)**: some glyphs
+  in RTL/Arabic content map to U+0000. Needs investigation of whether the
+  codepoint is recoverable from the font; may be a Chromium subsetting bug.
+- **Empty documents (`empty`, `dl-empty`)**: fail 6.2 (MarkInfo), 7.1 (structure
+  hierarchy root), 7.2 (natural language for metadata). These are degenerate
+  inputs with no real content; not worth repairing.
+- **`details` element (7.1, untagged content)**: Chromium leaves the element's
+  content unmarked. Not addressable by retagging or RoleMap.

@@ -1,0 +1,109 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const bun_test_1 = require("bun:test");
+const node_zlib_1 = require("node:zlib");
+const pdfparts_ts_1 = require("../src/pdfparts.ts");
+const spans_ts_1 = require("../src/spans.ts");
+const meta_ts_1 = require("../src/meta.ts");
+const validate_ts_1 = require("../src/validate.ts");
+const verify_ts_1 = require("../src/verify.ts");
+const fixtures_ts_1 = require("./fixtures.ts");
+function pdf(objs, trailer = '<< /Root 1 0 R >>') {
+    return new Uint8Array(Buffer.from(`%PDF-1.4\n${objs.join('')}trailer\n${trailer}\nstartxref\n0\n%%EOF\n`, 'latin1'));
+}
+const PAGE = [
+    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+    '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
+    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+        '/Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n',
+    '4 0 obj\n<< /Length 20 >>\nstream\nBT /F1 12 Tf (x) Tj ET\nendstream\nendobj\n',
+];
+(0, bun_test_1.describe)('a document that says anything', () => {
+    (0, bun_test_1.test)('a width range of two billion does not take the memory', () => {
+        const file = pdf([
+            ...PAGE,
+            '5 0 obj\n<< /Type /Font /Subtype /Type0 /BaseFont /X /Encoding /Identity-H ' +
+                '/DescendantFonts [6 0 R] >>\nendobj\n',
+            '6 0 obj\n<< /Type /Font /Subtype /CIDFontType2 /BaseFont /X /W [0 2000000000 500] >>\nendobj\n',
+        ]);
+        (0, bun_test_1.expect)(() => (0, validate_ts_1.validate)(file)).not.toThrow();
+    }, 30_000);
+    (0, bun_test_1.test)('a stream that expands without bound is refused rather than expanded', () => {
+        const zeros = (0, node_zlib_1.deflateSync)(Buffer.alloc(200 * 1024 * 1024));
+        (0, bun_test_1.expect)(() => (0, pdfparts_ts_1.cappedInflate)(zeros)).toThrow();
+        const file = pdf([
+            ...PAGE,
+            `5 0 obj\n<< /Length ${zeros.length} /Filter /FlateDecode >>\nstream\n${zeros.toString('latin1')}\nendstream\nendobj\n`,
+        ]);
+        (0, bun_test_1.expect)(() => (0, validate_ts_1.validate)(file)).not.toThrow();
+    }, 30_000);
+    (0, bun_test_1.test)('an object number of four hundred digits does not size a table', () => {
+        const file = pdf([
+            '1 0 obj\n<< /Type /Catalog >>\nendobj\n',
+            `${'9'.repeat(400)} 0 obj\n<< >>\nendobj\n`,
+        ]);
+        (0, bun_test_1.expect)(() => (0, spans_ts_1.stripRedundantSpans)(file)).not.toThrow();
+        (0, bun_test_1.expect)(() => (0, meta_ts_1.setDocTitle)(file, 'T')).not.toThrow();
+    }, 30_000);
+});
+(0, bun_test_1.describe)('a document a reader would open', () => {
+    (0, bun_test_1.test)('a little something in front of the header is still a document', () => {
+        const file = Buffer.concat([
+            Buffer.from('F9 junk before the header\n', 'latin1'),
+            Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n', 'latin1'),
+        ]);
+        const result = (0, validate_ts_1.validate)(new Uint8Array(file));
+        (0, bun_test_1.expect)(result.findings.map((f) => f.code)).not.toContain('not-a-pdf');
+    });
+    (0, bun_test_1.test)('text in a stream that looks like an object header is not an object', () => {
+        const content = 'BT /F1 12 Tf 72 700 Td (line one) Tj\n1 0 obj\n(line two) Tj ET';
+        const file = [
+            '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+            '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
+            '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>\nendobj\n',
+            `4 0 obj\n<< /Length ${content.length} >>\nstream\n${content}\nendstream\nendobj\n`,
+        ].join('');
+        const text = `%PDF-1.4\n${file}trailer\n<< /Root 1 0 R /Size 5 >>\nstartxref\n9\n%%EOF\n`;
+        const parts = (0, pdfparts_ts_1.trySplit)(new Uint8Array(Buffer.from(text, 'latin1')));
+        (0, bun_test_1.expect)(parts?.objs.map((o) => o.num)).toEqual([1, 2, 3, 4]);
+    });
+    (0, bun_test_1.test)('a page whose content cannot be decoded is reported', () => {
+        const file = [
+            '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+            '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
+            '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>\nendobj\n',
+            '4 0 obj\n<< /Length 20 /Filter /FlateDecode >>\nstream\nnot compressed at all\nendstream\nendobj\n',
+        ].join('');
+        const text = `%PDF-1.4\n${file}trailer\n<< /Root 1 0 R /Size 5 >>\nstartxref\n9\n%%EOF\n`;
+        const result = (0, validate_ts_1.validate)(new Uint8Array(Buffer.from(text, 'latin1')));
+        (0, bun_test_1.expect)(result.findings.map((f) => f.code)).toContain('content-unreadable');
+    });
+    (0, bun_test_1.test)('objects written with more than one space are still objects', () => {
+        const file = Buffer.from('%PDF-1.4\n1  0  obj\n<< /Type /Catalog >>\nendobj\n' +
+            'trailer\n<< /Root 1 0 R /Size 2 >>\nstartxref\n9\n%%EOF\n', 'latin1');
+        const result = (0, verify_ts_1.verify)(new Uint8Array(file));
+        (0, bun_test_1.expect)(result.failures.filter((f) => f.includes('does not exist'))).toEqual([]);
+    });
+});
+(0, bun_test_1.describe)('a document with windows line endings', () => {
+    const lf = '%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R /Encrypt 5 0 R >>\nstartxref\n0\n%%EOF\n';
+    (0, bun_test_1.test)('an encrypted document is recognised whatever its line endings', () => {
+        const crlf = new Uint8Array(Buffer.from(lf.replace(/\n/g, '\r\n'), 'latin1'));
+        (0, bun_test_1.expect)((0, pdfparts_ts_1.isEncrypted)(crlf)).toBe(true);
+        (0, bun_test_1.expect)((0, pdfparts_ts_1.trySplit)(crlf)).toBeDefined();
+    });
+});
+(0, bun_test_1.describe)('a length that points at another object', () => {
+    (0, bun_test_1.test)('a repair does not turn an indirect length into a reference to nothing', () => {
+        const file = (0, fixtures_ts_1.assemblePdf)([
+            '<< /Type /Catalog /Pages 2 0 R >>',
+            '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+            '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>',
+            '<< /Length 5 0 R >>',
+            '<< /Length 20 >>',
+        ]);
+        const out = (0, meta_ts_1.setDocTitle)(file, 'A Title');
+        (0, bun_test_1.expect)(Buffer.from(out).toString('latin1')).not.toContain('/Length 55 0 R');
+    });
+});
+//# sourceMappingURL=hostile.test.js.map

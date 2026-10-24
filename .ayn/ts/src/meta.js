@@ -1,0 +1,308 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.pdfString = pdfString;
+exports.xmlText = xmlText;
+exports.readDocInfo = readDocInfo;
+exports.setDocTitle = setDocTitle;
+exports.isVolatileTitle = isVolatileTitle;
+exports.buildXmp = buildXmp;
+exports.pdfValue = pdfValue;
+exports.addMetadata = addMetadata;
+exports.readXmpPacket = readXmpPacket;
+exports.readXmp = readXmp;
+const node_zlib_1 = require("node:zlib");
+const pdfparts_ts_1 = require("./pdfparts.ts");
+function pdfString(value) {
+    if ([...value].some((ch) => ch.codePointAt(0) < 32 || ch.codePointAt(0) > 126)) {
+        let hex = 'FEFF';
+        for (let i = 0; i < value.length; i++) {
+            hex += value.charCodeAt(i).toString(16).toUpperCase().padStart(4, '0');
+        }
+        return `<${hex}>`;
+    }
+    let out = '';
+    for (const ch of value) {
+        if (ch === '(' || ch === ')' || ch === '\\')
+            out += `\\${ch}`;
+        else
+            out += ch;
+    }
+    return out;
+}
+function xmlText(value) {
+    let out = '';
+    for (const ch of value) {
+        const code = ch.codePointAt(0);
+        if (ch === '&')
+            out += '&amp;';
+        else if (ch === '<')
+            out += '&lt;';
+        else if (ch === '>')
+            out += '&gt;';
+        else if (ch === '"')
+            out += '&quot;';
+        else if (ch === "'")
+            out += '&apos;';
+        else if (code === 9 || code === 10 || code === 13)
+            out += ch;
+        else if (code < 32)
+            continue;
+        else
+            out += ch;
+    }
+    return out;
+}
+function readString(body, key) {
+    const asHex = body.match(new RegExp(`/${key}\\s*<([0-9A-Fa-f]+)>`));
+    if (asHex)
+        return decodeHex(asHex[1]);
+    const m = body.match(new RegExp(`/${key}\\s*\\(((?:[^()\\\\]|\\\\.)*)\\)`));
+    if (!m)
+        return undefined;
+    return decodeLiteral(m[1]);
+}
+function decodeHex(hex) {
+    if (hex.length >= 4 && /^FEFF/i.test(hex)) {
+        const body = hex.slice(4);
+        let out = '';
+        for (let i = 0; i + 4 <= body.length; i += 4)
+            out += String.fromCharCode(parseInt(body.slice(i, i + 4), 16));
+        return out;
+    }
+    let out = '';
+    for (let i = 0; i + 2 <= hex.length; i += 2)
+        out += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
+    return out;
+}
+const SIMPLE_ESCAPES = {
+    n: '\n',
+    r: '\r',
+    t: '\t',
+    b: '\b',
+    f: '\f',
+};
+function decodeLiteral(raw) {
+    let out = '';
+    for (let i = 0; i < raw.length; i++) {
+        if (raw[i] !== '\\') {
+            out += raw[i];
+            continue;
+        }
+        const next = raw[++i];
+        if (next === undefined)
+            break;
+        const simple = SIMPLE_ESCAPES[next];
+        if (simple !== undefined)
+            out += simple;
+        else if (/[0-7]/.test(next)) {
+            let oct = next;
+            while (oct.length < 3 && /[0-7]/.test(raw[i + 1] ?? ''))
+                oct += raw[++i];
+            out += String.fromCharCode(parseInt(oct, 8));
+        }
+        else
+            out += next;
+    }
+    return out;
+}
+function readDocInfo(pdf, parts) {
+    const empty = {};
+    const split = parts ?? (0, pdfparts_ts_1.trySplit)(pdf);
+    if (!split)
+        return empty;
+    const trailer = split.trailer.toString(pdfparts_ts_1.LATIN1);
+    const ref = trailer.match(/\/Info\s+(\d+)\s+0\s+R/);
+    if (!ref)
+        return empty;
+    const obj = split.objs.find((o) => o.num === Number(ref[1]));
+    if (!obj)
+        return empty;
+    const body = obj.bytes.toString(pdfparts_ts_1.LATIN1);
+    return {
+        title: readString(body, 'Title'),
+        author: readString(body, 'Author'),
+        subject: readString(body, 'Subject'),
+        keywords: readString(body, 'Keywords'),
+        creator: readString(body, 'Creator'),
+        producer: readString(body, 'Producer'),
+        created: readString(body, 'CreationDate'),
+        modified: readString(body, 'ModDate'),
+    };
+}
+function setDocTitle(pdf, title) {
+    if ((0, pdfparts_ts_1.isEncrypted)(pdf))
+        return pdf;
+    const parts = (0, pdfparts_ts_1.trySplit)(pdf);
+    if (!parts)
+        return pdf;
+    const ref = parts.trailer.toString(pdfparts_ts_1.LATIN1).match(/\/Info\s+(\d+)\s+0\s+R/);
+    if (!ref)
+        return pdf;
+    const obj = parts.objs.find((o) => o.num === Number(ref[1]));
+    if (!obj)
+        return pdf;
+    const current = obj.bytes.toString(pdfparts_ts_1.LATIN1);
+    if (readString(current, 'Title') === title)
+        return pdf;
+    obj.bytes = Buffer.from(setKey(current, 'Title', title), pdfparts_ts_1.LATIN1);
+    return new Uint8Array((0, pdfparts_ts_1.join)(parts.head, parts.objs, parts.trailer));
+}
+function isVolatileTitle(title) {
+    return /^(?:127\.0\.0\.1|localhost|\[::1\]):\d+\/\S*|^about:blank$/i.test(title);
+}
+const PDFUA_IDENT = '<rdf:Description rdf:about="" xmlns:pdfuaid="http://www.aiim.org/pdfua/ns/id/" pdfuaid:part="1" pdfuaid:rev="2020"/>';
+function buildXmp(info) {
+    const alt = (tag, value) => value === undefined
+        ? ''
+        : `<dc:${tag}><rdf:Alt><rdf:li xml:lang="x-default">${xmlText(value)}</rdf:li></rdf:Alt></dc:${tag}>\n`;
+    const bag = (tag, value) => value === undefined
+        ? ''
+        : `<dc:${tag}><rdf:Bag><rdf:li>${xmlText(value)}</rdf:li></rdf:Bag></dc:${tag}>\n`;
+    const simple = (ns, tag, value) => value === undefined ? '' : `<${ns}:${tag}>${xmlText(value)}</${ns}:${tag}>\n`;
+    const iso = (pdfDate) => {
+        const m = pdfDate?.match(/^D:(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?(\d{2})?/);
+        if (!m)
+            return undefined;
+        const [, y, mo = '01', d = '01', h = '00', mi = '00', s = '00'] = m;
+        return `${y}-${mo}-${d}T${h}:${mi}:${s}`;
+    };
+    return `<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="letterpress">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:pdf="http://ns.adobe.com/pdf/1.3/">
+${alt('title', info.title)}${alt('description', info.subject)}${bag('creator', info.author)}${bag('subject', info.keywords)}${simple('xmp', 'CreatorTool', info.creator)}${simple('pdf', 'Producer', info.producer)}${simple('xmp', 'CreateDate', iso(info.created))}${simple('xmp', 'ModifyDate', iso(info.modified))}</rdf:Description>
+${PDFUA_IDENT}
+</rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>`;
+}
+function pdfValue(value) {
+    const escaped = pdfString(value);
+    return escaped.startsWith('<') ? `<${escaped.slice(1, -1)}>` : `(${escaped})`;
+}
+function setKey(body, key, value) {
+    const asValue = pdfValue(value);
+    const either = new RegExp(`/${key}\\s*(?:\\((?:[^()\\\\]|\\\\.)*\\)|<[0-9A-Fa-f]*>)`);
+    if (either.test(body))
+        return body.replace(either, `/${key} ${asValue}`);
+    return (0, pdfparts_ts_1.insertIntoDict)(body, `/${key} ${asValue}`);
+}
+function setMetadataRef(body, num) {
+    if (/\/Metadata\s+\d+\s+0\s+R/.test(body)) {
+        return body.replace(/\/Metadata\s+\d+\s+0\s+R/, `/Metadata ${num} 0 R`);
+    }
+    return (0, pdfparts_ts_1.insertIntoDict)(body, `/Metadata ${num} 0 R`);
+}
+function addMetadata(pdf, declared = {}) {
+    const wanted = {
+        Author: declared.author?.trim() || undefined,
+        Subject: declared.subject?.trim() || undefined,
+        Keywords: declared.keywords?.trim() || undefined,
+    };
+    const parts = (0, pdfparts_ts_1.trySplit)(pdf);
+    if (!parts)
+        return pdf;
+    if ((0, pdfparts_ts_1.isEncrypted)(pdf))
+        return pdf;
+    const packetInfo = {
+        ...readDocInfo(pdf, parts),
+        author: wanted.Author,
+        subject: wanted.Subject,
+        keywords: wanted.Keywords,
+    };
+    const epoch = process.env.SOURCE_DATE_EPOCH;
+    if (epoch && /^\d+$/.test(epoch)) {
+        const d = new Date(Number(epoch) * 1000);
+        const p = (n) => String(n).padStart(2, '0');
+        const pinned = `D:${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}` +
+            `${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
+        packetInfo.created = pinned;
+        packetInfo.modified = pinned;
+    }
+    const byNum = (0, pdfparts_ts_1.objsByNum)(parts);
+    const trailer = parts.trailer.toString(pdfparts_ts_1.LATIN1);
+    const infoRef = trailer.match(/\/Info\s+(\d+)\s+0\s+R/);
+    if (!infoRef)
+        return pdf;
+    const infoObj = byNum.get(Number(infoRef[1]));
+    if (!infoObj)
+        return pdf;
+    const next = Math.max(...parts.objs.map((o) => o.num)) + 1;
+    const rootRef = trailer.match(/\/Root\s+(\d+)\s+0\s+R/);
+    const root = rootRef ? byNum.get(Number(rootRef[1])) : undefined;
+    if (!root)
+        return pdf;
+    const packet = (0, node_zlib_1.deflateSync)(Buffer.from(buildXmp(packetInfo), 'utf8'));
+    const metadataObj = {
+        num: next,
+        bytes: Buffer.concat([
+            Buffer.from(`${next} 0 obj\n<< /Type /Metadata /Subtype /XML /Filter /FlateDecode /Length ${packet.length} >>\nstream\n`, pdfparts_ts_1.LATIN1),
+            packet,
+            Buffer.from('\nendstream\nendobj\n', pdfparts_ts_1.LATIN1),
+        ]),
+    };
+    const objs = parts.objs.map((o) => {
+        if (o.num === infoObj.num) {
+            let body = o.bytes.toString(pdfparts_ts_1.LATIN1);
+            for (const [key, value] of Object.entries(wanted)) {
+                if (value !== undefined)
+                    body = setKey(body, key, value);
+            }
+            return { num: o.num, bytes: Buffer.from(body, pdfparts_ts_1.LATIN1) };
+        }
+        if (o.num === root.num) {
+            const body = o.bytes.toString(pdfparts_ts_1.LATIN1);
+            return { num: o.num, bytes: Buffer.from(setMetadataRef(body, next), pdfparts_ts_1.LATIN1) };
+        }
+        return o;
+    });
+    objs.push(metadataObj);
+    return (0, pdfparts_ts_1.join)(parts.head, objs, parts.trailer);
+}
+function xmpPayload(pdf) {
+    const parts = (0, pdfparts_ts_1.trySplit)(pdf);
+    if (!parts)
+        return undefined;
+    const byNum = (0, pdfparts_ts_1.objsByNum)(parts);
+    const rootRef = parts.trailer.toString(pdfparts_ts_1.LATIN1).match(/\/Root\s+(\d+)\s+0\s+R/);
+    const root = rootRef ? byNum.get(Number(rootRef[1])) : undefined;
+    if (!root)
+        return undefined;
+    const ref = root.bytes.toString(pdfparts_ts_1.LATIN1).match(/\/Metadata\s+(\d+)\s+0\s+R/);
+    if (!ref)
+        return undefined;
+    const stream = byNum.get(Number(ref[1]));
+    if (!stream)
+        return undefined;
+    const range = (0, pdfparts_ts_1.streamRange)(stream.bytes);
+    if (!range)
+        return undefined;
+    const raw = stream.bytes.subarray(range.start, range.end);
+    if (!/\/FlateDecode/.test(stream.bytes.toString(pdfparts_ts_1.LATIN1)))
+        return raw.toString('utf8');
+    try {
+        return (0, pdfparts_ts_1.cappedInflate)(raw).toString('utf8');
+    }
+    catch {
+        return raw.toString('utf8');
+    }
+}
+function readXmpPacket(pdf) {
+    return xmpPayload(pdf) ?? '';
+}
+function readXmp(pdf) {
+    const payload = xmpPayload(pdf);
+    if (payload === undefined)
+        return { present: false };
+    const creator = payload.match(/<dc:creator>[\s\S]*?<rdf:li(?:\s[^>]*)?>([\s\S]*?)<\/rdf:li>/)?.[1];
+    return { present: true, creator: creator ? unescapeXml(creator) : undefined };
+}
+function unescapeXml(value) {
+    return value
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'")
+        .replace(/&amp;/g, '&');
+}
+//# sourceMappingURL=meta.js.map

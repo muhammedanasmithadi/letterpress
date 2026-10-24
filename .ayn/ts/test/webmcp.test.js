@@ -1,0 +1,168 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const bun_test_1 = require("bun:test");
+const browser_ts_1 = require("./browser.ts");
+const mcptools_ts_1 = require("../src/mcptools.ts");
+const servers_ts_1 = require("./servers.ts");
+let t;
+const server = (0, servers_ts_1.useTestServer)();
+let tab;
+(0, bun_test_1.beforeAll)(async () => {
+    t = await (0, browser_ts_1.launchTestBrowser)('webmcp', ['--enable-blink-features=WebMCP']);
+    tab = await t.browser.newTab();
+    await tab.send('Page.enable');
+    await tab.send('Runtime.enable');
+    await tab.send('Page.navigate', { url: `${server.origin}/` });
+    await Bun.sleep(1500);
+}, 90_000);
+(0, bun_test_1.afterAll)(async () => {
+    await (0, browser_ts_1.closeTestBrowser)(t);
+}, 30_000);
+async function evaluate(expression) {
+    const r = await tab.send('Runtime.evaluate', {
+        expression: `(async () => { ${expression} })()`,
+        awaitPromise: true,
+        returnByValue: true,
+    });
+    if (r?.exceptionDetails) {
+        const detail = r.exceptionDetails.exception?.description?.split('\n')[0] ?? r.exceptionDetails.text;
+        throw new Error(`the page threw: ${detail}`);
+    }
+    return r?.result?.value;
+}
+async function waitForTools(count) {
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+        const tools = JSON.parse((await evaluate(`const t = await document.modelContext.getTools();
+         return JSON.stringify(t.map(x => x.name));`)));
+        if (tools.length >= count)
+            return tools.map((name) => ({ name }));
+        if (Date.now() > deadline) {
+            throw new Error(`the page registered ${tools.length} tools, expected ${count}`);
+        }
+        await Bun.sleep(100);
+    }
+}
+async function callTool(name, args) {
+    return (await evaluate(`const t = await document.modelContext.getTools();
+     const tool = t.find(x => x.name === ${JSON.stringify(name)});
+     if (!tool) throw new Error('no tool named ' + ${JSON.stringify(name)});
+     const r = JSON.parse(await document.modelContext.executeTool(tool, JSON.stringify(${JSON.stringify(args)})));
+     return r.content[0].text;`));
+}
+(0, bun_test_1.describe)('the page offers tools to an agent', () => {
+    (0, bun_test_1.test)('the browser has the API at all, or this file proves nothing', async () => {
+        const shape = JSON.parse((await evaluate(`return JSON.stringify({
+           doc: typeof document.modelContext,
+           nav: typeof navigator.modelContext,
+           proto: document.modelContext
+             ? Object.getOwnPropertyNames(Object.getPrototypeOf(document.modelContext))
+             : null,
+         });`)));
+        (0, bun_test_1.expect)(shape.doc).toBe('object');
+        (0, bun_test_1.expect)(shape.nav).toBe('undefined');
+        (0, bun_test_1.expect)(shape.proto).toContain('registerTool');
+    }, 60_000);
+    (0, bun_test_1.test)('the two tools are registered, with the names and the schemas', async () => {
+        await waitForTools(2);
+        const tools = JSON.parse((await evaluate(`const t = await document.modelContext.getTools();
+         return JSON.stringify(t.map(x => ({ name: x.name, description: x.description, schema: x.inputSchema })));`)));
+        const names = tools.map((x) => x.name).sort();
+        (0, bun_test_1.expect)(names).toEqual(['list_findings', 'render_html']);
+        for (const tool of tools) {
+            (0, bun_test_1.expect)(tool.description.length).toBeGreaterThan(40);
+            const schema = JSON.parse(tool.schema);
+            (0, bun_test_1.expect)(schema.type).toBe('object');
+        }
+    }, 60_000);
+    (0, bun_test_1.test)('list_findings answers with the codes and what they mean', async () => {
+        const text = await callTool('list_findings', {});
+        (0, bun_test_1.expect)(text).toContain('js-error');
+        (0, bun_test_1.expect)(text).toContain('font-fallback');
+    }, 60_000);
+    (0, bun_test_1.test)('list_findings can be narrowed to one severity', async () => {
+        const text = await callTool('list_findings', { severity: 'error' });
+        const lines = text.split('\n').filter(Boolean);
+        (0, bun_test_1.expect)(lines.length).toBeGreaterThan(0);
+        for (const line of lines)
+            (0, bun_test_1.expect)(line.startsWith('error: ')).toBe(true);
+    }, 60_000);
+    (0, bun_test_1.test)('render_html makes a real pdf and reports the findings', async () => {
+        const text = await callTool('render_html', {
+            html: '<!doctype html><html lang="en"><head><style>@page{size:A4;margin:12mm}</style></head><body><h1>Through the page</h1></body></html>',
+        });
+        (0, bun_test_1.expect)(text).toContain('1 page');
+    }, 120_000);
+    (0, bun_test_1.test)('every tool the page offers is one the server also offers', async () => {
+        const tools = await waitForTools(2);
+        for (const tool of tools) {
+            (0, bun_test_1.expect)(mcptools_ts_1.TOOLS.map((t) => t.name), tool.name).toContain(tool.name);
+        }
+    });
+    (0, bun_test_1.test)('every tool that is registered can also be called', async () => {
+        const tools = await waitForTools(2);
+        (0, bun_test_1.expect)(tools.map((t) => t.name).sort()).toEqual(['list_findings', 'render_html']);
+    });
+    (0, bun_test_1.test)('a render with a problem says so, rather than returning nothing', async () => {
+        const text = await callTool('render_html', {
+            html: '<!doctype html><html><head><style>@page{size:A4;margin:10mm}</style></head><body><img src="missing.png"><p>x</p></body></html>',
+        });
+        (0, bun_test_1.expect)(text).toContain('subresource-failed');
+    }, 120_000);
+    (0, bun_test_1.test)('the page shows what the agent rendered, so the human sees the same thing', async () => {
+        await callTool('render_html', {
+            html: '<!doctype html><html lang="en"><head><style>@page{size:A5;margin:10mm}</style></head><body><h1>Agent</h1></body></html>',
+        });
+        const shown = await evaluate(`return JSON.stringify({
+         metrics: document.getElementById('metrics').textContent,
+         status: document.getElementById('status').textContent,
+         source: document.getElementById('source').value,
+       });`);
+        const page = JSON.parse(shown);
+        (0, bun_test_1.expect)(page.metrics).toContain('1 page');
+        (0, bun_test_1.expect)(page.status).toContain('Rendered');
+        (0, bun_test_1.expect)(page.source).not.toContain('Agent');
+    }, 120_000);
+    (0, bun_test_1.test)('the toolbar shows the settings the tool asked for', async () => {
+        await callTool('render_html', {
+            html: '<!doctype html><html lang="en"><head><style>@page{size:A4;margin:12mm}</style></head><body><p>x</p></body></html>',
+            format: 'a5',
+            landscape: true,
+        });
+        const state = JSON.parse((await evaluate(`return JSON.stringify({
+           format: document.getElementById('format').value,
+           landscape: document.getElementById('landscape').getAttribute('aria-pressed'),
+         });`)));
+        (0, bun_test_1.expect)(state.format).toBe('a5');
+        (0, bun_test_1.expect)(state.landscape).toBe('true');
+    }, 120_000);
+});
+(0, bun_test_1.describe)('the server serves the manifest', () => {
+    (0, bun_test_1.test)('over http, as data', async () => {
+        const r = await fetch(`${server.origin}/findings`);
+        (0, bun_test_1.expect)(r.status).toBe(200);
+        const body = (await r.json());
+        (0, bun_test_1.expect)(body.findings.length).toBeGreaterThan(30);
+        for (const f of body.findings) {
+            (0, bun_test_1.expect)(['error', 'warn', 'info']).toContain(f.severity);
+            (0, bun_test_1.expect)(f.summary.length).toBeGreaterThan(10);
+        }
+    }, 30_000);
+    (0, bun_test_1.test)('the paper names come with it, so the page cannot disagree', async () => {
+        const r = await fetch(`${server.origin}/findings`);
+        const body = (await r.json());
+        (0, bun_test_1.expect)(body.formats).toEqual(['a3', 'a4', 'a5', 'legal', 'letter', 'tabloid']);
+    }, 30_000);
+    (0, bun_test_1.test)('the page offers the same paper names the server has', async () => {
+        const tools = await waitForTools(2);
+        const listed = JSON.parse((await evaluate(`const t = await document.modelContext.getTools();
+         const r = t.find(x => x.name === 'render_html');
+         const schema = typeof r.inputSchema === 'string' ? JSON.parse(r.inputSchema) : r.inputSchema;
+         return JSON.stringify(schema.properties.format.enum);`)));
+        const r = await fetch(`${server.origin}/findings`);
+        const body = (await r.json());
+        (0, bun_test_1.expect)(listed).toEqual(body.formats);
+        (0, bun_test_1.expect)(tools.length).toBeGreaterThan(0);
+    }, 60_000);
+});
+//# sourceMappingURL=webmcp.test.js.map

@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { render } from '../src/render.ts';
-import { applyRolePlan, parseRoleCensus, rolePlan } from '../src/structroles.ts';
+import { applyRolePlan, markedText, parseRoleCensus, rolePlan } from '../src/structroles.ts';
 import { dictOf, structElementsInOrder, trySplit } from '../src/pdfparts.ts';
+import type { FontTable } from '../src/textfont.ts';
 import { verify } from '../src/verify.ts';
 import { closeTestBrowser, launchTestBrowser, type TestBrowser } from './browser.ts';
 import type { Browser } from '../src/browser.ts';
@@ -73,6 +74,19 @@ describe('the roles repair', () => {
     expect(note?.message).toContain('10');
   }, 90_000);
 
+  test('an rtl landmark matches its visually ordered text and retags', async () => {
+    const r = await render(browser, {
+      html: DOC(
+        '<div dir="rtl" lang="ar"><nav><p>مرحبا في الصفحة</p></nav>' +
+          '<section><p>نص تقني صغير</p></section></div>',
+      ),
+      author: 't',
+    });
+    expect(rolesOf(r.pdf)).toContain('Sect');
+    const note = r.findings.find((f) => f.code === 'role-retagged');
+    expect(note?.message).toContain('2');
+  }, 90_000);
+
   test('a definition list whose items hold blocks is skipped, landmarks still retag', async () => {
     const r = await render(browser, { html: DOC(BLOCKY_DOC), author: 't' });
     const found = rolesOf(r.pdf);
@@ -135,5 +149,53 @@ describe('the census parser', () => {
     expect(parseRoleCensus('this is not json')).toEqual([]);
     expect(parseRoleCensus('42')).toEqual([]);
     expect(parseRoleCensus(undefined)).toEqual([]);
+  });
+});
+
+describe('mcid text through the census walk', () => {
+  const FAKE: FontTable = {
+    codeBytes: 1,
+    widthOf: () => 1000,
+    unicodeOf: (code) => (code === 0x41 ? 'A' : code === 0x42 ? 'B' : ''),
+  };
+
+  const textFor = (body: string): string | undefined =>
+    markedText(body, new Map([['F2', FAKE]])).get(0);
+
+  test('a hex ActualText declares the character the zero-row body cannot name', () => {
+    expect(
+      textFor(
+        '/P <</MCID 0 >> BDC /Span <</ActualText <FEFF0627> >> BDC /F2 12 Tf <0041> Tj EMC EMC',
+      ),
+    ).toBe('ا');
+  });
+
+  test('a nested dict inside the market content still finds the declared text and BDC', () => {
+    expect(
+      textFor(
+        '/P <</MCID 0 >> BDC /Span <</ActualText (fi) /Why << /Inner (x) >> >> BDC' +
+          ' /F2 12 Tf <0041> Tj EMC EMC',
+      ),
+    ).toBe('fi');
+  });
+
+  test('two utf-16 units arrive as two characters, one per unit', () => {
+    expect(
+      textFor(
+        '/P <</MCID 0 >> BDC /Span <</ActualText <FEFF06270644> >> BDC /F2 12 Tf <0041> Tj EMC EMC',
+      ),
+    ).toBe('ال');
+  });
+
+  test('a reversed byte order mark swaps each unit like the span strip path does', () => {
+    expect(
+      textFor(
+        '/P <</MCID 0 >> BDC /Span <</ActualText <FFFE66006900> >> BDC /F2 12 Tf <0041> Tj EMC EMC',
+      ),
+    ).toBe('fi');
+  });
+
+  test('plain glyph text without any span still lands in the mcid', () => {
+    expect(textFor('/P <</MCID 0 >> BDC /F2 12 Tf <0042> Tj EMC')).toBe('B');
   });
 });

@@ -63,7 +63,7 @@ export function parseRoleCensus(returned: unknown): RoleElement[] {
   return out;
 }
 
-const STREAM_TOKEN = /\/(\w+)\s*<<([^<>]*)>>\s*BDC|\/(\w+)\s+[\d.]+\s+Tf|EMC|<([0-9A-Fa-f\s]*)>/g;
+const STREAM_TOKEN = /\/(\w+)\s*<<([\s\S]*?)>>\s*BDC|\/(\w+)\s+[\d.]+\s+Tf|EMC|<([0-9A-Fa-f\s]*)>/g;
 
 const ACTUAL_TEXT = /\/ActualText\s*(\((?:[^()\\]|\\.)*\)|<[0-9A-Fa-f\s]*>)/;
 
@@ -104,7 +104,7 @@ function glyphToken(
   byMcid.set(target, text);
 }
 
-function markedText(stream: string, fonts: Map<string, FontTable>): Map<number, string> {
+export function markedText(stream: string, fonts: Map<string, FontTable>): Map<number, string> {
   const byMcid = new Map<number, string>();
   const stack: MarkStack = [];
   let table: FontTable | null = null;
@@ -354,10 +354,22 @@ function shadows(gathered: Gathered, outer: number, inner: number): boolean {
   return chain !== undefined && chain.includes(outer);
 }
 
-function candidatesFor(gathered: Gathered, el: RoleElement, consumed: Set<number>): number[] {
+function candidatesFor(
+  gathered: Gathered,
+  matches: (wrapperText: string) => boolean,
+  consumed: Set<number>,
+): number[] {
   return gathered.wrappers
-    .filter((w) => w.holds && normalizedText(w.text) === el.text && !consumed.has(w.num))
+    .filter((w) => w.holds && matches(w.text) && !consumed.has(w.num))
     .map((w) => w.num);
+}
+
+function elMatch(el: RoleElement): (wrapperText: string) => boolean {
+  return (wrapperText) => normalizedText(wrapperText) === el.text;
+}
+
+function elMirrorMatch(el: RoleElement): (wrapperText: string) => boolean {
+  return (wrapperText) => [...normalizedText(wrapperText)].reverse().join('') === el.text;
 }
 
 type Match = { num: number; pure: boolean };
@@ -384,7 +396,10 @@ function censusMatch(
   const match: Array<Match | undefined> = Array.from({ length: elements.length });
   for (const [i, el] of elements.entries()) {
     if (!el.text) continue;
-    const candidates = candidatesFor(gathered, el, consumed);
+    let candidates = candidatesFor(gathered, elMatch(el), consumed);
+    if (candidates.length === 0) {
+      candidates = candidatesFor(gathered, elMirrorMatch(el), consumed);
+    }
     if (candidates.length === 0) continue;
     const chosen = candidates.length === 1 ? candidates[0] : outermostOf(candidates);
     if (chosen === undefined || !wrapperOf.has(chosen)) {

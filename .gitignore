@@ -7,3 +7,6 @@ bench-out/
 coverage/
 # Committed fuzz fixtures: generated producer outputs the gate tests pin.
 !test/data/*.pdf
+
+# A browser profile created by an unquoted template profile path, swept in once. Never again.
+[object Promise]/

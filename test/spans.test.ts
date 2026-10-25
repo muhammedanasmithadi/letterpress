@@ -176,9 +176,7 @@ test('a span body that switches fonts mid-span still resolves glyphs by their ru
   const { pdf, streamNum } = spanFixture(
     '/Span<</ActualText (fiu) >> BDC\n/F2 12 Tf\n<0676> Tj\n/F1 12 Tf\n<0055> Tj\nEMC',
   );
-  const out = stripRedundantSpans(pdf);
-  expect(out.stats).toEqual({ seen: 1, stripped: 1, kept: 0 });
-  expect(streamText(out.pdf, streamNum)).not.toMatch(/ActualText|BDC|EMC/);
+  assertStripped(pdf, streamNum);
 });
 
 test('a span whose declared text the running font contradicts is kept', () => {
@@ -188,6 +186,41 @@ test('a span whose declared text the running font contradicts is kept', () => {
   const out = stripRedundantSpans(pdf);
   expect(out.stats).toEqual({ seen: 1, stripped: 0, kept: 1 });
   expect(streamText(out.pdf, streamNum)).toContain('/ActualText');
+});
+
+function assertStripped(pdf: Uint8Array, streamNum: number): void {
+  const out = stripRedundantSpans(pdf);
+  expect(out.stats).toEqual({ seen: 1, stripped: 1, kept: 0 });
+  expect(streamText(out.pdf, streamNum)).not.toMatch(/ActualText|BDC|EMC/);
+}
+
+const hexDeclared = (declared: string): void => {
+  const { pdf, streamNum } = spanFixture(
+    `/Span<</ActualText ${declared} >> BDC\n/F2 12 Tf\n<0676> Tj\nEMC`,
+  );
+  assertStripped(pdf, streamNum);
+};
+
+test('a hex form ActualText decodes as UTF-16 and strips when the body restates it', () => {
+  hexDeclared('<00660069>');
+});
+
+test('a UTF-16 byte order mark is read instead of treated as text', () => {
+  hexDeclared('<FEFF00660069>');
+});
+
+test('a reversed byte order mark swaps each following unit', () => {
+  hexDeclared('<FFFE66006900>');
+});
+
+test('a hex ActualText whose body the ToUnicode map cannot confirm is kept byte for byte', () => {
+  const { pdf, streamNum } = spanFixture(
+    '/Span<</ActualText <FEFF0629> >> BDC\n/F1 12 Tf\n<011F> Tj\nEMC',
+  );
+  const out = stripRedundantSpans(pdf);
+  expect(out.stats).toEqual({ seen: 1, stripped: 0, kept: 1 });
+  expect(streamText(out.pdf, streamNum)).toContain('<011F> Tj');
+  expect(streamText(out.pdf, streamNum)).toContain('ActualText');
 });
 
 test('a span that restates its own font resolves through the body, not the previous run', async () => {

@@ -21,17 +21,28 @@ type SpanStats = {
 
 const EMPTY: SpanStats = { seen: 0, stripped: 0, kept: 0 };
 
-const SPAN_OPEN = /\/Span\s*<<([^<>]*)>>\s*BDC/g;
+const SPAN_OPEN = /\/Span\s*<<([\s\S]*?)>>\s*BDC/g;
 
 export function unescapePdfString(s: string): string {
-  const inner =
-    s[0] === '<'
-      ? Buffer.from(s.slice(1, -1).replace(/\s/g, ''), 'hex').toString(LATIN1)
-      : s.slice(1, -1);
-  return inner.replace(/\\([nrtbf()\\]|[0-7]{1,3})/g, (_, c: string) => {
+  if (s[0] === '<') return utf16beText(s.slice(1, -1).replace(/\s/g, ''));
+  return s.slice(1, -1).replace(/\\([nrtbf()\\]|[0-7]{1,3})/g, (_, c: string) => {
     if (c >= '0' && c <= '7') return String.fromCharCode(parseInt(c, 8));
     return { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f' }[c] ?? c;
   });
+}
+
+function utf16beText(hex: string): string {
+  if (hex.length === 0 || hex.length % 4 !== 0) {
+    return Buffer.from(hex, 'hex').toString(LATIN1);
+  }
+  const bom = hex.slice(0, 4).toUpperCase();
+  if (bom === 'FEFF') hex = hex.slice(4);
+  else if (bom === 'FFFE') hex = hex.slice(4).replace(/(..)(..)/g, (_, lo, hi) => hi + lo);
+  let out = '';
+  for (let i = 0; i + 4 <= hex.length; i += 4) {
+    out += String.fromCharCode(parseInt(hex.slice(i, i + 4), 16));
+  }
+  return out;
 }
 
 function bodyText(body: string, start: FontTable | null, fonts: Map<string, FontTable>): string {

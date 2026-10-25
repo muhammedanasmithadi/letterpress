@@ -341,13 +341,18 @@ phase before one is attempted.
   creating `LBody` struct elements and rewiring `/K` plus the ParentTree — a
   dict-level restructuring, not a byte swap.
 - **RTL text (7.21.7, ToUnicode values must be greater than zero)**: measured on a
-  2-line Arabic document — 3 glyph IDs (0010, 0013, 013C) map to U+0000 in
-  Chromium's ToUnicode CMap. The embedded font's cmap table (NotoSansArabic
-  subset, 14 entries) was parsed: those 3 glyph IDs are NOT present in the
-  cmap table, so the codepoints are genuinely lost in the subset — Chromium
-  dropped the cmap entries for those glyphs during subsetting. Recovery from
-  the PDF alone is impossible; this is a Chromium subsetting bug, not a
-  repairable gap. Honest miss.
+  single-line Arabic document — 7 glyph IDs
+  (0010, 0012, 0015, 0034, 011A, 011F, 013E) map to U+0000 in Chromium's
+  ToUnicode CMap; a mixed Arabic/Latin document shows 2 (0010, 013C). The
+  embedded subset's own cmap was parsed (NotoSansArabic, 10 316 bytes): it
+  holds 8 mappings covering gids 8–62, while the subset contains 319 glyphs.
+  The 7 zero-referenced GIDs exist as drawn glyphs — gid 0010 is below
+  numGlyphs 319 — but carry no unicode mapping anywhere in the embedded
+  file. The information is absent from the PDF, so no repair can derive it
+  from the document alone. Honest miss, measured with sound wiring (the
+  font-cmap fallback below is teeth-proven on synthetic PDFs and provably
+  cannot fire for this Chromium output). Latin-only and emoji documents
+  produce zero entries.
 - **Empty documents (`empty`, `dl-empty`)**: fail 6.2 (MarkInfo), 7.1 (structure
   hierarchy root), 7.2 (natural language for metadata). These are degenerate
   inputs with no real content; not worth repairing.
@@ -395,3 +400,97 @@ not-emitting-structure-elements (canvas, svg, form controls), a source
 document choice (7.4.2 heading sequence), or an already-recorded honest
 miss (RTL, details, empty). There is no repairable gap left in the
 structure-tree repair space.
+
+## Font-cmap fallback for zero ToUnicode entries (uncommitted work, 2026-10-25)
+
+`src/fontcmap.ts` parses the sfnt cmap of an embedded font file
+(format 4 and format 12, preferring Unicode subtables: platform 0 with
+encoding ≥ 4, platform 3 with encoding 1 or 10; format 12 beats format 4).
+`fixToUnicode` walks Type0 font → descendant CIDFont → FontDescriptor →
+FontFile2/FontFile3 → the stream, gated on `/Length1`, and feeds the parsed
+glyph→codepoint map to the zero-entry repair: a `<gid> <0000>` row whose
+glyph the font cmap knows is rewritten to the real codepoint. Gids the font
+does not know are left untouched byte for byte; faces without an embedded
+font file are left byte-identical.
+
+Corrupt-font hazards are bounded by construction: subtable-record offsets
+and format-4 array extents are bounds-checked (a truncated extent yields an
+empty map instead of a RangeError), glyph ids are capped at the 16-bit gid
+space, and the whole codepoint scan is capped at 4× the gid space
+(0x40000 scans) — a flood font of 8 000 over-full segments (the maximum the
+u16 subtable length allows) parses in the same budget as a normal font,
+measured 109 ms for the full 11-test suite. `parseFontCmap` is wrapped in a
+tripwire: any unforeseen read fault degrades to an empty map, never to a
+crash inside the render gate.
+
+Scope measured on four Chromium renders (Latin, emoji, Arabic RTL,
+mixed): the repair changes none of them — the zero GIDs are beyond the
+subset's 8-entry cmap cover, so the fallback cannot fire for Chromium
+output. It exists for third-party PDFs where the mapping survives in the
+font but ToUnicode was written or rewritten broken — the case pdf.js hits
+in the wild. Teeth: 11 unit tests over synthetic format-4/format-12 cmap fixtures
+(range mapping, glyph-array indirection, gid-0 refusal, format-12
+preference, truncated extents, past-end record offsets, hostile ranges,
+flood budgets, junk input) and 4 end-to-end tests over synthetic PDFs
+(repair fires and is idempotent and leaves the rest untouched; unknown
+glyph and missing font file stay byte-identical; format 12 recovers the
+same way). First wiring attempt folded two bugs, both caught red: the
+descriptor lookup missed the `/DescendantFonts` chain, and the FontFile2
+hop between descriptor and stream was folded into the `/Length1` gate.
+
+## Per-block TJ merge (2026-10-25)
+
+`mergeTextRuns` used to merge at stream grain: if any text block in a
+content stream was not the simple shape the rewrite understands, every
+block in that stream was refused. One Arabic ActualText block with
+diagonal `Td` moves vetoed the 19 mergeable table blocks next to it.
+Measured on raw Chromium prints (pre-pipeline): before the change,
+0 of every block total merged; after, prose 2/2, table 20/20, spans
+10/10, ligature 1/1, justified text 5/5, and the mixed-script document
+12/20 — the 8 refusals are the RTL ActualText blocks whose inner `Td`
+carries a y component, which are honestly unmergeable because TJ arrays
+can only carry horizontal compensations. Each block is verified
+independently (`replay` before, `replay` of the merged run after, glyph
+positions within 1e-4 pt), so a refusal costs that block only. Suite
+teeth: the six pipeline tests gained one — a document with both an RTL
+block and a mergeable plain block now reports `merged > 0` and
+`refused > 0` and leaves the extracted text identical (the old veto
+produced `merged = 0`).
+
+Diagnosing the first wiring attempt: the verification call passed
+`replay`'s whole `{placed, simple}` object where `sameGlyphs` wants the
+`Placed[]` projection, so every merge verified false and the new code
+refused exactly as much as the old veto. Temporary stderr tracing
+(`process.stderr.write` on refusal branches) located it inside one
+round-trip; the trace lines are gone from the committed code.
+
+## Span ActualText in hex form (2026-10-25)
+
+Chromium writes ActualText in two forms: latin for Latin ligatures
+(`/ActualText (ffi)`) and hex UTF-16BE with a FEFF byte order mark for
+Arabic (`/ActualText <FEFF0629>`). Two dead spots kept every hex-form
+span invisible: `SPAN_OPEN` captured only dicts without angle brackets
+inside (`<<([^<>]*)>>`), and `unescapePdfString` decoded hex payloads
+byte-wise as latin1, so `<FEFF0629>` became the three mojibake bytes
+`ï¿½*` rather than U+0629. `SPAN_OPEN` widened to `<<([\s\S]*?)>>`, and
+hex payloads now decode as UTF-16BE: FEFF skips one following unit, FFFE
+swaps each following unit's halfwords, unit-aligned payloads map one
+code unit at a time, and a non-multiple-of-four length falls back to the
+old latin1 byte path (odd tails do exist in third-party files).
+
+Effect measured on raw Chromium prints: Latin ligature spans are the
+same before and after (they were already visible in latin form); the
+mixed-script document's 11 RTL spans are now _seen_ — previously they
+did not even count (`seen: 0` before, `seen: 11, kept: 11` after). They
+stay kept: each resolves to a zero-row gid, so stripping the span would
+delete the reader's only recoverable text. After `fixToUnicode` runs,
+Latin ligature spans strip 8/8 through the full pipeline, and the bullet
+document's interleaving span strips 1/1. Teeth: five tests over the
+hex/BOM fixture builder (plain hex, FEFF, FFFE, kept-when-unconfirmable)
+plus the pre-existing latin contract at 14 tests in the span suite.
+
+Deferred, recorded honestly: `src/structroles.ts` has the same
+`<<([^<>]*)>>` hole in its `STREAM_TOKEN`, so the role census also
+cannot see hex-form ActualText text. Fixing it touches the role-plan
+contract and its own suite, so it is left for a measured pass of its
+own rather than riding along here.

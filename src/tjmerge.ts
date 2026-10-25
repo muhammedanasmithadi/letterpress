@@ -46,7 +46,7 @@ function cidsOf(hex: string): number[] | null {
   return out;
 }
 
-function replay(block: string, widths: Widths): { placed: Placed[]; simple: boolean } {
+export function replay(block: string, widths: Widths): { placed: Placed[]; simple: boolean } {
   const placed: Placed[] = [];
   let x = 0;
   let y = 0;
@@ -120,10 +120,6 @@ function replay(block: string, widths: Widths): { placed: Placed[]; simple: bool
   return { placed, simple };
 }
 
-function blocksOf(stream: string): string[] {
-  return [...stream.matchAll(/BT[\s\S]*?ET/g)].map((m) => m[0]);
-}
-
 type BlockAt = { text: string; from: number; to: number };
 
 function blocksAt(stream: string): BlockAt[] {
@@ -152,7 +148,7 @@ type ScanState = {
 
 type BlockScan = { items: Item[]; tf: string; size: number; tm: string };
 
-function mergeBlock(block: string, widths: Widths): string | null {
+export function mergeBlock(block: string, widths: Widths): string | null {
   const text = block.trim();
   if (!text.startsWith('BT') || !text.endsWith('ET')) return null;
   const scan = scanBlock(text);
@@ -307,16 +303,6 @@ function foldFirstTd(tm: string, dx: number): string {
   return `${m[0]} ${m[1]} ${m[2]} ${m[3]} ${Number(m[4]) + dx} ${m[5]} Tm`;
 }
 
-function streamPlaced(stream: string, widths: Widths): Placed[] | null {
-  const out: Placed[] = [];
-  for (const block of blocksOf(stream)) {
-    const { placed, simple } = replay(block, widths);
-    if (!simple) return null;
-    out.push(...placed);
-  }
-  return out;
-}
-
 function sameGlyphs(before: Placed[], after: Placed[] | null): boolean {
   if (!after || after.length !== before.length) return false;
   for (let i = 0; i < before.length; i++) {
@@ -326,7 +312,6 @@ function sameGlyphs(before: Placed[], after: Placed[] | null): boolean {
   }
   return true;
 }
-
 function decodeStream(o: Obj): { bytes: Buffer; compressed: boolean } | null {
   const dict = dictOf(o);
   const range = streamRange(o.bytes);
@@ -373,29 +358,31 @@ export function mergeTextRuns(pdf: Uint8Array): { pdf: Uint8Array; stats: MergeS
     stats.blocks += blocks.length;
     const widths = byStream.get(o.num);
     if (!widths) return o;
-    const before = streamPlaced(text, widths);
 
     const runs: Array<{ from: number; to: number; run: string }> = [];
     for (const block of blocks) {
-      const run = before ? mergeBlock(block.text, widths) : null;
-      if (run) runs.push({ from: block.from, to: block.to, run });
+      const before = replay(block.text, widths);
+      if (!before.simple) {
+        stats.refused++;
+        continue;
+      }
+      const run = mergeBlock(block.text, widths);
+      if (!run || !sameGlyphs(before.placed, replay(run, widths).placed)) {
+        stats.refused++;
+        continue;
+      }
+      runs.push({ from: block.from, to: block.to, run });
     }
+
     let rewritten = text;
     for (const r of runs.reverse()) {
       rewritten = rewritten.slice(0, r.from) + r.run + rewritten.slice(r.to);
     }
-    const merged = runs.length;
     if (rewritten === text) {
-      stats.refused += before ? blocks.length - merged : blocks.length;
+      stats.refused += runs.length;
       return o;
     }
-
-    if (!sameGlyphs(before!, streamPlaced(rewritten, widths))) {
-      stats.refused += blocks.length;
-      return o;
-    }
-
-    stats.merged += merged;
+    stats.merged += runs.length;
     changed++;
     const payload = Buffer.from(rewritten, LATIN1);
     const body = decoded.compressed ? deflateSync(payload) : payload;

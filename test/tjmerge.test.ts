@@ -119,6 +119,23 @@ describe('merging text runs', () => {
     }
   }, 300_000);
 
+  test('one unsimple block no longer vetoes the stream, and stats stay whole', async () => {
+    const html =
+      `<!doctype html><html><head><meta charset="utf-8">` +
+      `<style>body{font-family:'Noto Sans',sans-serif}</style></head><body>` +
+      `<p dir="rtl" lang="ar">مرحبا العربية</p>` +
+      `<p>The quick brown fox keeps waiting by the wrapping line.</p></body></html>`;
+    const raw = await chromiumPrint(html);
+    const beforeProf = textRunProfile(raw);
+    const out = mergeTextRuns(raw);
+    const afterProf = textRunProfile(out.pdf);
+    expect(out.stats.blocks).toBe(out.stats.merged + out.stats.refused);
+    expect([out.stats.merged, out.stats.refused]).not.toEqual([0, out.stats.blocks]);
+    expect([out.stats.merged, out.stats.refused]).not.toEqual([out.stats.blocks, 0]);
+    expect(afterProf.tj).toBeGreaterThan(beforeProf.tj);
+    expect(await pdfText(out.pdf)).toBe(await pdfText(raw));
+  }, 120_000);
+
   test('the pipeline reports what it folded and what it left alone', async () => {
     for (const [name, css, body] of DOCS) {
       const r = await render(browser, { html: page(name, css, body), author: 'tj' });

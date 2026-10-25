@@ -6,6 +6,7 @@ import { inflateSync } from 'node:zlib';
 import { Browser } from '../src/browser.ts';
 import { render } from '../src/render.ts';
 import { fixCMap, fixToUnicode, ligatureExpansion, unresolvedLigatures } from '../src/tounicode.ts';
+import { format12, format4, P0E4, P3E1, sfntWithCmap } from './sfnt.ts';
 import {
   assemblePdf,
   deflated,
@@ -71,6 +72,31 @@ const cmapOfRange = (lo: number, hi: number, base: number) =>
   `1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n` +
   `1 beginbfrange\n<${lo.toString(16).toUpperCase().padStart(4, '0')}> <${hi.toString(16).toUpperCase().padStart(4, '0')}> ` +
   `<${base.toString(16).toUpperCase().padStart(4, '0')}>\nendbfrange\nendcmap\nend\nend\n`;
+
+function pdfWithFontCmap(cmapText: string, font: Buffer): Buffer {
+  const toUnicode = deflated(cmapText);
+  const fontFile = deflated(font);
+  return assemblePdf([
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> >>',
+    { dict: `<< /Length ${toUnicode.length} /Filter /FlateDecode >>`, payload: toUnicode },
+    '<< /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+F /Encoding /Identity-H ' +
+      '/DescendantFonts [6 0 R] /ToUnicode 4 0 R >>',
+    '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /AAAAAA+F /CIDSystemInfo ' +
+      '<< /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 7 0 R >>',
+    '<< /Type /FontDescriptor /FontName /AAAAAA+F /Flags 4 /FontFile2 8 0 R >>',
+    {
+      dict: `<< /Length1 ${font.length} /Length ${fontFile.length} /Filter /FlateDecode >>`,
+      payload: fontFile,
+    },
+  ]);
+}
+
+const format4FontMapping = (gid: number, cp: number): Buffer => {
+  const delta = ((gid - cp + 0x8000) & 0xffff) - 0x8000;
+  return sfntWithCmap([P3E1(format4([[cp, cp, delta, 0]]))]);
+};
 
 describe('ligatureExpansion', () => {
   test('the seven Latin ligatures expand to their component letters', () => {
@@ -413,5 +439,50 @@ describe('rendered output', () => {
       if (!text.startsWith(`${n} 0 obj`, off)) bad++;
     }
     expect(bad).toBe(0);
+  });
+});
+
+describe('zero glyph recovery through the embedded font cmap', () => {
+  const zeroEntry = cmapOf([[0x0677, '0000']]);
+
+  test('a zero entry the font cmap knows is repaired; the rest is untouched', () => {
+    const pdf = pdfWithFontCmap(
+      cmapOf([
+        [0x0677, '0000'],
+        [0x0678, '0041'],
+      ]),
+      format4FontMapping(0x0677, 0x00e9),
+    );
+    expect(cmaps(pdf)).toHaveLength(1);
+
+    const fixed = fixToUnicode(pdf);
+    const after = cmaps(fixed);
+    expect(after).toHaveLength(1);
+    expect(after[0]).toContain('<0677> <00E9>');
+    expect(after[0]).toContain('<0678> <0041>');
+    expect(after[0]!.match(/<[0-9A-Fa-f]+> <0000>/)).toBeNull();
+
+    expect(sameBytes(fixToUnicode(fixed), fixed)).toBe(true);
+    expect(unresolvedLigatures(fixed)).toEqual([]);
+    expectSoundLengths(Buffer.from(fixed).toString(LATIN1));
+    expectSoundXref(Buffer.from(fixed).toString(LATIN1));
+  });
+
+  test('a gid the font cmap does not know stays at zero, byte for byte', () => {
+    const pdf = pdfWithFontCmap(zeroEntry, format4FontMapping(0x0688, 0x0041));
+    const fixed = fixToUnicode(pdf);
+    expect(sameBytes(fixed, pdf)).toBe(true);
+    expect(cmaps(fixed)).toEqual(cmaps(pdf));
+  });
+
+  test('a face without an embedded font file is left byte for byte', () => {
+    const pdf = pdfWithCMap(zeroEntry);
+    expect(sameBytes(fixToUnicode(pdf), pdf)).toBe(true);
+  });
+
+  test('a format 12 font cmap recovers through the same repair', () => {
+    const font = sfntWithCmap([P0E4(format12([[0x00e9, 0x00e9, 0x0677]]))]);
+    const fixed = fixToUnicode(pdfWithFontCmap(zeroEntry, font));
+    expect(cmaps(fixed)[0]).toContain('<0677> <00E9>');
   });
 });

@@ -10,3 +10,6 @@ coverage/
 
 # A browser profile created by an unquoted template profile path, swept in once. Never again.
 [object Promise]/
+
+# Generated transpiled snapshots and tool state, never source.
+.ayn/

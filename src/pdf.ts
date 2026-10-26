@@ -332,6 +332,12 @@ const RELATIVE_UNITS = [
   'ic',
 ];
 
+/**
+ * Determine the declared page orientation from HTML.
+ *
+ * @param html - The HTML content to check.
+ * @returns The declared orientation, or null if none.
+ */
 export function declaredPageOrientation(html: string): 'portrait' | 'landscape' | null {
   const declared = declaredPageSize(html);
   if (declared === null) return null;
@@ -353,6 +359,12 @@ function inchesOf(len: string): number | null {
   }
 }
 
+/**
+ * Convert a length string to inches.
+ *
+ * @param len - The length string to convert.
+ * @returns The length in inches.
+ */
 export function toInches(len: string): number {
   const raw = len.trim();
   const m = raw.match(/^(-?[\d.]+)\s*([a-z%]*)$/i);

@@ -1,3 +1,6 @@
+/**
+ * Parsed command-line options.
+ */
 export type Options = {
   input?: string;
   out?: string;
@@ -33,6 +36,9 @@ function wholeNumber(v: string): number | undefined {
   return Number(v);
 }
 
+/**
+ * The result of parsing command-line arguments.
+ */
 export type ParseResult = { opts: Options; error?: string };
 
 type Step =
@@ -292,6 +298,11 @@ export function flagsUsed(argv: string[]): string[] {
   return used;
 }
 
+/**
+ * Return the list of flag names the CLI accepts.
+ *
+ * @returns The flag names.
+ */
 export function flagNames(): string[] {
   return [...HANDLERS.keys()].filter((k) => k.startsWith('--'));
 }
@@ -332,6 +343,12 @@ function finish(opts: Options, rest: string[]): ParseResult {
   return { opts };
 }
 
+/**
+ * Parse command-line arguments into options.
+ *
+ * @param argv - The raw argument array.
+ * @returns The parsed options and any error.
+ */
 export function parseArgs(argv: string[]): ParseResult {
   const { opts, rest, error } = tokenize(argv);
   if (error) return { opts, error };

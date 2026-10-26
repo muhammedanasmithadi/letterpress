@@ -2,7 +2,7 @@
 
 The engine runs on this machine as a Bun repo. Everything it needs is
 here: the repair pipeline, the CDP driver, the audit, the CLI, the
-server, 952 tests. Nothing is published anywhere. This document states
+server, 958 tests. Nothing is published anywhere. This document states
 the packaging facts and the recommended install paths, cheapest first.
 
 ## Runtime facts that decide packaging

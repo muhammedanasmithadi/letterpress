@@ -13,7 +13,7 @@ No npm dependencies. Bun only.
 bun src/cli.ts page.html -o page.pdf
 cat page.html | bun src/cli.ts - -o page.pdf
 bun src/cli.ts https://example.com -o page.pdf      # implies --allow-network
-bun src/cli.ts --template invoice --data order.json -o invoice.pdf
+bun src/cli.ts --template invoice --data invoice.sample.json -o invoice.pdf
 bun src/cli.ts validate invoice.pdf                 # check a pdf that already exists
 bun src/cli.ts page page.html                       # explain the document's @page rules
 ```
@@ -630,15 +630,15 @@ report rather than left for the inspector.
 
 ## Templates
 
-`--list-templates` prints what is bundled. Values come from JSON:
+`--list-templates` prints what is bundled. A bundled sample data file holds a
+complete verified slot set: copy `templates/invoice.sample.json`, edit it, and
+render with `--template invoice --data invoice.sample.json`. The sample renders
+with no errors out of the box, which is what the first-run command below
+promises:
 
-```json
-{
-  "invoice_no": "2026-014",
-  "currency": "EUR",
-  "vat_rate": 0.21,
-  "items": [{ "description": "Consulting", "qty": 12, "unit": 1150 }]
-}
+```sh
+cp templates/invoice.sample.json order.json
+bun src/cli.ts --template invoice --data templates/invoice.sample.json -o invoice.pdf
 ```
 
 `{{token}}` is escaped for markup, so a value cannot inject markup. `{{{token}}}`

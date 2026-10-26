@@ -1,7 +1,6 @@
 {
   "name": "letterpress",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "scripts": {
     "test": "bun test; code=$?; tools/cleanup.sh; exit $code",
@@ -44,5 +43,12 @@
   },
   "peerDependenciesMeta": {},
   "optionalDependencies": {},
-  "description": "Render HTML to PDF through Chromium's own print engine"
+  "description": "Render HTML to PDF through Chromium's own print engine",
+  "bin": {
+    "letterpress": "src/cli.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/muhammedanasmithadi/letterpress.git"
+  }
 }

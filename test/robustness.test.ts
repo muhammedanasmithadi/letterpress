@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Browser } from '../src/browser.ts';
 import { hasRelativeAssets, parseFormat, render, stageAssets, toInches } from '../src/render.ts';
-import { invoiceTotals } from '../src/template.ts';
 import { pdfImages, pdfText } from './poppler.ts';
 import { verify } from '../src/verify.ts';
 
@@ -268,20 +267,6 @@ describe('assets reach the document without rewriting it', () => {
     expect(hasRelativeAssets('<style>@import "https://cdn.test/a.css";</style>')).toBe(false);
     expect(hasRelativeAssets('<script type="module">import x from "./x.js"</script>')).toBe(true);
     expect(hasRelativeAssets('<style>@page{size:A4}</style>')).toBe(false);
-  });
-});
-
-describe('invoice totals are checked as numbers', () => {
-  test('the totals expose raw values, not only formatted strings', () => {
-    const t = invoiceTotals([{ description: 'x', qty: 2, unit: 10 }]);
-    expect(t.totalValue).toBe(24);
-    expect(t.total).toBe('24.00');
-
-    const big = invoiceTotals([{ description: 'x', qty: 1, unit: 3_383_428.75 }], { vatRate: 0 });
-    expect(big.subtotal).toBe('3,383,428.75');
-    expect(Number(big.subtotal)).toBeNaN();
-    expect(big.subtotalValue).toBe(3_383_428.75);
-    expect(Math.abs(1 - big.subtotalValue)).toBeGreaterThan(0.005);
   });
 });
 

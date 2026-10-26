@@ -20,7 +20,7 @@ const AUDIT = String.raw`
   if (braces.length) {
     add("unfilled-placeholder", "error",
       "the document still contains " + braces.length + " template placeholder(s) such as " +
-      braces.slice(0, 4).join(", ") + ". fill them, or render through --template.");
+      braces.slice(0, 4).join(", ") + ". fill them before rendering.");
   }
 
   // ---- 2. a data file rendered as a document ---------------------------
@@ -29,7 +29,7 @@ const AUDIT = String.raw`
       document.querySelectorAll("table,img,h1,h2").length === 0) {
     add("json-rendered", "error",
       "this looks like JSON or another data file, not a document. the pdf shows the " +
-      "browser's data viewer. pass html or a .html path, or use --template with --data.");
+      "browser's data viewer. pass html or a .html path.");
   }
 
   // ---- 3. paged-media functions Chromium does not implement ------------

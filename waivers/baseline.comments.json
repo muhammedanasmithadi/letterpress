@@ -5,9 +5,9 @@
     "src/args.ts": 4,
     "src/validate.ts": 3,
     "src/render.ts": 17,
-    "src/cli.ts": 5
+    "src/cli.ts": 4
   },
-  "total": 36,
+  "total": 35,
   "literals": {
     "src/lint.ts": 142
   },

@@ -29,8 +29,7 @@ on this machine unless marked unverified.
 ## What already exists
 
 `src/render.ts` drives Chromium's own print pipeline over CDP. 57 tests green,
-typecheck clean, no npm dependencies. The CLI renders a file, stdin, a URL, or a
-JSON order through a bundled template.
+typecheck clean, no npm dependencies. The CLI renders a file, stdin, or a URL.
 
 **The renderer is finished. This plan only adds a viewer, plus three changes to
 the render API that the protocol investigation surfaced.**

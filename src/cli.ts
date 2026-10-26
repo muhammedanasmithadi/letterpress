@@ -19,23 +19,12 @@ export { flagNames, parseArgs } from './args.ts';
 /** CLI options and parse result types. */
 export type { Options, ParseResult } from './args.ts';
 import { render, type Finding, type RenderRequest, type RenderResult } from './render.ts';
-import {
-  TemplateError,
-  escapeCss,
-  invoiceTotals,
-  lines,
-  money,
-  render as fillTemplate,
-  type LineItem,
-  type TemplateData,
-} from './template.ts';
 
 const USAGE = `letterpress - render HTML to PDF through Chromium's own print engine
 
 usage
   letterpress [options] <file.html>
   cat page.html | letterpress [options] -
-  letterpress [options] --template invoice --data order.json
   letterpress [options] https://example.com   (implies --allow-network)
 
   letterpress validate <file.pdf>              check a pdf that already exists
@@ -46,9 +35,6 @@ usage
 
 options
   -o, --out <path>        output PDF (default: input name with .pdf)
-  -t, --template <name>   fill a bundled template, e.g. invoice
-      --list-templates    print the bundled template names and exit
-  -d, --data <path>       JSON data file for --template
       --format <name>     a3 a4 a5 legal letter tabloid; default is whatever
                           the document's own @page declares, and a4 when the
                           document declares nothing
@@ -208,9 +194,6 @@ function probeFor(name: ProbeName | undefined): (() => unknown) | undefined {
 }
 
 async function requestFor(opts: Options): Promise<RenderRequest> {
-  if (opts.template && opts.data) {
-    return { html: await fillBundledTemplate(opts.template, opts.data) };
-  }
   if (opts.input === '-') {
     return {
       html: await readStdin({
@@ -221,21 +204,6 @@ async function requestFor(opts: Options): Promise<RenderRequest> {
   }
   if (/^https?:\/\//i.test(opts.input!)) return { url: opts.input! };
   return { path: opts.input! };
-}
-
-async function fillBundledTemplate(template: string, dataPath: string): Promise<string> {
-  const raw = await Bun.file(dataPath).text();
-  let data: Record<string, unknown>;
-  try {
-    data = JSON.parse(raw);
-  } catch (e) {
-    throw new Error(`${dataPath} is not valid JSON: ${(e as Error).message}`);
-  }
-  const tplPath = join(import.meta.dir, '..', 'templates', `${template}.html`);
-  if (!(await Bun.file(tplPath).exists())) {
-    throw new Error(`no bundled template named "${template}". try --list-templates`);
-  }
-  return fillTemplate(await Bun.file(tplPath).text(), buildTemplateData(data));
 }
 
 function sweepAndExit(
@@ -345,12 +313,6 @@ export async function main(argv: string[]): Promise<number> {
     process.stdout.write(USAGE);
     return 0;
   }
-  if (opts.listTemplates) {
-    const names = await listTemplates();
-    process.stdout.write(names.length ? `${names.join('\n')}\n` : 'no templates bundled\n');
-    return 0;
-  }
-
   let auth: { username: string; password: string } | undefined;
   try {
     auth = parseAuth(opts.auth ?? process.env.LETTERPRESS_AUTH);
@@ -359,7 +321,7 @@ export async function main(argv: string[]): Promise<number> {
     return 2;
   }
 
-  const outPath = opts.out ?? (opts.template ? `${opts.template}.pdf` : defaultOut(opts.input!));
+  const outPath = opts.out ?? defaultOut(opts.input!);
   const profile = await mkdtemp(join(tmpdir(), 'letterpress-cli-'));
   let browser: Browser | undefined;
 
@@ -407,124 +369,6 @@ export async function main(argv: string[]): Promise<number> {
     await browser?.close();
     await rm(profile, { recursive: true, force: true }).catch(() => {});
   }
-}
-
-/**
- * List the bundled template names.
- *
- * @returns The template names.
- */
-export async function listTemplates(): Promise<string[]> {
-  const dir = join(import.meta.dir, '..', 'templates');
-  const names: string[] = [];
-  for await (const entry of new Bun.Glob('*.html').scan({ cwd: dir }))
-    names.push(entry.replace(/\.html$/, ''));
-  return names.sort();
-}
-
-function vatRateOf(data: Record<string, unknown>): number {
-  const rateInput = data.vat_rate ?? data.vatRate ?? 0.2;
-  const vatRate = Number(rateInput);
-  if (!Number.isFinite(vatRate) || vatRate < 0 || vatRate > 1) {
-    throw new TemplateError([
-      `vat_rate must be a number between 0 and 1, got ${JSON.stringify(rateInput)}. ` +
-        `use 0.2 for twenty percent.`,
-    ]);
-  }
-  return vatRate;
-}
-
-function lineItemsOf(items: Array<Record<string, unknown>>): LineItem[] {
-  const lineItems = items.map((i, at) => {
-    const qty = Number(i.qty ?? i.quantity ?? 1);
-    const unit = Number(i.unit ?? i.price ?? 0);
-
-    if (!Number.isFinite(qty) || !Number.isFinite(unit)) {
-      throw new TemplateError([
-        `items[${at}] has a qty or unit that is not a number: ` +
-          `${JSON.stringify({ qty: i.qty ?? i.quantity, unit: i.unit ?? i.price })}`,
-      ]);
-    }
-    return { description: String(i.description ?? i.item ?? ''), qty, unit };
-  });
-
-  if (!lineItems.length) {
-    throw new TemplateError([
-      'items is empty, so the invoice would print a header and a total with no ' +
-        'line items between them. pass at least one item, or check the data file.',
-    ]);
-  }
-  return lineItems;
-}
-
-function reconcileTotals(
-  data: Record<string, unknown>,
-  totals: ReturnType<typeof invoiceTotals>,
-): void {
-  for (const [key, computed] of [
-    ['subtotal', totals.subtotalValue],
-    ['vat', totals.vatValue],
-    ['total', totals.totalValue],
-  ] as const) {
-    const claimed = data[key];
-    if (claimed === undefined || claimed === null || claimed === '') continue;
-
-    const digits =
-      typeof claimed === 'number' ? String(claimed) : String(claimed).replace(/[^\d.-]/g, '');
-    const parsed = typeof claimed === 'number' ? claimed : Number(digits);
-    if (!digits.trim() || !Number.isFinite(parsed)) {
-      throw new TemplateError([
-        `${key} in the data file is ${JSON.stringify(claimed)}, which is not a number. ` +
-          `remove ${key} to let it be computed from the line items.`,
-      ]);
-    }
-    if (Math.abs(parsed - computed) > 0.005) {
-      throw new TemplateError([
-        `${key} in the data file is ${claimed}, but the line items add up to ${money(computed)}. ` +
-          `the computed figure is printed, because printing the supplied one would send a wrong total. ` +
-          `remove ${key} from the data file to let it always be computed.`,
-      ]);
-    }
-  }
-}
-
-function copyTextFields(data: Record<string, unknown>, out: TemplateData): void {
-  for (const k of ['company', 'invoice_no', 'company_secondary', 'note', 'currency']) {
-    if (typeof data[k] === 'string') out[`${k}_text`] = escapeCss(data[k] as string);
-  }
-  if (Array.isArray(data.bill_to_lines)) out.bill_to_lines = lines(data.bill_to_lines.map(String));
-  if (Array.isArray(data.company_lines)) out.company_lines = lines(data.company_lines.map(String));
-}
-
-function buildTemplateData(data: Record<string, unknown>): TemplateData {
-  const out: TemplateData = {};
-  for (const [k, v] of Object.entries(data)) out[k] = v as TemplateData[string];
-
-  const hasItems = Array.isArray(data.items) || Array.isArray(data.lines);
-
-  if (!hasItems && data.rows !== undefined) {
-    throw new TemplateError([
-      'rows is pre-built table markup and cannot be checked against a total. ' +
-        'give items instead: an array of {description, qty, unit}, and the rows, ' +
-        'subtotal, vat and total are all computed from them.',
-    ]);
-  }
-  if (hasItems) {
-    const raw = (data.items ?? data.lines) as unknown;
-    if (!Array.isArray(raw)) throw new TemplateError(['items must be an array']);
-    const items = raw as Array<Record<string, unknown>>;
-
-    const vatRate = vatRateOf(data);
-    const totals = invoiceTotals(lineItemsOf(items), {
-      vatRate,
-      currency: String(data.currency ?? 'EUR'),
-    });
-    Object.assign(out, totals);
-    reconcileTotals(data, totals);
-  }
-
-  copyTextFields(data, out);
-  return out;
 }
 
 if (import.meta.main) {

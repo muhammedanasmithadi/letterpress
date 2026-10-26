@@ -15,7 +15,7 @@ it was written rather than tidied afterwards.
 ## 1. Current state
 
 The product renders HTML to PDF through Chromium's own print engine, with a
-shell, a loopback render server, a template filler and a CLI. Roughly 5,300 lines
+shell, a loopback render server and a CLI. Roughly 5,300 lines
 of source and 6,900 of tests, no runtime dependencies, Bun 1.4 only.
 
 ### The pipeline

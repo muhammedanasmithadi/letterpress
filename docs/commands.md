@@ -11,8 +11,8 @@ checks).
 The token loop is separate from the rules about what the command as a whole
 must look like. `validate` and `page` take the same flags and mean the same
 things by them, but the rules `finish` enforces — one input, `--data` needs
-`--template`, `--margin` needs `--format` — are the render's, and a check of
-an existing PDF has no template and no HTML. Handing them the same tokens
+`--margin` needs `--format` — is the render's, and a check of
+an existing PDF has no HTML. Handing them the same tokens
 without the same verdicts is the point; copying the loop to get it was 15
 duplicated lines that would have drifted the first time a flag was added.
 
@@ -307,23 +307,3 @@ built with plain streams before the check for it was here.
 What the structure tree and the page streams say about each other is a
 navigation failure rather than a rendering one: the page looks right, and a
 reader using headings and figures cannot reach parts of it.
-
-## Template values in CSS
-
-A value for a bare CSS slot — `--accent: {{accent}}`, `size: {{paper}}` —
-needs more than HTML escaping and more than CSS escaping. Neither escapes a
-semicolon or a closing brace, so a JSON value could end the declaration and
-open a rule of its own: an invoice whose `accent` was
-
-```
-red; } body { display: none } :root { --accent: red
-```
-
-printed with no body at all, one page, exit 0, and no finding. Escaping only
-what a _string_ needs to be safe leaves the value free to leave the
-declaration.
-
-Everything outside the set a CSS value legitimately uses is backslash-escaped,
-which is what makes `;` `{` `}` `:` `"` `'` `<` `>` `@` inert. Inside a
-comment this is noise, but the invoice template already carries several and a
-backslash inside one cannot terminate the following rule.

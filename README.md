@@ -13,7 +13,6 @@ No npm dependencies. Bun only.
 bun src/cli.ts page.html -o page.pdf
 cat page.html | bun src/cli.ts - -o page.pdf
 bun src/cli.ts https://example.com -o page.pdf      # implies --allow-network
-bun src/cli.ts --template invoice --data invoice.sample.json -o invoice.pdf
 bun src/cli.ts validate invoice.pdf                 # check a pdf that already exists
 bun src/cli.ts page page.html                       # explain the document's @page rules
 ```
@@ -627,49 +626,6 @@ attributed to the element that owns it, with the CSS cause (`flex-gap`,
 `grid-gap`, `table-cell`, `space-between`, `margin`, or `unknown`) and the text
 next to it, so the eight flex or grid gaps in your document are named in the
 report rather than left for the inspector.
-
-## Templates
-
-`--list-templates` prints what is bundled. A bundled sample data file holds a
-complete verified slot set: copy `templates/invoice.sample.json`, edit it, and
-render with `--template invoice --data invoice.sample.json`. The sample renders
-with no errors out of the box, which is what the first-run command below
-promises:
-
-```sh
-cp templates/invoice.sample.json order.json
-bun src/cli.ts --template invoice --data templates/invoice.sample.json -o invoice.pdf
-```
-
-`{{token}}` is escaped for markup, so a value cannot inject markup. `{{{token}}}`
-passes HTML through untouched, for the few values that are built markup such as
-table rows.
-
-A slot inside a stylesheet needs a different escaper, because a value that cannot
-break out of an element can still break out of a declaration. Use `_css`:
-
-```html
-@page { size: {{paper_css}}; } :root { --accent: {{accent_css}}; }
-```
-
-`_css` escapes everything a CSS value does not legitimately use — including the
-semicolon and the brace that `{{token}}` leaves alone. An `accent` of
-`red; } body { display: none } :root { --accent: red` printed an invoice with no
-body at all, reported one page, and exited 0.
-
-Use `_text` for a value inside a CSS `content:` string. A CSS string does not
-decode HTML entities, so the markup escaper would be wrong there too.
-
-Totals are computed from `items`, never read from the file. If the file also
-carries a `subtotal`, `vat` or `total`, the computed figure wins and a mismatch
-is an error, because printing a supplied total would send a wrong figure to a
-customer. An empty `items` array, a non-numeric quantity, or a `vat_rate` that
-is not a number are all errors too.
-
-A line item description may not contain markup. `<script>` would hang the render
-on the dialog it opens, and `<style>body{display:none}</style>` produces a blank
-invoice that still reports success, so both are refused by name rather than
-escaped and printed.
 
 ## Development
 

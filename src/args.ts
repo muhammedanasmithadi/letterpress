@@ -4,9 +4,6 @@
 export type Options = {
   input?: string;
   out?: string;
-  template?: string;
-  data?: string;
-  listTemplates?: boolean;
   format?: Format;
   landscape: boolean;
   margin?: string;
@@ -68,21 +65,6 @@ function setHelp(opts: Options): Step {
 
 function setOut(opts: Options, argv: string[], i: number, a: string): Step {
   opts.out = valueAfter(argv, i, a);
-  return consumedValue();
-}
-
-function setTemplate(opts: Options, argv: string[], i: number, a: string): Step {
-  opts.template = valueAfter(argv, i, a);
-  return consumedValue();
-}
-
-function setListTemplates(opts: Options): Step {
-  opts.listTemplates = true;
-  return consumedFlag();
-}
-
-function setData(opts: Options, argv: string[], i: number, a: string): Step {
-  opts.data = valueAfter(argv, i, a);
   return consumedValue();
 }
 
@@ -248,11 +230,6 @@ const HANDLERS: Map<string, Handler> = new Map([
   ['--help', setHelp],
   ['-o', setOut],
   ['--out', setOut],
-  ['-t', setTemplate],
-  ['--template', setTemplate],
-  ['--list-templates', setListTemplates],
-  ['-d', setData],
-  ['--data', setData],
   ['--format', setFormat],
   ['--landscape', setLandscape],
   ['--margin', setMargin],
@@ -316,22 +293,18 @@ function applyFlag(opts: Options, argv: string[], i: number, a: string): Step {
 
 function resolveInput(opts: Options, rest: string[]): string | undefined {
   if (!rest.length) {
-    if (opts.template) return undefined;
-    return 'no input. pass a file, - for stdin, a URL, or --template with --data';
+    return 'no input. pass a file, - for stdin, or a URL';
   }
-  if (opts.template) return 'pass either an input file or --template with --data, not both';
   opts.input = rest[0] ?? '';
   if (/^https?:\/\//i.test(opts.input)) opts.allowNetwork = true;
   return undefined;
 }
 
 function finish(opts: Options, rest: string[]): ParseResult {
-  if (opts.help || opts.listTemplates) return { opts };
+  if (opts.help) return { opts };
   if (rest.length > 1) {
     return { opts, error: `expected one input, got ${rest.length}: ${rest.join(', ')}` };
   }
-  if (opts.data && !opts.template) return { opts, error: '--data needs --template' };
-  if (opts.template && !opts.data) return { opts, error: '--template needs --data' };
   const inputError = resolveInput(opts, rest);
   if (inputError) return { opts, error: inputError };
   if (opts.margin && !opts.format) {

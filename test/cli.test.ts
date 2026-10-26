@@ -188,9 +188,9 @@ test('help is help, whatever else is on the command line', async () => {
 }, 30_000);
 
 test('a subcommand refuses a flag it does not take', async () => {
-  const r = await run(['validate', '--template', 'x']);
+  const r = await run(['validate', '--margin', '10mm', 'x.pdf']);
   expect(r.code).toBe(2);
-  expect(r.stderr).toContain('validate does not take --template');
+  expect(r.stderr).toContain('validate does not take --margin');
 }, 30_000);
 
 test('a subcommand has its own help', async () => {
@@ -363,17 +363,11 @@ describe('argument parsing names the problem without launching a browser', () =>
 
   test('a missing option value throws a usage error', () => {
     expect(() => parseArgs(['-o'])).toThrow(/option -o needs a value/);
-    expect(() => parseArgs(['--template', '--json'])).toThrow(/needs a value/);
   });
 
   test('structural mistakes name the combination, not the flag', () => {
-    expect(parseArgs(['--data', 'd.json']).error).toMatch(/--data needs --template/);
-    expect(parseArgs(['--template', 'invoice']).error).toMatch(/--template needs --data/);
     expect(parseArgs(['a.html', 'b.html']).error).toMatch(/expected one input, got 2/);
     expect(parseArgs([]).error).toMatch(/no input/);
-    expect(parseArgs(['--template', 'invoice', '--data', 'd.json', 'a.html']).error).toMatch(
-      /either an input file or --template/,
-    );
     expect(parseArgs(['--margin', '15mm', 'a.html']).error).toMatch(/only applies with --format/);
   });
 

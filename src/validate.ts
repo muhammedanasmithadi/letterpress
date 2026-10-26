@@ -1,3 +1,9 @@
+/**
+ * Validate a PDF's structure tree and report findings about its accessibility.
+ *
+ * @module
+ */
+
 import type { Finding } from './findings.ts';
 import {
   inflatedStream,
@@ -28,6 +34,12 @@ const K_FORMS = /\/K\s*(\[[^\]]{0,8192}\]|\d+\s+0\s+R|\d+)(?![\d.])/g;
 const STRUCT_ROOT = /\/StructTreeRoot\s+(\d+) 0 R/;
 const SHOWS_TEXT = /T[jJ]\b/;
 
+/**
+ * Count the marked-content identifiers in a PDF and classify them as named or orphaned.
+ *
+ * @param pdf - The PDF bytes to census.
+ * @returns The census of present, named, and textless marked-content blocks.
+ */
 export function mcidCensus(pdf: Uint8Array): McidCensus {
   const parts = trySplit(pdf);
   const census: McidCensus = {
@@ -110,6 +122,12 @@ function plainStream(o: Obj): Buffer | undefined {
   return range ? o.bytes.subarray(range.start, range.end) : undefined;
 }
 
+/**
+ * Validate a PDF's structure tree and report accessibility findings.
+ *
+ * @param pdf - The PDF bytes to validate.
+ * @returns The validation result with findings and ok status.
+ */
 export function validate(pdf: Uint8Array): Validation {
   const findings: Finding[] = [];
   const text = Buffer.from(pdf).toString('latin1');

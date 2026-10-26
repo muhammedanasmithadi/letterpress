@@ -8,6 +8,12 @@ import { parseArgs, type Options, type ParseResult, type ProbeName } from './arg
 import { formatBytes, UsageError } from './report.ts';
 import { fontProbe, wideGaps } from './pageside.ts';
 
+/**
+ * Command-line interface for rendering HTML to PDF.
+ *
+ * @module
+ */
+
 export { flagNames, parseArgs } from './args.ts';
 export type { Options, ParseResult } from './args.ts';
 import { render, type Finding, type RenderRequest, type RenderResult } from './render.ts';
@@ -311,6 +317,12 @@ async function subcommand(argv: string[]): Promise<number | null> {
   return (name === 'validate' ? runValidate : runPage)(argv.slice(1));
 }
 
+/**
+ * Run the CLI with the given arguments.
+ *
+ * @param argv - The command-line arguments.
+ * @returns The exit code.
+ */
 export async function main(argv: string[]): Promise<number> {
   const sub = await subcommand(argv);
   if (sub !== null) return sub;
@@ -395,6 +407,11 @@ export async function main(argv: string[]): Promise<number> {
   }
 }
 
+/**
+ * List the bundled template names.
+ *
+ * @returns The template names.
+ */
 export async function listTemplates(): Promise<string[]> {
   const dir = join(import.meta.dir, '..', 'templates');
   const names: string[] = [];

@@ -46,8 +46,17 @@ import {
   type PdfInfo,
 } from './pdf.ts';
 
+/**
+ * Render HTML to PDF through Chromium's print engine.
+ *
+ * @module
+ */
+
 export { declaredPageOrientation, toInches } from './pdf.ts';
 
+/**
+ * The supported output formats.
+ */
 export const FORMATS = {
   a3: [11.6929, 16.5354],
   a4: [8.2677, 11.6929],
@@ -57,8 +66,17 @@ export const FORMATS = {
   tabloid: [11, 17],
 } as const;
 
+/**
+ * A supported output format.
+ */
 export type Format = keyof typeof FORMATS;
 
+/**
+ * Parse a format string into a Format value.
+ *
+ * @param value - The format string to parse.
+ * @returns The parsed format, or undefined if invalid.
+ */
 export function parseFormat(value: unknown): Format | undefined {
   if (value == null || value === '') return undefined;
   if (typeof value !== 'string') throw new Error(`format must be a string, got ${typeof value}`);
@@ -70,6 +88,12 @@ export function parseFormat(value: unknown): Format | undefined {
   return name as Format;
 }
 
+/**
+ * Validate a page-ranges string.
+ *
+ * @param value - The page ranges string to validate.
+ * @returns An error message if invalid, or null if valid.
+ */
 export function pageRangesProblem(value: string): string | null {
   const parts = value.split(',').map((p) => p.trim());
   const bad = parts.filter((p) => !/^[1-9]\d*(-[1-9]\d*)?$/.test(p));
@@ -87,6 +111,9 @@ export function pageRangesProblem(value: string): string | null {
 
 export type { Finding };
 
+/**
+ * A render request with all options.
+ */
 export type RenderRequest = {
   html?: string;
   path?: string;
@@ -126,6 +153,9 @@ export type RenderRequest = {
   preferFastPath?: boolean;
 };
 
+/**
+ * The result of a render operation.
+ */
 export type RenderResult = {
   pdf: Uint8Array;
   info: PdfInfo;
@@ -277,6 +307,13 @@ function isTeardownAbort(errorText: string | undefined): boolean {
 const SERVED_DOCUMENT = 'input.html';
 const OVERRIDE_DOCUMENT = 'override.html';
 
+/**
+ * Check whether a name is confined to a directory.
+ *
+ * @param dir - The directory to check against.
+ * @param name - The name to check.
+ * @returns True if confined.
+ */
 export function confinedTo(dir: string, name: string): boolean {
   const base = normalizeDir(dir);
   return join(base, name).startsWith(base + '/');
@@ -345,6 +382,14 @@ function* refsIn(text: string): Generator<string> {
   }
 }
 
+/**
+ * Stage assets for rendering.
+ *
+ * @param dir - The directory to stage from.
+ * @param html - The HTML content.
+ * @param findings - Findings array to append to.
+ * @returns The staged assets result.
+ */
 export async function stageAssets(
   html: string,
   source: string,
@@ -459,6 +504,12 @@ async function stageOne(state: AssetState, next: AssetPlan, insideRoot: InsideRo
   }
 }
 
+/**
+ * Perform a final structural check on the PDF.
+ *
+ * @param pdf - The PDF bytes to check.
+ * @returns A finding if the check fails, or null.
+ */
 export function finalCheckFinding(pdf: Uint8Array): Finding | null {
   const finalCheck = verify(pdf);
   if (finalCheck.ok) return null;
@@ -472,6 +523,12 @@ export function finalCheckFinding(pdf: Uint8Array): Finding | null {
   };
 }
 
+/**
+ * Check whether HTML contains relative asset references.
+ *
+ * @param html - The HTML content to check.
+ * @returns True if relative assets are found.
+ */
 export function hasRelativeAssets(html: string): boolean {
   for (const ref of refsIn(html)) {
     const clean = ref.trim().split(/[?#]/)[0];
@@ -662,10 +719,20 @@ function stampPdf(pdf: Uint8Array): Uint8Array {
   return out;
 }
 
+/**
+ * Message shown when no input is provided.
+ */
 export const EMPTY_INPUT_MESSAGE =
   'the input is empty. a 0-byte file renders as one blank page and reports success; ' +
   'check that the file has content, or that the command producing it wrote to stdout.';
 
+/**
+ * Render HTML to PDF through Chromium's print engine.
+ *
+ * @param browser - The browser instance to use.
+ * @param request - The render request with options.
+ * @returns The render result with PDF bytes and findings.
+ */
 export async function render(browser: Browser, request: RenderRequest): Promise<RenderResult> {
   const req = withPaper(request);
   const started = Bun.nanoseconds();
@@ -1668,6 +1735,12 @@ async function prepareSource(
   return { src, srcUrl, fastPath, override, outsideRoot, server };
 }
 
+/**
+ * Check for text selection fragmentation in the PDF.
+ *
+ * @param pdf - The PDF bytes to check.
+ * @returns A finding if fragmentation is detected, or null.
+ */
 export function selectionFinding(pdf: Uint8Array): Finding | null {
   const flow = textFlow(pdf);
   if (

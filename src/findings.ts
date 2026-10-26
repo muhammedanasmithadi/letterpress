@@ -1,5 +1,14 @@
 type FindingSeverity = 'error' | 'warn' | 'info';
 
+/**
+ * The finding codes letterpress emits, with their severities and summaries.
+ *
+ * @module
+ */
+
+/**
+ * A single finding emitted by the render or audit pipeline.
+ */
 export type Finding = {
   code: string;
   severity: FindingSeverity;
@@ -12,6 +21,9 @@ type FindingSpec = {
   summary: string;
 };
 
+/**
+ * The complete manifest of finding codes, severities, and one-line summaries.
+ */
 export const FINDINGS: Record<string, FindingSpec> = {
   'asset-outside-root': {
     severity: 'warn',
@@ -259,8 +271,17 @@ export const FINDINGS: Record<string, FindingSpec> = {
   },
 };
 
+/**
+ * Sorted list of all finding codes in the manifest.
+ */
 export const FINDING_CODES: string[] = Object.keys(FINDINGS).sort();
 
+/**
+ * Return the finding codes of a given severity.
+ *
+ * @param severity - The severity level to filter by.
+ * @returns The matching finding codes.
+ */
 export function codesAt(severity: FindingSeverity): string[] {
   return FINDING_CODES.filter((c) => FINDINGS[c]!.severity === severity);
 }

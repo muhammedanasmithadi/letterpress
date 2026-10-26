@@ -1,0 +1,23 @@
+{
+  "name": "@muhammedanasmithadi/letterpress",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./src/render.ts",
+    "./cli": "./src/cli.ts",
+    "./findings": "./src/findings.ts",
+    "./validate": "./src/validate.ts"
+  },
+  "publish": {
+    "include": [
+      "src/**/*.ts",
+      "viewer/**",
+      "templates/**",
+      "README.md",
+      "LICENSE"
+    ],
+    "exclude": [
+      "src/**/*.test.ts",
+      "**/*.map"
+    ]
+  }
+}

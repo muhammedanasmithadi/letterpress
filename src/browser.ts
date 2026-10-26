@@ -199,7 +199,7 @@ export class Browser {
     );
   }
 
-  get port() {
+  get port(): number {
     return this.#port;
   }
 

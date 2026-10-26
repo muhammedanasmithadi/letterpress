@@ -5,9 +5,10 @@
     "src/args.ts": 4,
     "src/validate.ts": 3,
     "src/render.ts": 17,
-    "src/cli.ts": 4
+    "src/cli.ts": 4,
+    "tools/check-version.mjs": 2
   },
-  "total": 35,
+  "total": 37,
   "literals": {
     "src/lint.ts": 142
   },

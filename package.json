@@ -21,10 +21,12 @@
     "format:check": "oxfmt --check src test tools templates viewer README.md docs",
     "spell": "cspell --no-progress --fail-fast --config cspell.yaml README.md docs/*.md",
     "ratchet": "bun tools/ratchet.mjs",
-    "check": "bun run format:check && bun run lint && bun run lint:ts && bun run spell && bun run typecheck && bun run dup && bun run ratchet && bun run comments",
+    "check": "bun run format:check && bun run lint && bun run lint:ts && bun run spell && bun run version:check && bun run typecheck && bun run dup && bun run ratchet && bun run comments",
     "coverage": "bun test --coverage --coverage-reporter=lcov && bun tools/coverage.mjs",
     "cleanup": "tools/cleanup.sh --all",
-    "comments": "bun tools/lint-comments.ts"
+    "comments": "bun tools/lint-comments.ts",
+    "version:check": "bun tools/check-version.mjs",
+    "publish:jsr": "bun run check && deno publish"
   },
   "engines": {
     "bun": ">=1.4.0"

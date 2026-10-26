@@ -259,6 +259,89 @@ export function pageSideReport(printableWidthPx: number): PageSideReport {
   };
 }
 
+export type ControlCoverage = {
+  selects: number;
+  flatControls: number;
+  canvasesWithFallback: number;
+  canvasesNamedUnpainted: number;
+};
+
+type AlphaOf = (value: string) => number;
+type BoxPaints = (st: CSSStyleDeclaration, alpha: AlphaOf) => boolean;
+type PixelsPaints = (cv: HTMLCanvasElement) => boolean;
+
+export function alphaOf(value: string): number {
+  const inner = /rgba\(([^)]+)\)/.exec(value)?.[1];
+  if (!inner) return value.includes('rgb(') ? 1 : 0;
+  const a = Number(/([\d.]+)\s*$/.exec(inner)?.[1] ?? 1);
+  return a;
+}
+
+export function paintsBoxOf(st: CSSStyleDeclaration, alpha: AlphaOf): boolean {
+  for (const side of ['top', 'right', 'bottom', 'left']) {
+    if (Number.parseFloat(st.getPropertyValue(`border-${side}-width`)) <= 0) continue;
+    const style = st.getPropertyValue(`border-${side}-style`);
+    if (style !== 'none' && style !== 'hidden') {
+      if (alpha(st.getPropertyValue(`border-${side}-color`)) > 0) return true;
+    }
+  }
+  return (
+    alpha(st.getPropertyValue('background-color')) > 0 ||
+    st.getPropertyValue('background-image') !== 'none' ||
+    st.getPropertyValue('box-shadow') !== 'none'
+  );
+}
+
+export function paintsPixels(cv: HTMLCanvasElement): boolean {
+  if (!cv.width || !cv.height) return false;
+  const ctx = cv.getContext('2d');
+  if (!ctx) return true;
+  try {
+    for (let i = 0; i < 4; i++) {
+      const y = Math.floor((i * (cv.height - 1)) / 3);
+      for (let j = 0; j < 4; j++) {
+        const x = Math.floor((j * (cv.width - 1)) / 3);
+        if ((ctx.getImageData(x, y, 1, 1).data[3] ?? 0) > 0) return true;
+      }
+    }
+  } catch {
+    return true;
+  }
+  return false;
+}
+
+export function controlCoverage(
+  alpha: AlphaOf,
+  paintsBox: BoxPaints,
+  paintsPixels: PixelsPaints,
+): ControlCoverage {
+  const visible = (el: Element): boolean => el.getClientRects().length > 0;
+  let selects = 0;
+  for (const el of Array.from(document.querySelectorAll('select'))) {
+    if (visible(el)) selects++;
+  }
+  let flatControls = 0;
+  for (const el of Array.from(
+    document.querySelectorAll('input:not([type=hidden]), textarea, button'),
+  )) {
+    if (visible(el)) flatControls++;
+  }
+  let canvasesWithFallback = 0;
+  let canvasesNamedUnpainted = 0;
+  for (const cv of Array.from(document.querySelectorAll('canvas'))) {
+    if (!visible(cv)) continue;
+    if (cv.textContent?.trim()) {
+      canvasesWithFallback++;
+      continue;
+    }
+    const name = (cv.title || cv.getAttribute('aria-label') || '').trim();
+    if (name && !(paintsBox(getComputedStyle(cv), alpha) || paintsPixels(cv))) {
+      canvasesNamedUnpainted++;
+    }
+  }
+  return { selects, flatControls, canvasesWithFallback, canvasesNamedUnpainted };
+}
+
 export function fontProbe(): Array<{ family: string; elements: number }> {
   const generic =
     /^(serif|sans-serif|monospace|cursive|fantasy|system-ui|ui-|math|emoji|fangsong|inherit|initial)$/i;

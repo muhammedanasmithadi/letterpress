@@ -489,8 +489,104 @@ document's interleaving span strips 1/1. Teeth: five tests over the
 hex/BOM fixture builder (plain hex, FEFF, FFFE, kept-when-unconfirmable)
 plus the pre-existing latin contract at 14 tests in the span suite.
 
-Deferred, recorded honestly: `src/structroles.ts` has the same
-`<<([^<>]*)>>` hole in its `STREAM_TOKEN`, so the role census also
-cannot see hex-form ActualText text. Fixing it touches the role-plan
-contract and its own suite, so it is left for a measured pass of its
-own rather than riding along here.
+Follow-up pass, landed 2026-10-26: `src/structroles.ts` had the same
+`<<([^<>]*)>>` hole in its `STREAM_TOKEN`, and the fix turned out to be
+two layers, each measured. Layer one widened the dict capture to
+`<<([\s\S]*?)>>` so the role census sees hex-form ActualText at all --
+the dict's `<FEFF...>` payload had been falling through to the
+glyph-token alternative and being reinterpreted as content (a stray `A`
+landed in MCID text on a latin fixture whose body glyph was `<0041>`),
+while the declared Arabic never reached the walk. `markedText` is now
+exported so the assembler can be probed directly: five unit tests pin
+the declared text flowing into the MCID (plain hex, UTF-16 units,
+FEFF, FFFE), dict nesting tolerance, and the untouched plain-glyph
+path. The hex decode itself is shared from `spans.ts`
+(`unescapePdfString` with its UTF-16BE rules), so there is one decode
+rule, not two.
+
+Layer two is order. Chromium emits RTL runs as ActualText spans in
+visual order: the declared text that now reaches an MCID is the
+logical string reversed (`مرحبا` assembles as `ابحرم`, `مشروع صغير` as
+`ريغص عورشم` -- chars reversed, word order kept). The census compares
+DOM-logical text against PDF-assembled text, so every RTL landmark
+still refused after layer one. `censusMatch` now matches in two
+passes: direct equality first, and only when nothing matched directly,
+a mirror pass that compares the census row against the reversed
+normalized wrapper text. The fallback cannot rewrite a match that
+would have happened, cannot fire when a direct candidate exists, and a
+mirror collision lands in the existing ambiguity guard (refuse), never
+a wrong retag. Measured end to end through the render pipeline with
+the real browser census: RTL `nav` and `section` both retag to `Sect`
+(zero before), an LTR landmark retags identically, and the
+six-standard-tags LTR suite stays 10/10. The RTL `dl` still refuses:
+its dt/dd blocks assemble in segment orders that whole-string
+mirroring cannot reconcile, and recovering it means bidi inference
+across blocks -- out of scope, refused honestly.
+
+## Graphics, controls, and language at the source seam (2026-10-26)
+
+Question: does the printer drop these elements because the source
+carries no name, or does it drop names the source did carry? Probed
+with raw CDP prints (`Page.printToPDF` with `generateTaggedPDF`,
+`preferCSSPageSize`) across variant documents, tag tree read back by
+enumerating `/Type /StructElem` objects. Chromium 154, before any of
+this repo's repair passes.
+
+The one mechanism that governs everything: **an element that paints
+nothing emits nothing.** A canvas or svg whose visible box paints no
+opaque pixels (no border, no background, no drawn raster) leaves only
+a `NonStruct` in the tree; its declared name is never emitted. Giving
+the box a visible paint -- a 1px `#999` border is enough -- and the
+declared name flows: `Figure` with `/Alt` from `title`, from
+`aria-label`, or from svg `<title>`, all three measured. A
+transparent border paints nothing and changes nothing, so the drop is
+about painted pixels, not about element geometry.
+
+Per class, the verdicts:
+
+- **svg `<title>`**: closes when the svg paints. Same paint rule as
+  canvas; an svg with painted content (`<rect fill>` etc.) usually
+  qualifies on its own.
+- **canvas with fallback content**: closes at nothing. The fallback
+  words make chromium emit the canvas as a container, and the
+  container path drops any declared name: with `title`, with
+  `aria-label`, painted or not, the canvas stays unnamed (`NonStruct`,
+  or a bare `Figure` with no `Alt` when `role=img` is added). Restating
+  the fallback as an attribute was the preflight hypothesis of this
+  experiment and the measurement kills it.
+- **canvas without fallback, with a declared name**: closes when the
+  canvas paints. Border or background or script-drawn pixels plus
+  `title` or `aria-label` gives `Figure /Alt`; identical markup with no
+  paint gives a bare `NonStruct` and the name is lost.
+- **canvas without any name**: never a `Figure`. Painted and unnamed
+  canvas emits `NonStruct`, painted and unnamed svg emits a nameless
+  `Figure`. Canvas refuses harder than svg here.
+- **`figcaption`**: produces a `Caption` struct element and names the
+  figure at the figure level even while the canvas inside stays
+  unnamed. This is the measured rescue for the fallback case: name the
+  graphic from outside.
+- **per-element `lang`**: flows through as element-wise `/Lang` on each
+  struct element; `<html lang>` only stamps the root. Nothing to fix;
+  the source attribute is the whole lever.
+- **`select`**: a total void -- plain, multiple, sized, optgroup and
+  labeled variants all emit zero structure. Labels around a select
+  become wrapped `NonStruct` pairs. No source-side restatement closes
+  this.
+- **other form controls** (`input`, `textarea`, `button`): each emits a
+  `Form` struct element, but the pdf carries no widget annotations at
+  all (`/Annots` zero, `/FT` zero across every probe) -- controls do
+  not become fillable fields, they print as drawings.
+- **`img alt`**: `Figure /Alt` -- the benchmark shape that canvas
+  reaches only when it paints and carries a name.
+
+What shipped instead of a rewriting pass: four author findings in the
+pageside report, each with the measured rule in its message --
+`select-untagged`, `form-fields-static`, `canvas-fallback-unnamed`
+(fallback content drops the declared name; name the graphic with a
+figure + figcaption), and `canvas-unpainted` (a declared name only
+survives if the canvas paints; a border, background, or drawn pixels
+is enough). The paint check reads computed style (border/background/
+shadow/outline with opaque color) plus a row-sampled `getImageData`
+alpha check for script-drawn canvases; hidden canvases are skipped, a
+tainted or context-less canvas counts as painted, and canvases with
+fallback content are counted by one finding and skipped by the other.

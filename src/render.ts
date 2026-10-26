@@ -9,11 +9,16 @@ import { fixRedundantFigures, redundantFigureCount } from './figrole.ts';
 import { textFlow } from './selection.ts';
 import { mergeTextRuns } from './tjmerge.ts';
 import {
+  alphaOf,
   applyImageReplacements,
+  controlCoverage,
   fontProbe,
   measureImages,
   pageSideReport,
+  paintsBoxOf,
+  paintsPixels,
   roleCensus,
+  type ControlCoverage,
   type PageSideReport,
 } from './pageside.ts';
 import type { Finding } from './findings.ts';
@@ -728,14 +733,24 @@ export async function render(browser: Browser, request: RenderRequest): Promise<
       const declaresPaper = await probeDeclaresPaper(tab, src.html, req, timeoutMs);
 
       const printableWidth = printableWidthPx(req, src.html);
-      const report = await tab
+      const pageReportRaw = tab
         .send(
           'Runtime.evaluate',
           { expression: `(${pageSideReport})(${printableWidth})`, returnByValue: true },
           timeoutMs,
         )
         .then((r: { result?: { value?: PageSideReport } }) => r.result?.value);
-      const checked = checkedReport(report);
+      const coverRaw = tab
+        .send(
+          'Runtime.evaluate',
+          {
+            expression: `(${controlCoverage})(${alphaOf},${paintsBoxOf},${paintsPixels})`,
+            returnByValue: true,
+          },
+          timeoutMs,
+        )
+        .then((r: { result?: { value?: ControlCoverage } }) => r.result?.value as ControlCoverage);
+      const checked = checkedReport(await pageReportRaw, await coverRaw);
       if (checked) findings.push(...pageSideFindings(checked, printableWidth));
       findings.push(...scriptErrorFindings(alive.errors()));
       findings.push(...(await fontFindings(tab, timeoutMs)));
@@ -945,7 +960,10 @@ function pushFinding(findings: Finding[], finding: Finding | null): void {
   if (finding) findings.push(finding);
 }
 
-function pageSideFindings(report: PageSideReport, printableWidthPx: number): Finding[] {
+function pageSideFindings(
+  report: PageSideReport & ControlCoverage,
+  printableWidthPx: number,
+): Finding[] {
   const out: Finding[] = [];
 
   if (report.imagesWithoutAlt > 0) {
@@ -983,6 +1001,60 @@ function pageSideFindings(report: PageSideReport, printableWidthPx: number): Fin
         `empty figure gets no element at all. give the figure a figcaption, or describe the image with alt.`,
     });
   }
+  if (report.selects > 0) {
+    out.push({
+      code: 'select-untagged',
+      severity: 'warn',
+      message:
+        `${report.selects} select element${report.selects === 1 ? '' : 's'} print with no tag ` +
+        `in the structure tree -- measured across plain, multiple, sized, optgroup, and ` +
+        `labeled selects, chromium tags none of them, so the option names never reach a ` +
+        `screen reader in the pdf. lay the choices out as visible text, a list or a ` +
+        `definition list, when the pdf is the deliverable.`,
+    });
+  }
+  if (report.flatControls > 0) {
+    out.push({
+      code: 'form-fields-static',
+      severity: 'warn',
+      message:
+        `${report.flatControls} form control${report.flatControls === 1 ? '' : 's'} print as ` +
+        `static drawings: the pdf carries no widget annotations, so nothing is fillable, ` +
+        `nothing validates, and no tooltip survives. the printed appearance is faithful, ` +
+        `but treat the pdf as a picture of the form.`,
+    });
+  }
+  if (report.canvasesWithFallback > 0) {
+    const carry =
+      report.canvasesWithFallback === 1
+        ? '1 canvas element carries'
+        : `${report.canvasesWithFallback} canvas elements carry`;
+    out.push({
+      code: 'canvas-fallback-unnamed',
+      severity: 'warn',
+      message:
+        `${carry} fallback content, which chromium prints as unnamed structure and it drops ` +
+        `the canvas's declared name over it -- measured with title and aria-label, painted ` +
+        `and not. name the graphic from the outside instead: wrap the canvas in a figure and ` +
+        `give the figure a figcaption, or keep the fallback words as visible prose outside ` +
+        `the canvas.`,
+    });
+  }
+  if (report.canvasesNamedUnpainted > 0) {
+    const declared =
+      report.canvasesNamedUnpainted === 1
+        ? '1 canvas element declares'
+        : `${report.canvasesNamedUnpainted} canvas elements declare`;
+    out.push({
+      code: 'canvas-unpainted',
+      severity: 'warn',
+      message:
+        `${declared} a name but paints nothing: chromium emits no figure for an unpainted ` +
+        `canvas, so the declared name is dropped unless the page has drawn pixels into it. ` +
+        `give the canvas something to paint, a visible border, background, shadow, or ` +
+        `script-drawn content, or name it from the outside with a figcaption.`,
+    });
+  }
   if (printableWidthPx > 0 && report.overflowing.length > 0) {
     const widest = Math.max(...report.overflowing.map((o) => o.widthPx));
     const named = report.overflowing
@@ -1003,7 +1075,10 @@ function pageSideFindings(report: PageSideReport, printableWidthPx: number): Fin
   return out;
 }
 
-function checkedReport(report: PageSideReport | undefined): PageSideReport | undefined {
+function checkedReport(
+  report: PageSideReport | undefined,
+  cover: ControlCoverage | undefined,
+): (PageSideReport & ControlCoverage) | undefined {
   if (!report || typeof report !== 'object') return undefined;
   const count = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
   const overflowing = Array.isArray(report.overflowing)
@@ -1018,6 +1093,10 @@ function checkedReport(report: PageSideReport | undefined): PageSideReport | und
     imagesDecorative: count(report.imagesDecorative),
     figuresWithoutCaption: count(report.figuresWithoutCaption),
     overflowing,
+    selects: count(cover?.selects),
+    flatControls: count(cover?.flatControls),
+    canvasesWithFallback: count(cover?.canvasesWithFallback),
+    canvasesNamedUnpainted: count(cover?.canvasesNamedUnpainted),
   };
 }
 

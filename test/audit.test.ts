@@ -720,10 +720,57 @@ describe('what the page said about itself', () => {
       'content-overflows-page',
       'lang-undeclared',
       'js-error',
+      'select-untagged',
+      'form-fields-static',
+      'canvas-fallback-unnamed',
+      'canvas-unpainted',
     ]) {
       expect(found, code).not.toContain(code);
     }
   }, 60_000);
+
+  test('a select prints with no tag at all and is reported', async () => {
+    expect(await one('<select><option>one</option></select>')).toContain('select-untagged');
+    expect(
+      await one('<label for="s">pick</label><select id="s" multiple><option>one</option></select>'),
+    ).toContain('select-untagged');
+    expect(await one('<p>no control here</p>')).not.toContain('select-untagged');
+  }, 90_000);
+
+  test('visible form controls print static and are reported, hidden inputs are not', async () => {
+    expect(await one('<form><input type="text"><button>go</button></form>')).toContain(
+      'form-fields-static',
+    );
+    expect(await one('<form><input type="hidden" name="h"><p>t</p></form>')).not.toContain(
+      'form-fields-static',
+    );
+    expect(await one('<p>no controls</p>')).not.toContain('form-fields-static');
+  }, 90_000);
+
+  test('a canvas with fallback content is reported, painted and unpainted alike', async () => {
+    expect(
+      await one('<canvas width="80" height="50">chart words hidden here</canvas><p>t</p>'),
+    ).toContain('canvas-fallback-unnamed');
+    expect(
+      await one(
+        '<canvas width="80" height="50" title="chart">chart words hidden here</canvas><p>t</p>',
+      ),
+    ).toContain('canvas-fallback-unnamed');
+  }, 90_000);
+
+  test('a named canvas that paints nothing loses its name and is reported, a painted one is not', async () => {
+    expect(await one('<canvas width="80" height="50" title="chart"></canvas><p>t</p>')).toContain(
+      'canvas-unpainted',
+    );
+    expect(
+      await one('<canvas width="80" height="50" aria-label="chart"></canvas><p>t</p>'),
+    ).toContain('canvas-unpainted');
+    expect(
+      await one(
+        '<canvas width="80" height="50" title="chart" style="border:1px solid #999"></canvas><p>t</p>',
+      ),
+    ).not.toContain('canvas-unpainted');
+  }, 90_000);
 
   test('an image with no alt is reported, an empty one separately', async () => {
     expect(await one(`<img src="${PNG}">`)).toContain('missing-alt');

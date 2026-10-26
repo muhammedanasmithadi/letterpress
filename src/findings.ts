@@ -32,6 +32,16 @@ export const FINDINGS: Record<string, FindingSpec> = {
     summary:
       'the document checks stopped part way; findings above the failure were measured, the rest were not',
   },
+  'canvas-fallback-unnamed': {
+    severity: 'warn',
+    summary:
+      'canvas fallback content prints as unnamed structure and drops the declared name over it; name the graphic with a figure and figcaption',
+  },
+  'canvas-unpainted': {
+    severity: 'warn',
+    summary:
+      'a named canvas that paints nothing emits no figure, so its declared name is dropped; border, background, shadow, or drawn pixels are enough to carry it',
+  },
   'content-overflows-page': {
     severity: 'warn',
     summary: 'an element is wider than the printable area, measured in screen layout',
@@ -68,6 +78,11 @@ export const FINDINGS: Record<string, FindingSpec> = {
     severity: 'warn',
     summary:
       'a font descriptor still carries a negative cap height, which a viewer may refuse to render text over',
+  },
+  'form-fields-static': {
+    severity: 'warn',
+    summary:
+      'visible form controls print as static drawings: no widget annotations, nothing fillable; the pdf is a picture of the form',
   },
   'glyphs-skipped': {
     severity: 'info',
@@ -190,6 +205,11 @@ export const FINDINGS: Record<string, FindingSpec> = {
     severity: 'warn',
     summary:
       "the document's JavaScript did not run because `--no-script` was given; anything the document computes at load time is absent from the PDF",
+  },
+  'select-untagged': {
+    severity: 'warn',
+    summary:
+      'select elements print with no tag at all, so option names never reach a screen reader; lay the choices out as visible text',
   },
   'selection-fragmented': {
     severity: 'warn',

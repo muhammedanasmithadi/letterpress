@@ -282,7 +282,7 @@ export function confinedTo(dir: string, name: string): boolean {
   return join(base, name).startsWith(base + '/');
 }
 
-export function normalizeDir(dir: string): string {
+function normalizeDir(dir: string): string {
   return resolve(dir);
 }
 

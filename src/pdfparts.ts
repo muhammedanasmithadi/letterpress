@@ -50,7 +50,7 @@ export function isEncrypted(pdf: Uint8Array): boolean {
   return /\/Encrypt\b/.test(maskStrings(trailer));
 }
 
-export function findTrailer(text: Buffer | string): number {
+function findTrailer(text: Buffer | string): number {
   const source = typeof text === 'string' ? text : text.toString(LATIN1);
   const m = /(?:^|\n)[ \t]*trailer[ \t]*(?:\r?\n|$)/.exec(source);
   return m ? m.index : -1;

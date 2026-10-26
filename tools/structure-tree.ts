@@ -4,7 +4,7 @@ import { dictOf, inflatedStream, trySplit } from '../src/pdfparts.ts';
 
 const K_FORMS = /\/K\s*(\[[\s\S]*?\]|\d+\s+0\s+R|\d+)(?![\d.])/g;
 
-export function structureTree(pdf: Uint8Array): string[] {
+function structureTree(pdf: Uint8Array): string[] {
   const parts = trySplit(pdf);
   if (!parts) return ['not a linear pdf'];
   const byNum = new Map(parts.objs.map((o) => [o.num, o]));
@@ -58,7 +58,7 @@ export function structureTree(pdf: Uint8Array): string[] {
   return lines;
 }
 
-export function markedContent(pdf: Uint8Array): string[] {
+function markedContent(pdf: Uint8Array): string[] {
   const parts = trySplit(pdf);
   if (!parts) return [];
   const byNum = new Map(parts.objs.map((o) => [o.num, o]));

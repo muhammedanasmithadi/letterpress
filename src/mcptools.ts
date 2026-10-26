@@ -150,7 +150,7 @@ const FINDINGS_SCHEMA = {
   },
 } as const;
 
-export type Tool = {
+type Tool = {
   name: string;
   title: string;
   description: string;

@@ -165,7 +165,7 @@ function fixRanges(cmap: string): string | undefined {
   return hit ? out : undefined;
 }
 
-export function fixCMapBoth(cmap: string): string | undefined {
+function fixCMapBoth(cmap: string): string | undefined {
   const ranged = fixRanges(cmap);
   const chars = fixCMap(ranged ?? cmap);
   if (ranged === undefined && chars === undefined) return undefined;
@@ -269,7 +269,7 @@ export function fixToUnicode(pdf: Uint8Array): Uint8Array {
   return join(parts.head, objs, parts.trailer);
 }
 
-export class ToUnicodeMap {
+class ToUnicodeMap {
   private map: Map<number, number>;
   private fontCmap: Map<number, number> | null;
 

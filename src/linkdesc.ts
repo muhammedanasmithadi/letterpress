@@ -61,7 +61,7 @@ export function linkAnnotations(parts: Parts, linkNum: number): number[] {
   return out;
 }
 
-export type LinkDescPairing = {
+type LinkDescPairing = {
   ok: boolean;
   why: 'paired' | 'none' | 'encrypted' | 'unreadable' | 'count';
   links: number;

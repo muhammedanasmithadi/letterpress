@@ -14,7 +14,7 @@ async function withPdf<T>(bytes: Uint8Array, fn: (path: string) => Promise<T>): 
   }
 }
 
-export type PopplerInfo = {
+type PopplerInfo = {
   pages: number;
   pageSize: string;
   encrypted: boolean;
@@ -50,7 +50,7 @@ export async function pdfFonts(bytes: Uint8Array): Promise<string> {
   return withPdf(bytes, async (path) => await Bun.$`pdffonts ${path}`.quiet().text());
 }
 
-export type PdfWord = { xMin: number; yMin: number; xMax: number; yMax: number; text: string };
+type PdfWord = { xMin: number; yMin: number; xMax: number; yMax: number; text: string };
 
 export async function pdfWords(bytes: Uint8Array): Promise<PdfWord[]> {
   const xml = await withPdf(bytes, async (path) => {
@@ -71,7 +71,7 @@ export async function pdfWords(bytes: Uint8Array): Promise<PdfWord[]> {
   }));
 }
 
-export type PdfImage = { page: number; type: string; width: number; height: number };
+type PdfImage = { page: number; type: string; width: number; height: number };
 
 export async function pdfImages(bytes: Uint8Array): Promise<PdfImage[]> {
   return withPdf(bytes, async (path) => {

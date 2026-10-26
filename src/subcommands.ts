@@ -117,7 +117,7 @@ export async function runPage(argv: string[]): Promise<number> {
   return 0;
 }
 
-export type PageAnalysis = {
+type PageAnalysis = {
   path: string;
   declared: {
     size: string | null;

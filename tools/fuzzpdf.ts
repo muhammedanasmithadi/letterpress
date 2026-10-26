@@ -23,7 +23,7 @@ export const REPAIRS: Repair[] = [
   { name: 'setDocTitle', run: (p) => setDocTitle(p, 'Fuzz') },
 ];
 
-export type ExoticKind = 'linearized' | 'encrypted';
+type ExoticKind = 'linearized' | 'encrypted';
 export type ExoticFile = { kind: ExoticKind; detail: string; bytes: Uint8Array };
 
 export async function ghostscriptOk(): Promise<boolean> {
@@ -93,7 +93,7 @@ export async function exoticCorpus(bases: Uint8Array[], dir: string): Promise<Ex
   return out;
 }
 
-export type ExoticResult = { file: ExoticFile; failures: string[]; notes: string[] };
+type ExoticResult = { file: ExoticFile; failures: string[]; notes: string[] };
 
 export function fuzzExoticFile(file: ExoticFile, repairs: Repair[] = REPAIRS): ExoticResult {
   const failures: string[] = [];
@@ -121,7 +121,7 @@ export function fuzzExoticFile(file: ExoticFile, repairs: Repair[] = REPAIRS): E
   return { file, failures, notes };
 }
 
-export type MutantFailure = {
+type MutantFailure = {
   seed: number;
   index: number;
   repair: string;

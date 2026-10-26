@@ -5,7 +5,7 @@ import { $ } from 'bun';
 const VERA_PDF =
   process.env.VERA_PDF ?? join(process.env.HOME ?? '~', '.local', 'share', 'verapdf', 'verapdf');
 
-export type RuleFailure = {
+type RuleFailure = {
   clause: string;
   testNumber: string;
   description: string;
@@ -14,7 +14,7 @@ export type RuleFailure = {
   contexts: string[];
 };
 
-export type Conformance = {
+type Conformance = {
   file: string;
   profile: string;
   conforms: boolean;

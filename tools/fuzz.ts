@@ -4,7 +4,7 @@ import { render } from '../src/render.ts';
 import { verify } from '../src/verify.ts';
 import type { Finding } from '../src/render.ts';
 
-export type FuzzFailure = {
+type FuzzFailure = {
   seed: number;
   index: number;
   html: string;
@@ -12,7 +12,7 @@ export type FuzzFailure = {
   reason: string;
 };
 
-export type FuzzResult = {
+type FuzzResult = {
   seed: number;
   index: number;
   ok: boolean;
@@ -229,7 +229,7 @@ export async function fuzzOne(
   };
 }
 
-export async function shrink(
+async function shrink(
   browser: Browser,
   seed: number,
   index: number,

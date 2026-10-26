@@ -14,7 +14,7 @@ import { unescapePdfString } from './spans.ts';
 
 export type RoleElement = { tag: string; text: string; owner: number };
 
-export type RolePlanEntry = { tag: string; role: string; num: number };
+type RolePlanEntry = { tag: string; role: string; num: number };
 
 export type RolePlan = {
   entries: RolePlanEntry[];

@@ -46,7 +46,7 @@ function cidsOf(hex: string): number[] | null {
   return out;
 }
 
-export function replay(block: string, widths: Widths): { placed: Placed[]; simple: boolean } {
+function replay(block: string, widths: Widths): { placed: Placed[]; simple: boolean } {
   const placed: Placed[] = [];
   let x = 0;
   let y = 0;
@@ -148,7 +148,7 @@ type ScanState = {
 
 type BlockScan = { items: Item[]; tf: string; size: number; tm: string };
 
-export function mergeBlock(block: string, widths: Widths): string | null {
+function mergeBlock(block: string, widths: Widths): string | null {
   const text = block.trim();
   if (!text.startsWith('BT') || !text.endsWith('ET')) return null;
   const scan = scanBlock(text);

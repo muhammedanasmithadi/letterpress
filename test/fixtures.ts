@@ -10,7 +10,7 @@ export function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
-export type PdfObj = string | { dict: string; payload: Buffer };
+type PdfObj = string | { dict: string; payload: Buffer };
 
 export function assemblePdf(
   objs: PdfObj[],

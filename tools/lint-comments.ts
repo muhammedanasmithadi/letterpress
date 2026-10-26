@@ -7,7 +7,7 @@ const BASELINE = new URL('../waivers/baseline.comments.json', import.meta.url);
 const ROOTS = ['src', 'test', 'viewer', 'tools'];
 const EXT = new Set(['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs']);
 
-export const DIRECTIVE =
+const DIRECTIVE =
   /(?:\/\/|\/\*)\s*(?:noqa\b|eslint-disable|eslint-enable|oxlint-disable(?:-next-line|-line)?|prettier-ignore|@ts-|nosemgrep|cspell:|istanbul\s+ignore|v8\s+ignore|c8\s+ignore|go:|fmt:|isort:|#\s*(?:noqa|pragma|type:|fmt:|isort:))/;
 
 function files(dir: string): string[] {

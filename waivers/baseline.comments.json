@@ -1,11 +1,13 @@
 {
   "files": {
     "src/findings.ts": 5,
-    "src/cli.ts": 3,
+    "src/pdf.ts": 2,
+    "src/args.ts": 4,
     "src/validate.ts": 3,
-    "src/render.ts": 14
+    "src/render.ts": 17,
+    "src/cli.ts": 5
   },
-  "total": 25,
+  "total": 36,
   "literals": {
     "src/lint.ts": 142
   },

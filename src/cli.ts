@@ -14,7 +14,9 @@ import { fontProbe, wideGaps } from './pageside.ts';
  * @module
  */
 
+/** CLI flag names and argument parser. */
 export { flagNames, parseArgs } from './args.ts';
+/** CLI options and parse result types. */
 export type { Options, ParseResult } from './args.ts';
 import { render, type Finding, type RenderRequest, type RenderResult } from './render.ts';
 import {

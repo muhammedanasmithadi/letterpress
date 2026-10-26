@@ -52,6 +52,7 @@ import {
  * @module
  */
 
+/** Declared page orientation and inch conversion utilities. */
 export { declaredPageOrientation, toInches } from './pdf.ts';
 
 /**
@@ -109,6 +110,8 @@ export function pageRangesProblem(value: string): string | null {
   return null;
 }
 
+/** A finding emitted by the render or audit pipeline. */
+/** A finding emitted by the render or audit pipeline. */
 export type { Finding };
 
 /**

@@ -21,20 +21,33 @@ type McidCensus = {
   present: string[];
   named: Set<string>;
   role: Map<string, string>;
+  textless: Set<string>;
 };
 
 const K_FORMS = /\/K\s*(\[[^\]]{0,8192}\]|\d+\s+0\s+R|\d+)(?![\d.])/g;
 const STRUCT_ROOT = /\/StructTreeRoot\s+(\d+) 0 R/;
+const SHOWS_TEXT = /T[jJ]\b/;
 
 export function mcidCensus(pdf: Uint8Array): McidCensus {
   const parts = trySplit(pdf);
-  const census: McidCensus = { present: [], named: new Set(), role: new Map() };
+  const census: McidCensus = {
+    present: [],
+    named: new Set(),
+    role: new Map(),
+    textless: new Set(),
+  };
   if (!parts) return census;
 
   for (const o of parts.objs) {
     const body = pageContent(parts, o);
     if (!body) continue;
-    for (const m of body.matchAll(/\/MCID\s+(\d+)/g)) census.present.push(m[1]!);
+    const marks = [...body.matchAll(/\/MCID\s+(\d+)/g)].sort((a, b) => a.index! - b.index!);
+    marks.forEach((m, i) => {
+      const id = m[1]!;
+      census.present.push(id);
+      const next = marks[i + 1]?.index ?? body.length;
+      if (!SHOWS_TEXT.test(body.slice(m.index!, next))) census.textless.add(id);
+    });
   }
 
   let rootNum: number | undefined;
@@ -176,7 +189,7 @@ function structureFindings(pdf: Uint8Array, text: string): Finding[] {
 
   const census = mcidCensus(pdf);
   const out: Finding[] = [];
-  const orphans = census.present.filter((m) => !census.named.has(m));
+  const orphans = census.present.filter((m) => !census.named.has(m) && !census.textless.has(m));
   const present = new Set(census.present);
   const ghosts = [...census.named].filter((m) => !present.has(m));
 

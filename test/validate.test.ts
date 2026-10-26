@@ -5,10 +5,17 @@ import { mcidCensus, validate } from '../src/validate.ts';
 import { assemblePdf, encryptedFixture } from './fixtures.ts';
 import { launchTestBrowser, closeTestBrowser } from './browser.ts';
 
-function fixture(opts: { stream: number[]; named: number[]; tagged?: boolean }): Uint8Array {
-  const content = opts.stream
-    .map((m) => `/P << /MCID ${m} /S /P >> BDC BT (x) Tj ET EMC`)
-    .join('\n');
+function fixture(opts: {
+  stream: number[];
+  named: number[];
+  tagged?: boolean;
+  paintless?: number[];
+}): Uint8Array {
+  const textBlocks = opts.stream.map((m) => `/P << /MCID ${m} /S /P >> BDC BT (x) Tj ET EMC`);
+  const paintBlocks = (opts.paintless ?? []).map(
+    (m) => `/P << /MCID ${m} /S /P >> BDC 0 1 2 re f EMC`,
+  );
+  const content = [...textBlocks, ...paintBlocks].join('\n');
   const objs: Array<string | { dict: string; payload: Buffer }> = [
     `<< /Type /Catalog /Pages 2 0 R${opts.tagged === false ? '' : ' /StructTreeRoot 6 0 R'} >>`,
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
@@ -47,6 +54,17 @@ describe('checking a pdf that already exists', () => {
     expect(f).toBeDefined();
     expect(f!.severity).toBe('warn');
     expect(f!.message).toContain('5');
+  });
+
+  test('painted-only blocks are not a reading gap and are not counted as orphans', () => {
+    expect(
+      validate(fixture({ stream: [0], named: [0], paintless: [7] })).findings.find(
+        (x) => x.code === 'structure-orphan-mcid',
+      ),
+    ).toBeUndefined();
+    const census = mcidCensus(fixture({ stream: [0], named: [0], paintless: [7] }));
+    expect(census.present).toEqual(['0', '7']);
+    expect([...census.textless]).toEqual(['7']);
   });
 
   test('a block the tree names that is not in any stream is reported', () => {

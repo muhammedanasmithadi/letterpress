@@ -154,19 +154,52 @@ function declaredPageProp(html: string, prop: string): string | null {
 export function stripPageSize(html: string): string {
   return html.replace(/(<style\b[^>]*>)([\s\S]*?)(<\/style\s*>|$)/gi, (whole, tag, css, end) => {
     if (!/@page/i.test(css)) return whole;
-    const stripped = css.replace(
-      /(@page[^{]*\{)([^}]*)(\})/gi,
-      (_w: string, open: string, body: string, close: string) =>
-        open +
-        body
-          .replace(/((?:^|;)\s*)\bsize\s*:[^;}]*/gi, '$1')
-          .replace(/^\s*;\s*/, '')
-          .replace(/;\s*;/g, ';')
-          .replace(/\s*;\s*$/, '') +
-        close,
-    );
-    return tag + stripped + end;
+    const stripped = stripSizeDeclarations(css);
+    return stripped === css ? whole : tag + stripped + end;
   });
+}
+
+/**
+ * Remove `size:` declarations from every `@page` rule in `css`, brace-aware so a
+ * nested at-rule (e.g. `@bottom-center{…}`) before `size:` does not hide it.
+ */
+function stripSizeDeclarations(css: string): string {
+  let out = '';
+  let at = 0;
+  const lower = css.toLowerCase();
+  for (;;) {
+    const start = lower.indexOf('@page', at);
+    if (start < 0) {
+      out += css.slice(at);
+      return out;
+    }
+    out += css.slice(at, start);
+    const open = css.indexOf('{', start);
+    if (open < 0) {
+      out += css.slice(start);
+      return out;
+    }
+    let depth = 1;
+    let i = open + 1;
+    let close = -1;
+    for (; i < css.length; i++) {
+      const ch = css[i];
+      if (ch === '{') depth++;
+      else if (ch === '}') { depth--; if (depth === 0) { close = i; break; } }
+    }
+    if (close < 0) {
+      out += css.slice(start);
+      return out;
+    }
+    const body = css.slice(open + 1, close);
+    const strippedBody = body
+      .replace(/((?:^|;)\s*)\bsize\s*:[^;}]*/gi, '$1')
+      .replace(/^\s*;\s*/, '')
+      .replace(/;\s*;/g, ';')
+      .replace(/\s*;\s*$/, '');
+    out += css.slice(start, open + 1) + strippedBody + '}';
+    at = close + 1;
+  }
 }
 
 export function declaredPageSize(html: string): string | null {
@@ -216,10 +249,56 @@ export function transposePageSize(html: string): string | null {
   return rewritten === '' ? null : out;
 }
 
+/**
+ * Find the index of the real `</body>` close tag, skipping any occurrence that sits
+ * inside a `<script>`, `<style>`, or HTML comment (where it is not a real close tag
+ * and injecting there would corrupt the document).
+ */
+function findBodyClose(html: string): number | null {
+  const lower = html.toLowerCase();
+  let i = 0;
+  const len = html.length;
+  while (i < len) {
+    const script = lower.indexOf('<script', i);
+    const style = lower.indexOf('<style', i);
+    const comment = lower.indexOf('<!--', i);
+    const body = lower.indexOf('</body', i);
+
+    const nexts = [script, style, comment, body].filter((x) => x >= 0);
+    if (nexts.length === 0) return null;
+    const next = Math.min(...nexts);
+
+    if (next === body) {
+      const gt = lower.indexOf('>', next);
+      if (gt > next && /<\/body\s*>/.test(lower.slice(next, gt + 1))) {
+        return next;
+      }
+      i = next + 1;
+      continue;
+    }
+
+    const gt = html.indexOf('>', next);
+    if (gt < 0) return null;
+    let regionEnd: number;
+    if (next === script) {
+      const close = lower.indexOf('</script>', gt + 1);
+      regionEnd = close >= 0 ? close + 9 : len;
+    } else if (next === style) {
+      const close = lower.indexOf('</style>', gt + 1);
+      regionEnd = close >= 0 ? close + 8 : len;
+    } else {
+      const close = lower.indexOf('-->', gt + 1);
+      regionEnd = close >= 0 ? close + 3 : len;
+    }
+    i = regionEnd;
+  }
+  return null;
+}
+
 export function injectPageRule(html: string, declarations: string): string {
   const style = `<style>@page{${declarations}}</style>`;
-  const body = /<\/body\s*>/i.exec(html);
-  if (body) return html.slice(0, body.index) + style + html.slice(body.index);
+  const body = findBodyClose(html);
+  if (body !== null) return html.slice(0, body) + style + html.slice(body);
   const doc = /<\/html\s*>/i.exec(html);
   if (doc) return html.slice(0, doc.index) + style + html.slice(doc.index);
   return html + style;
@@ -271,7 +350,14 @@ function pageRuleBodies(css: string): string[] {
     if (start < 0) return out;
     const open = css.indexOf('{', start);
     if (open < 0) return out;
-    const close = css.indexOf('}', open);
+    let depth = 1;
+    let i = open + 1;
+    let close = -1;
+    for (; i < css.length; i++) {
+      const ch = css[i];
+      if (ch === '{') depth++;
+      else if (ch === '}') { depth--; if (depth === 0) { close = i; break; } }
+    }
     if (close < 0) return out;
     out.push(css.slice(start, close + 1));
     at = close + 1;

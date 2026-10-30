@@ -9,6 +9,7 @@ import {
   declaredPageOrientation,
   pageRules,
   injectPageRule,
+  stripPageSize,
 } from './pdf.ts';
 
 function fail(msg: string, code = 2): number {
@@ -144,7 +145,9 @@ export function pageAnalysis(
     path,
     declared: { size, margin: declaredMargin, orientation, rules },
     landscape: landscapeOutcome(size, orientation),
-    format: format ? injectPageRule(html, `size: ${format}`) : null,
+    // stripPageSize mirrors the renderer so `page` models what render actually does:
+    // the document's own @page size is stripped before the requested size is applied.
+    format: format ? injectPageRule(stripPageSize(html), `size: ${format}`) : null,
     marginOverride: margin ? injectPageRule(html, `margin: ${margin}`) : null,
   };
 }

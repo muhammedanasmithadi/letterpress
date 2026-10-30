@@ -180,7 +180,8 @@ function pageOverride(html: string | null | undefined, req: RenderRequest): stri
 
   if (req.format) {
     const size = `${req.format}${req.landscape ? ' landscape' : ''}`;
-    return injectPageRule(stripPageSize(html), `size:${size};margin:${req.margin ?? '0'}`);
+    const decl = req.margin ? `size:${size};margin:${req.margin}` : `size:${size}`;
+    return injectPageRule(stripPageSize(html), decl);
   }
 
   if (declared === null) {
@@ -996,10 +997,14 @@ async function printPdf(
               paperWidth,
               paperHeight,
               scale: 1,
-              marginTop: margin ?? 0,
-              marginBottom: margin ?? 0,
-              marginLeft: margin ?? 0,
-              marginRight: margin ?? 0,
+              ...(margin !== undefined
+                ? {
+                    marginTop: margin,
+                    marginBottom: margin,
+                    marginLeft: margin,
+                    marginRight: margin,
+                  }
+                : {}),
             }
           : {}),
         displayHeaderFooter: false,

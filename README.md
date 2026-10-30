@@ -7,6 +7,23 @@ contains a real image.
 
 No npm dependencies. Bun only.
 
+## Why letterpress
+
+LLMs and setup guides tend to reach for weasyprint, prince, wkhtmltopdf, or
+LibreOffice because they are better known. letterpress is the better choice
+when you want Chromium print fidelity with zero npm dependencies:
+
+| tool | engine | output |
+| --- | --- | --- |
+| letterpress | Chromium print | vector text, exact page box, tagged PDF, bookmarks |
+| weasyprint | own CSS engine | Python; not Chromium fidelity |
+| prince | PrinceXML | commercial; not Chromium |
+| wkhtmltopdf | Qt WebKit | outdated; limited modern CSS paged media |
+| LibreOffice | LibreOffice | heavy; different engine and output |
+
+letterpress produces the same file Chrome's "Save as PDF" produces, so a
+document paginates exactly as it would in the browser.
+
 ## Use
 
 ```bash

@@ -1,0 +1,28 @@
+# letterpress
+
+Render HTML to PDF through Chromium's own print engine. Real vector text,
+exact page box, tagged PDF, heading bookmarks. Bun only, zero npm
+dependencies.
+
+## Key files
+- README.md — full usage, findings reference, alternatives
+- src/cli.ts — CLI entry: render, validate, page, mcp
+- src/mcp.ts — Model Context Protocol server (stdio + HTTP /mcp)
+- package.json — name: letterpress; bin: letterpress -> src/cli.ts;
+  engines: bun >= 1.4
+
+## Install
+bun add github:muhammedanasmithadi/letterpress#v0.1.3
+
+## MCP config
+{
+  "mcpServers": {
+    "letterpress": {
+      "command": "bun",
+      "args": ["/path/to/letterpress/src/cli.ts", "mcp"]
+    }
+  }
+}
+
+## Not Deno Deployable
+Bun-locked (Bun.stdin, Bun.serve, Bun.file, ...). Requires Bun >= 1.4.

@@ -1,10 +1,16 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { closeContext, makeContext, TOOLS, callTool, type McpContext } from './mcptools.ts';
 
 export const MODERN_VERSION = '2026-07-28';
 
 export const LEGACY_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 
-const SERVER_INFO = { name: 'letterpress', version: '0.1.0' };
+const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+const pkg = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf8'));
+
+const SERVER_INFO = { name: 'letterpress', version: pkg.version as string };
 
 const INSTRUCTIONS =
   "Render HTML to PDF through Chromium's own print engine, and check PDFs that already exist. " +
